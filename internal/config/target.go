@@ -138,10 +138,42 @@ type Target struct {
 	// HasRootfsImage says whether upstream publishes a container image for
 	// this target. Only 8 targets do; the rest need ImageBuilder.
 	HasRootfsImage bool
+
+	// ---- the VM tier ----
+	//
+	// Set together or not at all. A target qualifies only if upstream
+	// publishes a COMBINED disk image for it — kernel, bootloader and rootfs
+	// in one file. Targets that publish a bare kernel and a separate rootfs
+	// (malta) or that are real boards with no firmware to boot under QEMU
+	// (mvebu) are deliberately left out: owlab would have to invent a boot
+	// arrangement upstream never tests, and "it boots but not like the real
+	// thing" is the one outcome this tier exists to avoid.
+
 	// QEMUSystem is the qemu-system-* binary that boots this target, or ""
 	// if the VM tier does not support it.
 	QEMUSystem string
+	// QEMUMachine is the -machine to boot on.
+	QEMUMachine string
+	// QEMUCPUEmulated is the -cpu to use when there is no accelerator and
+	// every instruction is being translated. Not "max": on TCG the widest
+	// model is also the slowest, and this tier is already paying enough.
+	QEMUCPUEmulated string
+	// Firmware is the firmware file this target needs, or "" when the machine
+	// boots the image with the built-in BIOS.
+	//
+	// armsr publishes EFI-only combined images, so aarch64 and armv7 need an
+	// edk2 build present on the host. x86 still publishes a legacy-boot
+	// combined image, which SeaBIOS handles with nothing to find.
+	Firmware string
+	// VMProfile is the image profile in the artifact name ("generic").
+	VMProfile string
+	// GOARCH is the Go name for this target's CPU, used to decide whether the
+	// host can accelerate it or has to translate every instruction.
+	GOARCH string
 }
+
+// SupportsVM reports whether the VM tier can boot this target.
+func (t Target) SupportsVM() bool { return t.QEMUSystem != "" }
 
 // targets is the set owlab supports. It is deliberately limited to what
 // upstream actually publishes a rootfs for, because those are the targets
@@ -151,19 +183,27 @@ var targets = map[string]Target{
 		Arch: "x86_64", Target: "x86/64",
 		TagPrefix: "x86-64", FileSlug: "x86-64",
 		OCIPlatform: "linux/amd64", HostPlatform: "linux/amd64",
-		HasRootfsImage: true, QEMUSystem: "qemu-system-x86_64",
+		HasRootfsImage: true,
+		QEMUSystem:     "qemu-system-x86_64", QEMUMachine: "q35",
+		QEMUCPUEmulated: "qemu64", VMProfile: "generic", GOARCH: "amd64",
 	},
 	"aarch64_generic": {
 		Arch: "aarch64_generic", Target: "armsr/armv8",
 		TagPrefix: "armsr-armv8", FileSlug: "armsr-armv8",
 		OCIPlatform: "linux/aarch64_generic", HostPlatform: "linux/arm64",
-		HasRootfsImage: true, QEMUSystem: "qemu-system-aarch64",
+		HasRootfsImage: true,
+		QEMUSystem:     "qemu-system-aarch64", QEMUMachine: "virt",
+		QEMUCPUEmulated: "cortex-a72", Firmware: "edk2-aarch64-code.fd",
+		VMProfile: "generic", GOARCH: "arm64",
 	},
 	"arm_cortex-a15_neon-vfpv4": {
 		Arch: "arm_cortex-a15_neon-vfpv4", Target: "armsr/armv7",
 		TagPrefix: "armsr-armv7", FileSlug: "armsr-armv7",
 		OCIPlatform: "linux/arm_cortex-a15_neon-vfpv4", HostPlatform: "linux/arm/v7",
-		HasRootfsImage: true, QEMUSystem: "qemu-system-arm",
+		HasRootfsImage: true,
+		QEMUSystem:     "qemu-system-arm", QEMUMachine: "virt",
+		QEMUCPUEmulated: "cortex-a15", Firmware: "edk2-arm-code.fd",
+		VMProfile: "generic", GOARCH: "arm",
 	},
 	"arm_cortex-a9_vfpv3-d16": {
 		Arch: "arm_cortex-a9_vfpv3-d16", Target: "mvebu/cortexa9",
@@ -175,13 +215,15 @@ var targets = map[string]Target{
 		Arch: "mips_24kc", Target: "malta/be",
 		TagPrefix: "malta-be", FileSlug: "malta-be",
 		OCIPlatform: "linux/mips_24kc", HostPlatform: "linux/mips",
-		HasRootfsImage: true, QEMUSystem: "qemu-system-mips",
+		HasRootfsImage: true,
 	},
 	"i386_pentium4": {
 		Arch: "i386_pentium4", Target: "x86/generic",
 		TagPrefix: "x86-generic", FileSlug: "x86-generic",
 		OCIPlatform: "linux/i386_pentium4", HostPlatform: "linux/386",
-		HasRootfsImage: true, QEMUSystem: "qemu-system-i386",
+		HasRootfsImage: true,
+		QEMUSystem:     "qemu-system-i386", QEMUMachine: "pc",
+		QEMUCPUEmulated: "pentium3", VMProfile: "generic", GOARCH: "386",
 	},
 }
 
@@ -219,6 +261,18 @@ func KnownArches() []string {
 	out := make([]string, 0, len(targets))
 	for k := range targets {
 		out = append(out, k)
+	}
+	sortStrings(out)
+	return out
+}
+
+// VMArches lists the architectures the VM tier can boot.
+func VMArches() []string {
+	out := make([]string, 0, len(targets))
+	for k, t := range targets {
+		if t.SupportsVM() {
+			out = append(out, k)
+		}
 	}
 	sortStrings(out)
 	return out
@@ -300,12 +354,45 @@ func (r *Router) ReleaseDir() string {
 // published yet.
 func (r *Router) RootfsTarballURL() string {
 	s := r.spec()
-	ver := r.Release
-	if isSnapshot(r.Release) {
-		ver = s.SnapshotVersion
-	}
-	return fmt.Sprintf("%s/%s-%s-%s-rootfs.tar.gz", r.ReleaseDir(), s.FilePrefix, ver, r.target.FileSlug)
+	return fmt.Sprintf("%s/%s-%s-%s-rootfs.tar.gz", r.ReleaseDir(), s.FilePrefix, r.artifactVersion(), r.target.FileSlug)
 }
+
+// artifactVersion is the version string that appears inside file names, which
+// for a snapshot is the word SNAPSHOT rather than the branch that was asked
+// for.
+func (r *Router) artifactVersion() string {
+	if isSnapshot(r.Release) {
+		return r.spec().SnapshotVersion
+	}
+	return r.Release
+}
+
+// VMImageName is the file name of this router's bootable disk image.
+//
+// squashfs rather than ext4, because squashfs is what a router actually runs:
+// a read-only /rom with a writable overlay on top, which is what makes
+// firstboot, jffs2reset and the whole "reset to defaults" story behave the way
+// they do on hardware. An ext4 image is one flat writable filesystem and
+// quietly makes half of that untestable.
+func (r *Router) VMImageName() string {
+	s := r.spec()
+	suffix := "squashfs-combined"
+	if r.target.Firmware != "" {
+		// armsr publishes EFI-only. There is no non-EFI variant to fall back
+		// to, which is why the firmware has to be found on the host.
+		suffix += "-efi"
+	}
+	return fmt.Sprintf("%s-%s-%s-%s-%s.img.gz",
+		s.FilePrefix, r.artifactVersion(), r.target.FileSlug, r.target.VMProfile, suffix)
+}
+
+// VMImageURL is where to download this router's disk image.
+func (r *Router) VMImageURL() string {
+	return r.ReleaseDir() + "/" + r.VMImageName()
+}
+
+// SumsURL is the checksum file published beside every artifact.
+func (r *Router) SumsURL() string { return r.ReleaseDir() + "/sha256sums" }
 
 // BaseImage is the upstream container image for this router, or "" when the
 // router must be built from a rootfs tarball instead.

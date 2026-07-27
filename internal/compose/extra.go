@@ -51,7 +51,7 @@ func fetchExtraPackages(cfg *config.Config, ctxDir, cacheDir string) error {
 					r.ID, e.Name, r.PackageManager())
 				continue
 			}
-			cached, err := download(url, cacheDir)
+			cached, err := Fetch(url, cacheDir)
 			if err != nil {
 				return fmt.Errorf("%s: %s: %w", r.ID, e.Name, err)
 			}
@@ -63,10 +63,14 @@ func fetchExtraPackages(cfg *config.Config, ctxDir, cacheDir string) error {
 	return nil
 }
 
-// download fetches a URL into the cache, returning the cached path. A URL
+// Fetch downloads a URL into the cache, returning the cached path. A URL
 // already in the cache is not re-fetched: these are release artifacts at
 // immutable URLs, and re-downloading them on every `up` would be pure waste.
-func download(url, cacheDir string) (string, error) {
+//
+// Exported because the VM tier installs the same out-of-feed packages over
+// ssh instead of through a build context, and both paths should share one
+// cache rather than each keeping their own copy of the same file.
+func Fetch(url, cacheDir string) (string, error) {
 	sum := sha256.Sum256([]byte(url))
 	name := hex.EncodeToString(sum[:8]) + "-" + path.Base(url)
 	dst := filepath.Join(cacheDir, name)

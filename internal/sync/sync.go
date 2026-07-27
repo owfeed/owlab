@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -47,12 +48,21 @@ var skipDirs = map[string]bool{
 	"__pycache__":  true,
 }
 
+// Exec runs a shell script on a router, optionally feeding it stdin.
+//
+// The two tiers reach a router by completely different means — `docker exec`
+// for a container, ssh for a VM — but everything sync does is "run this
+// script, maybe with a tar on stdin". Naming that one operation is what keeps
+// the rest of this file from having to know which kind of router it is
+// talking to.
+type Exec func(ctx context.Context, script string, stdin []byte, out io.Writer) error
+
 // Options control one sync run.
 type Options struct {
 	// Config is the project being synced.
 	Config *config.Config
-	// ContainerName maps a router id to its container.
-	ContainerName func(id string) string
+	// Exec returns the transport for a router.
+	Exec func(r *config.Router) (Exec, error)
 	// Verbose lists every file.
 	Verbose bool
 	// SkipBuild suppresses project.build.
@@ -93,24 +103,25 @@ func Run(ctx context.Context, opts Options, routers []*config.Router) []Result {
 
 	for _, r := range routers {
 		res := Result{Router: r.ID, Files: count, Bytes: size}
-		if r.Fidelity == config.VM {
-			res.Err = fmt.Errorf("fidelity vm is not implemented yet")
+		run, err := opts.Exec(r)
+		if err != nil {
+			res.Err = err
 			results = append(results, res)
 			continue
 		}
-		if err := extractInto(ctx, opts.ContainerName(r.ID), archive); err != nil {
+		if err := extractInto(ctx, run, archive); err != nil {
 			res.Err = err
 			results = append(results, res)
 			continue
 		}
 		if cmd := opts.Config.Project.PostSync; cmd != "" {
-			if err := postSync(ctx, opts.ContainerName(r.ID), cmd, opts.Verbose); err != nil {
+			if err := postSync(ctx, run, cmd, opts.Verbose); err != nil {
 				res.Err = err
 				results = append(results, res)
 				continue
 			}
 		}
-		if err := reload(ctx, opts.ContainerName(r.ID), opts.Config.Project.Theme); err != nil {
+		if err := reload(ctx, run, opts.Config.Project.Theme); err != nil {
 			res.Err = err
 		}
 		results = append(results, res)
@@ -245,19 +256,15 @@ func isConfigFile(target string) bool {
 		strings.HasPrefix(target, "/etc/uci-defaults/")
 }
 
-// extractInto streams the archive into a container and unpacks it at /.
+// extractInto streams the archive into a router and unpacks it at /.
 //
-// `docker exec -i ... tar -x` rather than `docker cp`: one round trip for the
-// whole tree, and it works the same for every engine. busybox tar reads the
+// A tar on stdin rather than a file copy: one round trip for the whole tree,
+// and it is the one operation both transports have. busybox tar reads the
 // stream happily; the GNU format header is what keeps long paths intact.
-func extractInto(ctx context.Context, container string, archive []byte) error {
-	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", container,
-		"/bin/sh", "-c", "tar -C / -xf -")
-	cmd.Stdin = bytes.NewReader(archive)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
+func extractInto(ctx context.Context, run Exec, archive []byte) error {
+	var out bytes.Buffer
+	if err := run(ctx, "tar -C / -xf -", archive, &out); err != nil {
+		msg := strings.TrimSpace(out.String())
 		if msg == "" {
 			msg = err.Error()
 		}
@@ -266,19 +273,16 @@ func extractInto(ctx context.Context, container string, archive []byte) error {
 	return nil
 }
 
-// postSync runs the project's post_sync command inside the router.
+// postSync runs the project's post_sync command on the router.
 //
 // Before reload(), so that anything it registers is present when the caches
 // are dropped rather than one sync later.
-func postSync(ctx context.Context, container, command string, verbose bool) error {
+func postSync(ctx context.Context, run Exec, command string, verbose bool) error {
 	if verbose {
 		fmt.Fprintf(os.Stderr, "+ (router) %s\n", command)
 	}
-	cmd := exec.CommandContext(ctx, "docker", "exec", container, "/bin/sh", "-c", command)
 	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
+	if err := run(ctx, command, nil, &out); err != nil {
 		msg := strings.TrimSpace(out.String())
 		if msg == "" {
 			msg = err.Error()
@@ -296,7 +300,7 @@ func postSync(ctx context.Context, container, command string, verbose bool) erro
 // This is exactly luci.mk's own postinst. Without it, a new page does not
 // appear in the menu and an edited template keeps rendering its old text —
 // which reads like the sync silently failed.
-func reload(ctx context.Context, container, theme string) error {
+func reload(ctx context.Context, run Exec, theme string) error {
 	script := "rm -f /tmp/luci-indexcache*; rm -rf /tmp/luci-modulecache"
 	if theme != "" {
 		// Re-assert the theme: installing or syncing can register a theme
@@ -308,11 +312,9 @@ func reload(ctx context.Context, container, theme string) error {
 	}
 	script += "; /etc/init.d/rpcd reload >/dev/null 2>&1 || true"
 
-	cmd := exec.CommandContext(ctx, "docker", "exec", container, "/bin/sh", "-c", script)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("reload: %s", strings.TrimSpace(stderr.String()))
+	var out bytes.Buffer
+	if err := run(ctx, script, nil, &out); err != nil {
+		return fmt.Errorf("reload: %s", strings.TrimSpace(out.String()))
 	}
 	return nil
 }

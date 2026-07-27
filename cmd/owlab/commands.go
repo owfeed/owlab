@@ -1,20 +1,25 @@
 package main
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/VizzleTF/owlab/internal/compose"
 	"github.com/VizzleTF/owlab/internal/config"
+	"github.com/VizzleTF/owlab/internal/qemu"
 	syncpkg "github.com/VizzleTF/owlab/internal/sync"
 )
 
@@ -52,31 +57,36 @@ func (a *app) up(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := a.checkFidelity(routers); err != nil {
+	if err := a.checkFidelity(ctx, routers); err != nil {
 		return err
 	}
+	containers, vms := splitTiers(routers)
 
-	proj, err := compose.Prepare(a.cfg, a.eng)
-	if err != nil {
-		return err
+	if len(containers) > 0 {
+		proj, err := compose.Prepare(a.cfg, a.eng)
+		if err != nil {
+			return err
+		}
+		names := routerIDs(containers)
+
+		buildArgs := append([]string{"build"}, names...)
+		if *rebuild {
+			buildArgs = append([]string{"build", "--no-cache", "--pull"}, names...)
+		}
+		if err := a.docker.Compose(ctx, proj.ComposePath, buildArgs...); err != nil {
+			return fmt.Errorf("build failed: %w", err)
+		}
+
+		upArgs := append([]string{"up", "-d", "--remove-orphans"}, names...)
+		if err := a.docker.Compose(ctx, proj.ComposePath, upArgs...); err != nil {
+			return fmt.Errorf("start failed: %w", err)
+		}
 	}
 
-	names := routerIDs(routers, config.VM)
-	if len(names) == 0 {
-		return fmt.Errorf("nothing to start: every selected router is fidelity vm, which is not implemented yet")
-	}
-
-	buildArgs := append([]string{"build"}, names...)
-	if *rebuild {
-		buildArgs = append([]string{"build", "--no-cache", "--pull"}, names...)
-	}
-	if err := a.docker.Compose(ctx, proj.ComposePath, buildArgs...); err != nil {
-		return fmt.Errorf("build failed: %w", err)
-	}
-
-	upArgs := append([]string{"up", "-d", "--remove-orphans"}, names...)
-	if err := a.docker.Compose(ctx, proj.ComposePath, upArgs...); err != nil {
-		return fmt.Errorf("start failed: %w", err)
+	for _, r := range vms {
+		if err := a.startVM(ctx, r, *rebuild, *verbose); err != nil {
+			return err
+		}
 	}
 
 	if *noWait {
@@ -84,6 +94,40 @@ func (a *app) up(ctx context.Context, args []string) error {
 	}
 	ready := a.waitForLuCI(ctx, routers)
 	return a.printReady(routers, ready)
+}
+
+// startVM boots one fidelity-vm router and sets it up if it is new.
+//
+// Provisioning is a property of the DISK, not of the run: a VM keeps its
+// filesystem across `owlab down`, so the packages and the overlay are
+// installed once and every later start is a plain boot. `--rebuild` is what
+// throws the disk away, and it is the only factory reset this tier has.
+func (a *app) startVM(ctx context.Context, r *config.Router, rebuild, verbose bool) error {
+	v := qemu.New(a.cfg, r)
+	if v.Running() && !rebuild {
+		return nil
+	}
+	if rebuild && v.Running() {
+		if err := v.Stop(ctx); err != nil {
+			return err
+		}
+	}
+
+	fmt.Fprintf(os.Stderr, "== %s (vm, %s %s on %s)\n", r.ID, r.Title(), r.Release, r.Arch)
+	if err := v.Start(ctx, qemu.StartOptions{
+		Rebuild:  rebuild,
+		Progress: os.Stderr,
+		Verbose:  verbose,
+	}); err != nil {
+		return fmt.Errorf("%s: %w", r.ID, err)
+	}
+	if v.Provisioned() {
+		return nil
+	}
+	if err := v.Provision(ctx, os.Stderr); err != nil {
+		return fmt.Errorf("%s: %w", r.ID, err)
+	}
+	return nil
 }
 
 func (a *app) down(ctx context.Context, args []string) error {
@@ -100,6 +144,34 @@ func (a *app) down(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	containers, vms := splitTiers(routers)
+
+	// VMs first, and gracefully: the guest is asked to power itself off so
+	// its overlay is unmounted cleanly. A container has no such filesystem to
+	// lose.
+	for _, r := range vms {
+		v := qemu.New(a.cfg, r)
+		if !v.Running() && !*purge {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "stopping %s\n", r.ID)
+		if *purge {
+			// --purge on a VM means the disks too. Without it the router
+			// keeps everything installed on it, which is the point of the
+			// tier — `down` is a shutdown, not a reset.
+			if err := v.Destroy(ctx); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := v.Stop(ctx); err != nil {
+			return err
+		}
+	}
+
+	if len(containers) == 0 {
+		return nil
+	}
 	proj, err := compose.Prepare(a.cfg, a.eng)
 	if err != nil {
 		return err
@@ -108,8 +180,7 @@ func (a *app) down(ctx context.Context, args []string) error {
 	// Selecting specific routers means stopping just those; `down` with no
 	// ids tears the whole project down, including its network.
 	if len(ids) > 0 {
-		names := routerIDs(routers, config.VM)
-		args := append([]string{"rm", "-sf"}, names...)
+		args := append([]string{"rm", "-sf"}, routerIDs(containers)...)
 		return a.docker.Compose(ctx, proj.ComposePath, args...)
 	}
 	downArgs := []string{"down", "--remove-orphans"}
@@ -129,9 +200,7 @@ func (a *app) shell(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	name := a.containerName(r.ID)
-	// -l so the login profile runs and the prompt looks like the router's.
-	return a.docker.Run(ctx, "exec", "-it", name, "/bin/sh", "-l")
+	return a.interactive(ctx, r)
 }
 
 func (a *app) exec(ctx context.Context, args []string) error {
@@ -155,9 +224,13 @@ func (a *app) exec(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	run, err := a.execFor(r)
+	if err != nil {
+		return err
+	}
 	// Joined and handed to sh -c rather than exec'd directly, so that pipes
 	// and redirection in the command work the way the developer typed them.
-	return a.docker.Run(ctx, "exec", a.containerName(r.ID), "/bin/sh", "-c", strings.Join(cmd, " "))
+	return run(ctx, strings.Join(cmd, " "), nil, os.Stdout)
 }
 
 // sync copies the project's source tree into running routers.
@@ -177,10 +250,10 @@ func (a *app) sync(ctx context.Context, args []string) error {
 		return err
 	}
 	opts := syncpkg.Options{
-		Config:        a.cfg,
-		ContainerName: a.containerName,
-		Verbose:       *verbose,
-		SkipBuild:     *noBuild,
+		Config:    a.cfg,
+		Exec:      a.execFor,
+		Verbose:   *verbose,
+		SkipBuild: *noBuild,
 	}
 
 	report := func(results []syncpkg.Result) {
@@ -284,16 +357,29 @@ func (a *app) install(ctx context.Context, args []string) error {
 
 	var failed []string
 	for _, r := range routers {
-		if r.Fidelity == config.VM {
+		run, err := a.execFor(r)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "! %s: %v\n", r.ID, err)
+			failed = append(failed, r.ID)
 			continue
 		}
-		container := a.containerName(r.ID)
 
 		var installArgs []string
 		installArgs = append(installArgs, names...)
 		for _, f := range localFiles {
 			dest := "/tmp/" + filepath.Base(f)
-			if err := a.docker.Run(ctx, "cp", f, container+":"+dest); err != nil {
+			body, err := os.ReadFile(f)
+			if err != nil {
+				return err
+			}
+			// Pushed as a tar on stdin rather than `docker cp`, because that
+			// is the one file-transfer both tiers share: a VM is reached over
+			// ssh, and dropbear ships no sftp-server for scp to use.
+			archive, err := tarFile(dest, body)
+			if err != nil {
+				return err
+			}
+			if err := run(ctx, "tar -C / -xf -", archive, os.Stderr); err != nil {
 				failed = append(failed, r.ID)
 				continue
 			}
@@ -315,7 +401,7 @@ func (a *app) install(ctx context.Context, args []string) error {
 			cmd = "apk add " + flags + strings.Join(installArgs, " ")
 		}
 		fmt.Printf("== %s (%s)\n", r.ID, r.PackageManager())
-		if err := a.docker.Run(ctx, "exec", container, "/bin/sh", "-c", cmd); err != nil {
+		if err := run(ctx, cmd, nil, os.Stdout); err != nil {
 			failed = append(failed, r.ID)
 		}
 	}
@@ -328,13 +414,36 @@ func (a *app) install(ctx context.Context, args []string) error {
 	// LuCI caches its dispatch tree and module list; a new app is invisible
 	// until both are dropped. This is exactly luci.mk's own postinst.
 	for _, r := range routers {
-		if r.Fidelity == config.VM {
+		run, err := a.execFor(r)
+		if err != nil {
 			continue
 		}
-		_ = a.docker.Run(ctx, "exec", a.containerName(r.ID), "/bin/sh", "-c",
-			"rm -f /tmp/luci-indexcache*; rm -rf /tmp/luci-modulecache; /etc/init.d/rpcd reload")
+		_ = run(ctx, "rm -f /tmp/luci-indexcache*; rm -rf /tmp/luci-modulecache; /etc/init.d/rpcd reload",
+			nil, io.Discard)
 	}
 	return nil
+}
+
+// tarFile wraps one file in a tar stream rooted at /.
+func tarFile(dest string, body []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	hdr := &tar.Header{
+		Name:   strings.TrimPrefix(dest, "/"),
+		Mode:   0o644,
+		Size:   int64(len(body)),
+		Format: tar.FormatGNU,
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		return nil, err
+	}
+	if _, err := tw.Write(body); err != nil {
+		return nil, err
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func (a *app) logs(ctx context.Context, args []string) error {
@@ -349,6 +458,25 @@ func (a *app) logs(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	containers, vms := splitTiers(routers)
+
+	// A VM's log is its serial console, captured to a file. That is the same
+	// stream a container's log is — everything the router printed from the
+	// first kernel line onward — so the two are shown the same way and the
+	// difference stays an implementation detail.
+	for _, r := range vms {
+		v := qemu.New(a.cfg, r)
+		if len(routers) > 1 {
+			fmt.Printf("== %s\n", r.ID)
+		}
+		if err := tailFile(ctx, v.ConsolePath(), *tail, *follow && len(routers) == 1); err != nil {
+			fmt.Fprintf(os.Stderr, "! %s: %v\n", r.ID, err)
+		}
+	}
+	if len(containers) == 0 {
+		return nil
+	}
+
 	proj, err := compose.Prepare(a.cfg, a.eng)
 	if err != nil {
 		return err
@@ -357,8 +485,58 @@ func (a *app) logs(ctx context.Context, args []string) error {
 	if *follow {
 		logArgs = append(logArgs, "-f")
 	}
-	logArgs = append(logArgs, routerIDs(routers, config.VM)...)
+	logArgs = append(logArgs, routerIDs(containers)...)
 	return a.docker.Compose(ctx, proj.ComposePath, logArgs...)
+}
+
+// tailFile prints the end of a file, optionally following it.
+func tailFile(ctx context.Context, path, tail string, follow bool) error {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("no console log yet — has it been started?")
+		}
+		return err
+	}
+	lines := strings.Split(strings.TrimRight(string(body), "\n"), "\n")
+	if n, convErr := strconv.Atoi(tail); convErr == nil && n < len(lines) {
+		lines = lines[len(lines)-n:]
+	}
+	for _, l := range lines {
+		fmt.Println(l)
+	}
+	if !follow {
+		return nil
+	}
+
+	// Polling rather than inotify, for the same reason sync --watch polls:
+	// this has to behave the same on macOS, Linux and Windows, and a serial
+	// console produces a line every few seconds at most.
+	offset := int64(len(body))
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(500 * time.Millisecond):
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		if _, err := f.Seek(offset, io.SeekStart); err != nil {
+			f.Close()
+			return err
+		}
+		more, err := io.ReadAll(f)
+		f.Close()
+		if err != nil {
+			return err
+		}
+		if len(more) > 0 {
+			offset += int64(len(more))
+			fmt.Print(string(more))
+		}
+	}
 }
 
 func (a *app) status(ctx context.Context, args []string) error {
@@ -373,7 +551,13 @@ func (a *app) status(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("project  %s\n", a.cfg.Project.Name)
-	fmt.Printf("engine   %s\n", a.eng.Describe())
+	if a.cfg.HasContainers() {
+		fmt.Printf("engine   %s\n", a.eng.Describe())
+	} else {
+		// No container routers means the engine was never detected, and
+		// printing an empty field reads like a failed probe.
+		fmt.Printf("engine   qemu only (no container routers)\n")
+	}
 	login := "root, empty password"
 	if pw := compose.RootPassword(); pw != "" {
 		login = "root / " + pw
@@ -386,7 +570,7 @@ func (a *app) status(ctx context.Context, args []string) error {
 		state := a.containerState(ctx, r.ID)
 		url := fmt.Sprintf("http://localhost:%d", r.Ports.HTTP)
 		if r.Fidelity == config.VM {
-			state = "n/a"
+			state = qemu.New(a.cfg, r).State()
 		}
 		fmt.Printf("%-14s %-12s %-9s %-18s %-9s %-8s %s\n",
 			r.ID,
@@ -453,13 +637,10 @@ func (a *app) containerState(ctx context.Context, id string) string {
 	return strings.TrimSpace(out)
 }
 
-// routerIDs lists router ids, skipping any with the excluded fidelity.
-func routerIDs(routers []*config.Router, skip config.Fidelity) []string {
+// routerIDs lists router ids.
+func routerIDs(routers []*config.Router) []string {
 	out := make([]string, 0, len(routers))
 	for _, r := range routers {
-		if r.Fidelity == skip {
-			continue
-		}
 		out = append(out, r.ID)
 	}
 	return out
@@ -467,7 +648,7 @@ func routerIDs(routers []*config.Router, skip config.Fidelity) []string {
 
 // checkFidelity refuses tiers this machine cannot deliver, rather than
 // starting something that will quietly be less than what was asked for.
-func (a *app) checkFidelity(routers []*config.Router) error {
+func (a *app) checkFidelity(ctx context.Context, routers []*config.Router) error {
 	for _, r := range routers {
 		switch r.Fidelity {
 		case config.Full:
@@ -480,7 +661,13 @@ func (a *app) checkFidelity(routers []*config.Router) error {
 					r.ID, reason)
 			}
 		case config.VM:
-			return fmt.Errorf("router %q asks for fidelity vm, which is not implemented yet", r.ID)
+			// Probed, not assumed: the emulator and the firmware are the two
+			// things a machine can be missing, and finding out at boot time
+			// means a half-created VM directory and a confusing QEMU error.
+			d := qemu.Inspect(ctx, r.Target())
+			if d.Err != nil {
+				return fmt.Errorf("router %q asks for fidelity vm: %w", r.ID, d.Err)
+			}
 		}
 	}
 	return nil
@@ -503,9 +690,7 @@ func (a *app) waitForLuCI(ctx context.Context, routers []*config.Router) map[str
 
 	pending := map[string]*config.Router{}
 	for _, r := range routers {
-		if r.Fidelity != config.VM {
-			pending[r.ID] = r
-		}
+		pending[r.ID] = r
 	}
 	if len(pending) > 0 {
 		fmt.Fprintf(os.Stderr, "waiting for LuCI")
@@ -538,9 +723,6 @@ func (a *app) waitForLuCI(ctx context.Context, routers []*config.Router) map[str
 func (a *app) printReady(routers []*config.Router, ready map[string]bool) error {
 	var stalled []string
 	for _, r := range routers {
-		if r.Fidelity == config.VM {
-			continue
-		}
 		url := fmt.Sprintf("http://localhost:%d", r.Ports.HTTP)
 		mark := " "
 		if ready != nil && !ready[r.ID] {

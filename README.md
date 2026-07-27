@@ -91,6 +91,70 @@ macOS, for instance, `full` can never work: that VM's kernel is built with
 `CONFIG_CFG80211` unset, so `mac80211_hwsim` — and `virt_wifi`, and `vwifi`,
 and `wmediumd`, which all sit on top of cfg80211 — cannot load at all.
 
+### `fidelity: vm`
+
+A real OpenWrt kernel, booted by QEMU as a normal process on your machine —
+not inside a container. That is the point: nested QEMU needs `/dev/kvm` passed
+into the container, which Docker Desktop grants on neither macOS nor Windows,
+i.e. exactly the hosts that need this tier most.
+
+```yaml
+routers:
+  - id: real
+    fidelity: vm
+    release: "25.12.4"
+    packages: [luci, luci-app-firewall, kmod-nft-tproxy]
+    ports: { http: 8090, ssh: 2290 }
+```
+
+```console
+$ owlab up
+== real (vm, OpenWrt 25.12.4 on aarch64_generic)
+  downloading openwrt-25.12.4-armsr-armv8-generic-squashfs-combined-efi.img.gz
+  moving /overlay onto the 2G disk
+  rebooting onto the new overlay
+  installing 3 packages
+  applying the owlab overlay and fixtures
+  real           http://localhost:8090   ssh -p 2290 root@localhost
+```
+
+What you get that a container cannot give you is **kernel modules that
+actually load**:
+
+```console
+$ owlab exec real -- 'uname -r; lsmod | grep nft_tproxy'
+6.12.87
+nft_tproxy    12288  0
+```
+
+Requirements and behaviour:
+
+- **QEMU on the host.** `brew install qemu`, `apt install qemu-system-arm
+  qemu-system-x86`, `winget install SoftwareFreedomConservancy.QEMU`.
+  `owlab doctor` reports the version, the accelerator it picked and the
+  firmware it found.
+- **The guest architecture should be the host architecture.** No accelerator
+  virtualises a foreign CPU, so an `x86_64` router on an ARM laptop is
+  translated instruction by instruction. `arch: auto` (the default) already
+  does the right thing; owlab warns loudly rather than being quietly slow.
+  Homebrew's `qemu-system-x86_64` on Apple Silicon reports `tcg` only — it is
+  built without hvf, because hvf cannot run an x86 guest on an ARM CPU.
+- **The disk is the state.** A VM keeps everything installed on it across
+  `owlab down`; only `--rebuild` is a factory reset. Boot images are cached
+  once per release under your user cache directory and shared by every project.
+- **`disk: 2G`** adds a second virtual disk and moves `/overlay` onto it, which
+  is stock OpenWrt extroot. Without it you get the image's own overlay — 87 MB
+  on armsr, fixed at build time and not growable from inside a running system.
+  It costs one reboot during first provisioning and grows sparsely. `disk: 0`
+  turns it off; `memory:` and `cpus:` are there too.
+- **Reached the same way as a container**: `localhost:<port>`, forwarded to the
+  router's LAN side. `sync`, `install`, `exec`, `shell` and `logs` all work,
+  over ssh instead of `docker exec`.
+
+Not yet working: `mac80211_hwsim` radios inside a VM appear as real phys and
+accept `iw` commands, but netifd's wireless setup does not complete for them
+on 25.12. Use `fidelity: basic`, whose wireless pages render from config.
+
 ## Commands
 
 ```
@@ -197,6 +261,14 @@ routers:
     release: "25.12.4"
     packages: ["+luci-app-sqm"]   # + adds to defaults, - removes
     ports: { http: 8025, ssh: 2225 }
+
+  - id: real                      # fidelity vm only:
+    fidelity: vm
+    release: "25.12.4"
+    memory: 512M                  # qemu -m
+    cpus: 2                       # qemu -smp
+    disk: 2G                      # extroot disk; 0 to use the image's own
+    ports: { http: 8090, ssh: 2290 }
 ```
 
 A package list with `+`/`-` entries is applied on top of the defaults; a list
@@ -235,6 +307,15 @@ whose manager has no build is told so and carries on.
 Downloads happen on the host and are cached in `.owlab/cache/`, so `up` does
 not re-fetch them. They have to: a stock OpenWrt rootfs has no `curl`, and its
 busybox `wget` cannot do TLS.
+
+A failure here is fatal, unlike a name in `packages:` that a particular feed
+happens not to carry. These are named by URL — you said "install this file" —
+and a build that reported success without it would hand you a router quietly
+missing the thing you are testing against. They are also installed with
+`--force-overwrite`, because their dependencies routinely replace a file the
+stock image already owns: `luci-app-openclash` pulls `dnsmasq-full`, which
+ships `/etc/init.d/dnsmasq` and collides with `dnsmasq`. Without it the same
+config produces a different router on OpenWrt 24.10 than on the other three.
 
 **These are installed without signature verification.** Projects publishing
 this way usually sign with usign and ship a `.sig` beside the artifact, but
@@ -421,7 +502,21 @@ $ owlab exec owrt2512 -- 'nft add table inet t; \
 If something is missing: on Linux `modprobe` it on the host (`nft_tproxy`,
 `nf_tproxy_ipv4`); on Docker Desktop for macOS the LinuxKit kernel is fixed
 and there is no portable workaround. `fidelity: vm` runs a real OpenWrt
-kernel, where every `kmod-*` loads for real.
+kernel, where every `kmod-*` loads for real:
+
+```console
+$ owlab exec real -- 'apk add kmod-nft-tproxy; lsmod | grep nft_tproxy'
+nft_tproxy    12288  0
+```
+
+The same reasoning decides flow offloading. ImmortalWrt enables it by default
+(`firewall.@defaults[0].flow_offloading`), the rule needs a flowtable, and a
+flowtable needs `nf_flow_table` in the *running* kernel. Where it is missing,
+nft rejects the entire ruleset and what is left is the base chains with
+`policy drop` and no jumps into any zone — a router that completes a TCP
+handshake and then resets, while `uhttpd` is up and listening. owlab probes for
+it on first boot and turns the setting off only where the kernel cannot honour
+it, so a host that *can* offload keeps the distribution's own configuration.
 
 ## How it reaches the routers
 

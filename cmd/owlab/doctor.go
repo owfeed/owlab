@@ -16,6 +16,7 @@ import (
 	"github.com/VizzleTF/owlab/internal/config"
 	"github.com/VizzleTF/owlab/internal/dockercli"
 	"github.com/VizzleTF/owlab/internal/engine"
+	"github.com/VizzleTF/owlab/internal/qemu"
 )
 
 type checkResult int
@@ -63,37 +64,47 @@ func (a *app) doctor(ctx context.Context, args []string) error {
 	add("host", info, "%s/%s", runtime.GOOS, runtime.GOARCH)
 
 	// docker
+	//
+	// A missing engine is no longer the end of the report: a project whose
+	// routers are all fidelity vm never touches Docker, and the checks below
+	// are exactly the ones such a developer came here for.
+	var eng engine.Info
+	haveDocker := false
 	if err := dockercli.Check(ctx); err != nil {
-		add("docker", fail, "%v", err)
-		return report(checks)
+		add("docker", warn, "%v (only fidelity vm will work)", err)
+	} else {
+		add("docker", pass, "cli and compose v2 present")
+		eng = engine.Detect(ctx)
+		if eng.Err != nil {
+			add("engine", warn, "%v (only fidelity vm will work)", eng.Err)
+		} else {
+			haveDocker = true
+			add("engine", pass, "%s", eng.Describe())
+		}
 	}
-	add("docker", pass, "cli and compose v2 present")
-
-	eng := engine.Detect(ctx)
-	if eng.Err != nil {
-		add("engine", fail, "%v", eng.Err)
-		return report(checks)
-	}
-	add("engine", pass, "%s", eng.Describe())
 
 	// The default architecture, and whether it needs emulation.
 	hostArch := config.HostArch()
 	add("arch", info, "native OpenWrt arch for this host is %s", hostArch)
 
-	// fidelity full
-	if ok, reason := eng.HostKernelWiFi(); ok {
-		add("fidelity full", pass, "this engine can host mac80211_hwsim radios")
-	} else {
-		add("fidelity full", warn, "%s", reason)
+	if haveDocker {
+		// fidelity full
+		if ok, reason := eng.HostKernelWiFi(); ok {
+			add("fidelity full", pass, "this engine can host mac80211_hwsim radios")
+		} else {
+			add("fidelity full", warn, "%s", reason)
+		}
+
+		// Bind-mount ownership: only native Linux keeps host uid/gid, which is
+		// the one case where a mounted authorized_keys is rejected by dropbear.
+		if eng.BindMountsAreHostOwned() {
+			add("bind mounts", info, "keep host uid/gid — owlab copies the ssh key into place rather than mounting it")
+		} else {
+			add("bind mounts", info, "presented as owned by the container user")
+		}
 	}
 
-	// Bind-mount ownership: only native Linux keeps host uid/gid, which is
-	// the one case where a mounted authorized_keys is rejected by dropbear.
-	if eng.BindMountsAreHostOwned() {
-		add("bind mounts", info, "keep host uid/gid — owlab copies the ssh key into place rather than mounting it")
-	} else {
-		add("bind mounts", info, "presented as owned by the container user")
-	}
+	checks = append(checks, vmChecks(ctx, hostArch)...)
 
 	// ssh keys: what will be installed, or why nothing will be.
 	if keys, src := compose.PublicKeys(); len(keys) > 0 {
@@ -164,16 +175,59 @@ func (a *app) doctor(ctx context.Context, args []string) error {
 	return report(checks)
 }
 
+// vmChecks reports what the VM tier can do on this machine.
+//
+// The host architecture is checked first and reported on its own, because it
+// is the one thing the developer cannot fix by installing something: no
+// accelerator runs a foreign CPU, so an x86 router on an ARM laptop is slow no
+// matter what else is present.
+func vmChecks(ctx context.Context, hostArch string) []check {
+	t, err := config.LookupTarget(hostArch)
+	if err != nil || !t.SupportsVM() {
+		return []check{{"fidelity vm", warn,
+			fmt.Sprintf("this host's native arch (%s) has no bootable image upstream; vm routers would have to run emulated (arches that work: %s)",
+				hostArch, strings.Join(config.VMArches(), ", "))}}
+	}
+
+	d := qemu.Inspect(ctx, t)
+	if d.Err != nil {
+		return []check{{"fidelity vm", warn, d.Err.Error()}}
+	}
+
+	out := []check{}
+	version := d.Version
+	if version == "" {
+		version = d.Binary
+	}
+	if d.Accel.Native {
+		out = append(out, check{"fidelity vm", pass,
+			fmt.Sprintf("%s with -accel %s — a %s router boots natively", version, d.Accel.Name, t.Arch)})
+	} else {
+		out = append(out, check{"fidelity vm", warn,
+			fmt.Sprintf("%s falls back to tcg: %s. It works, but expect minutes rather than seconds.",
+				version, d.Accel.Reason)})
+	}
+	if d.Firmware != "" {
+		out = append(out, check{"vm firmware", info, d.Firmware})
+	}
+	out = append(out, check{"vm images", info, qemu.CacheDir()})
+	return out
+}
+
 func configChecks(cfg *config.Config) []check {
 	var out []check
 	for i := range cfg.Routers {
 		r := &cfg.Routers[i]
 		name := "router " + r.ID
 
-		if r.FromTarball() {
+		switch {
+		case r.Fidelity == config.VM:
+			out = append(out, check{name, info,
+				fmt.Sprintf("vm, booted from %s", r.VMImageName())})
+		case r.FromTarball():
 			out = append(out, check{name, info,
 				fmt.Sprintf("built from a rootfs tarball (%s)", r.RootfsTarballURL())})
-		} else {
+		default:
 			out = append(out, check{name, info,
 				fmt.Sprintf("%s, platform %s", r.BaseImage(), r.Platform())})
 		}
@@ -197,6 +251,13 @@ func configChecks(cfg *config.Config) []check {
 		// A port already taken fails only at `up`, and the message docker
 		// gives ("Bind for 0.0.0.0:2225 failed: port is already allocated")
 		// names the port but not who holds it or which router wanted it.
+		//
+		// A running VM holds its own ports through QEMU, which is the normal
+		// state of a started lab rather than a conflict to report — and unlike
+		// a container there is no `docker ps` entry to recognise it by.
+		if r.Fidelity == config.VM && qemu.New(cfg, r).Running() {
+			continue
+		}
 		for _, p := range []struct {
 			kind string
 			port int

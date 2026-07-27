@@ -90,14 +90,6 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return a.doctor(ctx, args)
 	}
 
-	if err := dockercli.Check(ctx); err != nil {
-		return err
-	}
-	a.eng = engine.Detect(ctx)
-	if a.eng.Err != nil {
-		return a.eng.Err
-	}
-
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -109,6 +101,20 @@ func run(ctx context.Context, cmd string, args []string) error {
 	a.cfg, err = config.Load(path)
 	if err != nil {
 		return err
+	}
+
+	// The config decides whether a container engine is needed at all. A
+	// project whose routers are all fidelity vm runs entirely on QEMU, and
+	// refusing to start because Docker Desktop is not running would be a
+	// requirement owlab invented.
+	if a.cfg.HasContainers() {
+		if err := dockercli.Check(ctx); err != nil {
+			return err
+		}
+		a.eng = engine.Detect(ctx)
+		if a.eng.Err != nil {
+			return a.eng.Err
+		}
 	}
 
 	switch cmd {

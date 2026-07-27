@@ -131,7 +131,32 @@ type Router struct {
 	// prebuilt image is an accelerator, not a different code path.
 	Image string
 
+	// VM is the fidelity-vm hardware. Ignored by the container tiers, which
+	// get their memory and CPUs from the engine.
+	VM VMSpec
+
 	target Target
+}
+
+// VMSpec is the virtual hardware a fidelity-vm router boots with.
+type VMSpec struct {
+	// Memory is passed to qemu -m. 512M is what OpenWrt's own x86 images are
+	// tested against and is comfortable for LuCI plus a package manager.
+	Memory string
+	// CPUs is passed to qemu -smp.
+	CPUs int
+	// Disk is the size of a second virtual disk mounted as /overlay, or ""
+	// to boot with only the image's own overlay partition.
+	//
+	// This exists because the overlay in an upstream combined image is fixed
+	// at build time — 87 MB on armsr — and cannot be grown from inside a
+	// running system: the filesystem was created without a resize inode, so
+	// an online resize2fs stops after the first block group. Adding a disk
+	// and pointing /overlay at it (extroot, the same mechanism a real router
+	// uses for a USB stick) sidesteps the limit entirely, costs one reboot on
+	// first provisioning, and grows sparsely — a 2G disk occupies what is
+	// actually written and nothing more.
+	Disk string
 }
 
 // Target is the resolved build target for this router.
@@ -208,6 +233,9 @@ type rawRouter struct {
 	Fixtures []string       `yaml:"fixtures"`
 	Ports    *Ports         `yaml:"ports"`
 	Hostname *string        `yaml:"hostname"`
+	Memory   *string        `yaml:"memory"`
+	CPUs     *int           `yaml:"cpus"`
+	Disk     *string        `yaml:"disk"`
 }
 
 // Find walks up from dir looking for owlab.yaml.
@@ -328,6 +356,23 @@ func merge(def, r rawRouter, index int) (Router, error) {
 		return Router{}, errors.New("id is required")
 	}
 	out.Hostname = pick(def.Hostname, r.Hostname, defaultHostname(out.ID))
+
+	out.VM = VMSpec{
+		Memory: pick(def.Memory, r.Memory, "512M"),
+		Disk:   pick(def.Disk, r.Disk, "2G"),
+		CPUs:   2,
+	}
+	if def.CPUs != nil {
+		out.VM.CPUs = *def.CPUs
+	}
+	if r.CPUs != nil {
+		out.VM.CPUs = *r.CPUs
+	}
+	// "0" and "none" are how a config says "no second disk", since an empty
+	// string is indistinguishable from the key being absent.
+	if out.VM.Disk == "0" || out.VM.Disk == "none" {
+		out.VM.Disk = ""
+	}
 
 	if r.Ports != nil {
 		out.Ports = *r.Ports
@@ -479,8 +524,15 @@ func (c *Config) validate() error {
 		default:
 			return fmt.Errorf("router %q: unknown package_manager %q (known: apk, opkg)", r.ID, r.PkgManager)
 		}
-		if r.Fidelity == VM && r.target.QEMUSystem == "" {
-			return fmt.Errorf("router %q: fidelity vm is not supported for arch %s", r.ID, r.Arch)
+		if r.Fidelity == VM {
+			if !r.target.SupportsVM() {
+				return fmt.Errorf(
+					"router %q: fidelity vm is not supported for arch %s — upstream publishes no bootable combined image for %s (arches that work: %s)",
+					r.ID, r.Arch, r.target.Target, strings.Join(VMArches(), ", "))
+			}
+			if r.VM.CPUs < 1 {
+				return fmt.Errorf("router %q: cpus must be at least 1", r.ID)
+			}
 		}
 		if other, dup := seenHTTP[r.Ports.HTTP]; dup {
 			return fmt.Errorf("routers %q and %q both use host http port %d", other, r.ID, r.Ports.HTTP)
@@ -522,6 +574,20 @@ func (c *Config) Select(ids []string) ([]*Router, error) {
 		out = append(out, r)
 	}
 	return out, nil
+}
+
+// HasContainers reports whether any router runs under Docker.
+//
+// A project whose routers are all fidelity vm needs no container engine at
+// all, and demanding one — or failing at startup because Docker Desktop is not
+// running — would be a made-up requirement.
+func (c *Config) HasContainers() bool {
+	for i := range c.Routers {
+		if c.Routers[i].Fidelity != VM {
+			return true
+		}
+	}
+	return false
 }
 
 // RouterIDs lists every router id in file order.

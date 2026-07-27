@@ -23,7 +23,57 @@ lan_prefix="${lan_ip%.*}"
 lan_gw="$(uci -q get network.lan.gateway)"
 [ -n "$lan_prefix" ] || lan_prefix="192.168.1"
 
-uci -q batch <<EOF
+# Does this router already have a WAN worth keeping?
+#
+# In a container it does not: the only link is eth0, which is `lan`, so the
+# fake WAN below is the only WAN there will ever be. In a VM it does — the
+# second NIC is a real interface with a real DHCP lease and a real default
+# route, and it is what makes the package manager work. Overwriting it with a
+# dummy leaves a router that boots, renders, and cannot reach anything, with
+# the cause five uci sections away from the symptom.
+#
+# The test is whether the configured device EXISTS in the kernel, not whether
+# the section exists: a wan section pointing at a device that was never
+# created is exactly the state this fixture is meant to fill in.
+wan_dev="$(uci -q get network.wan.device)"
+have_real_wan=0
+if [ -n "$wan_dev" ] && [ -e "/sys/class/net/${wan_dev%%.*}" ]; then
+	have_real_wan=1
+	echo "owlab: keeping the real wan on $wan_dev"
+fi
+
+if [ "$have_real_wan" = 0 ]; then
+	uci -q batch <<-EOF
+		set network.wan=interface
+		set network.wan.device='dummy0'
+		set network.wan.proto='static'
+		set network.wan.ipaddr='203.0.113.42'
+		set network.wan.netmask='255.255.255.0'
+		set network.wan.gateway='203.0.113.1'
+		set network.wan.dns='9.9.9.9 149.112.112.112'
+		set network.wan.peerdns='0'
+		# metric 100: this default route must LOSE to lan's. dummy0 discards
+		# everything, so a wan route that won would black-hole DNS and the
+		# package manager on the dev box itself.
+		set network.wan.metric='100'
+
+		# NO ip6gw, and the metric trick that saves the IPv4 side cannot save
+		# this one. An ip6gw here would install the ONLY IPv6 default route,
+		# pointed at a dummy that discards in silence. Measured on the original
+		# of this fixture: 'apk add' then hung in poll() for minutes, because
+		# the download server has an AAAA record, happy-eyeballs tried it
+		# first, and the packets went nowhere instead of failing fast. Without
+		# a v6 default, connect() gets an instant "network unreachable" and
+		# falls back to IPv4. The address alone is enough to render the
+		# interface with IPv6 on it.
+		set network.wan6=interface
+		set network.wan6.device='dummy0'
+		set network.wan6.proto='static'
+		set network.wan6.ip6addr='2001:db8:1a2b:3c4d:5e6f:7a8b:9c0d:1e2f/64'
+		set network.wan6.ip6prefix='2001:db8:1a2b:3c4e:5e6f:7a8b:9c0d::/64'
+	EOF
+fi
+
 # The fake switch ports (veth eth1-eth3, created by the entrypoint). A
 # 'config device' is what makes netifd CLAIM them: unclaimed, they carry no
 # devtype in 'network.device status', and 'ubus call luci
@@ -31,40 +81,20 @@ uci -q batch <<EOF
 # exactly that field. They are device sections and not interfaces on purpose,
 # so they stay out of Network -> Interfaces and show up only where a port
 # belongs.
-set network.devp1=device
-set network.devp1.name='eth1'
-set network.devp2=device
-set network.devp2.name='eth2'
-set network.devp3=device
-set network.devp3.name='eth3'
+#
+# Claimed only if the device is really there and is not the WAN. A VM has no
+# veths — it has one real NIC per -device — and declaring its uplink a switch
+# port would take the router's own uplink away from the wan interface.
+n=0
+for dev in eth1 eth2 eth3; do
+	[ -e "/sys/class/net/$dev" ] || continue
+	[ "$dev" = "$wan_dev" ] && continue
+	n=$((n + 1))
+	uci -q set "network.devp$n=device"
+	uci -q set "network.devp$n.name=$dev"
+done
 
-set network.wan=interface
-set network.wan.device='dummy0'
-set network.wan.proto='static'
-set network.wan.ipaddr='203.0.113.42'
-set network.wan.netmask='255.255.255.0'
-set network.wan.gateway='203.0.113.1'
-set network.wan.dns='9.9.9.9 149.112.112.112'
-set network.wan.peerdns='0'
-# metric 100: this default route must LOSE to lan's. dummy0 discards
-# everything, so a wan route that won would black-hole DNS and the package
-# manager on the dev box itself.
-set network.wan.metric='100'
-
-# NO ip6gw, and the metric trick that saves the IPv4 side cannot save this
-# one. An ip6gw here would install the ONLY IPv6 default route, pointed at a
-# dummy that discards in silence. Measured on the original of this fixture:
-# 'apk add' then hung in poll() for minutes, because the download server has
-# an AAAA record, happy-eyeballs tried it first, and the packets went nowhere
-# instead of failing fast. Without a v6 default, connect() gets an instant
-# "network unreachable" and falls back to IPv4. The address alone is enough to
-# render the interface with IPv6 on it.
-set network.wan6=interface
-set network.wan6.device='dummy0'
-set network.wan6.proto='static'
-set network.wan6.ip6addr='2001:db8:1a2b:3c4d:5e6f:7a8b:9c0d:1e2f/64'
-set network.wan6.ip6prefix='2001:db8:1a2b:3c4e:5e6f:7a8b:9c0d::/64'
-
+uci -q batch <<EOF
 set network.br_guest=device
 set network.br_guest.name='br-guest'
 set network.br_guest.type='bridge'
@@ -113,13 +143,22 @@ set network.@route[-1].target='10.20.0.0'
 set network.@route[-1].netmask='255.255.0.0'
 set network.@route[-1].gateway='${lan_gw:-$lan_prefix.1}'
 
-add network route
-set network.@route[-1].interface='wan'
-set network.@route[-1].target='198.51.100.0'
-set network.@route[-1].netmask='255.255.255.0'
-set network.@route[-1].gateway='203.0.113.1'
 commit network
 EOF
+
+# A second static route, on the fake WAN only. Pointed at a real uplink its
+# gateway would be off-link and netifd would refuse to install it, trading a
+# rendered table row for an error in the log.
+if [ "$have_real_wan" = 0 ]; then
+	uci -q batch <<-EOF
+		add network route
+		set network.@route[-1].interface='wan'
+		set network.@route[-1].target='198.51.100.0'
+		set network.@route[-1].netmask='255.255.255.0'
+		set network.@route[-1].gateway='203.0.113.1'
+		commit network
+	EOF
+fi
 
 # DHCP pools for the invented networks. These serve for real, and that is
 # safe: each sits on a dummy device or on a VLAN nobody is on. `lan` keeps
@@ -160,7 +199,11 @@ EOF
 #
 # eth0 stays in the lan role because that is what it really is. The peer of
 # eth3 is left down by the entrypoint, so that tile renders as unlinked.
-if [ -s /etc/board.json ] && [ -x /bin/board_detect ]; then
+#
+# Not on a VM. There the board.json the image shipped is TRUE — eth0 and eth1
+# are the two virtual NICs QEMU created — and replacing it with a card that
+# names eth2 and eth3 would draw ports that do not exist.
+if [ "$have_real_wan" = 0 ] && [ -s /etc/board.json ] && [ -x /bin/board_detect ]; then
 	cat > /etc/board.json <<'EOF'
 {
 	"model": {

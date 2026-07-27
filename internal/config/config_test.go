@@ -320,3 +320,80 @@ routers:
 		t.Errorf("immortalwrt base image: %q", imm.BaseImage())
 	}
 }
+
+func TestVMDefaultsAndDiskOptOut(t *testing.T) {
+	p := write(t, `
+version: 1
+defaults:
+  release: "25.12.4"
+  fidelity: vm
+routers:
+  - id: a
+  - id: b
+    memory: 1G
+    cpus: 4
+    disk: none
+`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := cfg.Router("a")
+	if a.VM.Memory != "512M" || a.VM.CPUs != 2 || a.VM.Disk != "2G" {
+		t.Errorf("defaults not applied: %+v", a.VM)
+	}
+	b, _ := cfg.Router("b")
+	if b.VM.Memory != "1G" || b.VM.CPUs != 4 {
+		t.Errorf("per-router hardware ignored: %+v", b.VM)
+	}
+	// "none" has to become the empty string, because empty is what the rest
+	// of owlab reads as "no second disk" — leaving the word through would
+	// hand qemu-img a size it cannot parse.
+	if b.VM.Disk != "" {
+		t.Errorf("disk: none should disable the extroot disk, got %q", b.VM.Disk)
+	}
+}
+
+func TestVMImageNameFollowsTargetFirmware(t *testing.T) {
+	p := write(t, `
+version: 1
+defaults:
+  fidelity: vm
+  release: "25.12.4"
+routers:
+  - id: arm
+    arch: aarch64_generic
+  - id: x86
+    arch: x86_64
+`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// armsr publishes EFI-only combined images; x86 still publishes a
+	// legacy-boot one, and picking that avoids needing firmware on the host.
+	arm, _ := cfg.Router("arm")
+	if got := arm.VMImageName(); got != "openwrt-25.12.4-armsr-armv8-generic-squashfs-combined-efi.img.gz" {
+		t.Errorf("arm image name = %q", got)
+	}
+	x86, _ := cfg.Router("x86")
+	if got := x86.VMImageName(); got != "openwrt-25.12.4-x86-64-generic-squashfs-combined.img.gz" {
+		t.Errorf("x86 image name = %q", got)
+	}
+}
+
+func TestVMRejectsTargetsWithNoBootableImage(t *testing.T) {
+	p := write(t, `
+version: 1
+routers:
+  - id: a
+    fidelity: vm
+    release: "25.12.4"
+    arch: mips_24kc
+`)
+	if _, err := Load(p); err == nil {
+		t.Fatal("expected malta to be rejected for fidelity vm")
+	} else if !strings.Contains(err.Error(), "no bootable combined image") {
+		t.Errorf("unhelpful error: %v", err)
+	}
+}

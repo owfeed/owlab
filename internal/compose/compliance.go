@@ -105,7 +105,7 @@ func filterLines(s, substr string) string {
 // downloader. Errors are ordinary here — plenty of these files do not exist
 // for every distro and release.
 func fetchSmall(url, cacheDir string) ([]byte, error) {
-	path, err := download(url, cacheDir)
+	path, err := Fetch(url, cacheDir)
 	if err != nil {
 		return nil, err
 	}
