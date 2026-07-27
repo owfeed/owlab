@@ -101,6 +101,9 @@ type Router struct {
 	Fixtures []string
 	Ports    Ports
 	Hostname string
+	// PkgManager overrides the package manager. Normally empty: it is derived
+	// from the distribution and the release.
+	PkgManager PackageManager
 
 	target Target
 }
@@ -108,8 +111,21 @@ type Router struct {
 // Target is the resolved build target for this router.
 func (r *Router) Target() Target { return r.target }
 
-// PackageManager is apk or opkg, per this router's release.
-func (r *Router) PackageManager() PackageManager { return PackageManagerFor(r.Release) }
+// PackageManager is apk or opkg for this router.
+//
+// Precedence: what the config says, then what the distribution pins, then the
+// OpenWrt version rule. The middle step is not optional — the "25.12 and
+// later means apk" rule is a fact about OpenWrt, and a fork can track 25.12
+// while still building with opkg.
+func (r *Router) PackageManager() PackageManager {
+	if r.PkgManager != "" {
+		return r.PkgManager
+	}
+	if pm := r.spec().ForcePackageManager; pm != "" {
+		return pm
+	}
+	return PackageManagerFor(r.Release)
+}
 
 // FromTarball reports whether this router must be built by unpacking a rootfs
 // tarball rather than by pulling an upstream image.
@@ -149,6 +165,7 @@ type rawRouter struct {
 	Release  *string        `yaml:"release"`
 	Arch     *string        `yaml:"arch"`
 	Fidelity *string        `yaml:"fidelity"`
+	PkgMgr   *string        `yaml:"package_manager"`
 	Packages []string       `yaml:"packages"`
 	Extra    []ExtraPackage `yaml:"extra_packages"`
 	Fixtures []string       `yaml:"fixtures"`
@@ -260,13 +277,14 @@ func merge(def, r rawRouter, index int) (Router, error) {
 	}
 
 	out := Router{
-		ID:       pick(def.ID, r.ID, ""),
-		Distro:   Distro(pick(def.Distro, r.Distro, string(OpenWrt))),
-		Release:  pick(def.Release, r.Release, ""),
-		Arch:     pick(def.Arch, r.Arch, "auto"),
-		Fidelity: Fidelity(pick(def.Fidelity, r.Fidelity, string(Basic))),
-		Packages: mergeList(def.Packages, r.Packages),
-		Fixtures: mergeList(def.Fixtures, r.Fixtures),
+		ID:         pick(def.ID, r.ID, ""),
+		Distro:     Distro(pick(def.Distro, r.Distro, string(OpenWrt))),
+		Release:    pick(def.Release, r.Release, ""),
+		Arch:       pick(def.Arch, r.Arch, "auto"),
+		Fidelity:   Fidelity(pick(def.Fidelity, r.Fidelity, string(Basic))),
+		PkgManager: PackageManager(pick(def.PkgMgr, r.PkgMgr, "")),
+		Packages:   mergeList(def.Packages, r.Packages),
+		Fixtures:   mergeList(def.Fixtures, r.Fixtures),
 	}
 	if out.ID == "" {
 		return Router{}, errors.New("id is required")
@@ -417,6 +435,11 @@ func (c *Config) validate() error {
 		case Basic, Full, VM:
 		default:
 			return fmt.Errorf("router %q: unknown fidelity %q (known: basic, full, vm)", r.ID, r.Fidelity)
+		}
+		switch r.PkgManager {
+		case "", APK, OPKG:
+		default:
+			return fmt.Errorf("router %q: unknown package_manager %q (known: apk, opkg)", r.ID, r.PkgManager)
 		}
 		if r.Fidelity == VM && r.target.QEMUSystem == "" {
 			return fmt.Errorf("router %q: fidelity vm is not supported for arch %s", r.ID, r.Arch)

@@ -45,6 +45,15 @@ type DistroSpec struct {
 	SnapshotPath string
 	// SnapshotVersion is what appears in artifact names for snapshot builds.
 	SnapshotVersion string
+	// ForcePackageManager pins the package manager regardless of release
+	// number, or "" to derive it from the version the way OpenWrt does.
+	//
+	// This exists because the version rule is a property of OpenWrt, not of
+	// the family: a fork can track OpenWrt 25.12 and still build with opkg
+	// (Kwrt does, with `# CONFIG_USE_APK is not set`). Deriving the manager
+	// from the release number alone would hand such a router apk commands
+	// and fail every install.
+	ForcePackageManager PackageManager
 }
 
 var distros = map[Distro]DistroSpec{

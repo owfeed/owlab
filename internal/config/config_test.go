@@ -241,3 +241,45 @@ func TestFindWalksUp(t *testing.T) {
 		t.Errorf("found file does not load: %v", err)
 	}
 }
+
+func TestPackageManagerPrecedence(t *testing.T) {
+	// The "25.12 and later means apk" rule is a fact about OpenWrt, not about
+	// the family. A fork can track 25.12 and still build with opkg (Kwrt does,
+	// with `# CONFIG_USE_APK is not set`), so the config must be able to say
+	// so — otherwise every install on such a router gets apk commands and
+	// fails.
+	p := write(t, `
+version: 1
+routers:
+  - id: derived
+    release: "25.12.4"
+  - id: forced
+    release: "25.12.4"
+    package_manager: opkg
+`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, _ := cfg.Router("derived")
+	if d.PackageManager() != APK {
+		t.Errorf("derived: got %s, want apk", d.PackageManager())
+	}
+	f, _ := cfg.Router("forced")
+	if f.PackageManager() != OPKG {
+		t.Errorf("forced: got %s, want opkg", f.PackageManager())
+	}
+}
+
+func TestUnknownPackageManagerIsRejected(t *testing.T) {
+	p := write(t, `
+version: 1
+routers:
+  - id: a
+    release: "25.12.4"
+    package_manager: yum
+`)
+	if _, err := Load(p); err == nil {
+		t.Fatal("expected an unknown package manager to be rejected")
+	}
+}
