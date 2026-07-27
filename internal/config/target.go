@@ -1,0 +1,337 @@
+package config
+
+import (
+	"fmt"
+	"runtime"
+	"strconv"
+	"strings"
+)
+
+// Distro is an OpenWrt-derived distribution owlab knows how to boot.
+type Distro string
+
+const (
+	OpenWrt     Distro = "openwrt"
+	ImmortalWrt Distro = "immortalwrt"
+)
+
+// DistroSpec is everything owlab needs to know about one distribution.
+//
+// Adding a fork should be one entry in the table below and nothing else. The
+// bar for inclusion is that the project publishes a rootfs TARBALL (or a
+// container image) for a target we support — disk images cannot be turned
+// into a container.
+type DistroSpec struct {
+	// Name is the value used in owlab.yaml.
+	Name Distro
+	// Title is how the distribution calls itself, for messages.
+	Title string
+	// DownloadHost is the root of the download server, no trailing slash.
+	DownloadHost string
+	// FilePrefix is the string artifact file names start with, which is not
+	// always the same as Name.
+	FilePrefix string
+	// ImageRepo is the container image repository, or "" when the only way
+	// in is unpacking a rootfs tarball.
+	//
+	// ImmortalWrt deliberately has none even though immortalwrt/rootfs
+	// exists: every tag there is labelled linux/amd64, including the ones
+	// whose contents are aarch64, so the metadata cannot be used to select
+	// an image. The tarball is unambiguous.
+	ImageRepo string
+	// ReleasesPath and SnapshotPath are the path segments under
+	// DownloadHost, before /targets/<target>.
+	ReleasesPath string
+	SnapshotPath string
+	// SnapshotVersion is what appears in artifact names for snapshot builds.
+	SnapshotVersion string
+}
+
+var distros = map[Distro]DistroSpec{
+	OpenWrt: {
+		Name: OpenWrt, Title: "OpenWrt",
+		DownloadHost: "https://downloads.openwrt.org",
+		FilePrefix:   "openwrt",
+		ImageRepo:    "openwrt/rootfs",
+		ReleasesPath: "releases", SnapshotPath: "snapshots",
+		SnapshotVersion: "SNAPSHOT",
+	},
+	ImmortalWrt: {
+		Name: ImmortalWrt, Title: "ImmortalWrt",
+		DownloadHost: "https://downloads.immortalwrt.org",
+		FilePrefix:   "immortalwrt",
+		ImageRepo:    "",
+		ReleasesPath: "releases", SnapshotPath: "snapshots",
+		SnapshotVersion: "SNAPSHOT",
+	},
+}
+
+// LookupDistro resolves a distribution name.
+func LookupDistro(d Distro) (DistroSpec, bool) {
+	s, ok := distros[d]
+	return s, ok
+}
+
+// KnownDistros lists supported distributions, sorted for stable messages.
+func KnownDistros() []string {
+	out := make([]string, 0, len(distros))
+	for k := range distros {
+		out = append(out, string(k))
+	}
+	sortStrings(out)
+	return out
+}
+
+// Fidelity is how close to real hardware a router is asked to be. It is
+// chosen per router, not globally, because the cheap tier is enough for most
+// LuCI work and the expensive ones are not available on every host.
+type Fidelity string
+
+const (
+	// Basic is a container with procd as PID 1. Works on every host OS.
+	Basic Fidelity = "basic"
+	// Full is Basic plus real mac80211_hwsim phys moved in from the host
+	// kernel. Needs a Linux kernel the user controls.
+	Full Fidelity = "full"
+	// VM is a real OpenWrt kernel under QEMU, run natively on the host.
+	VM Fidelity = "vm"
+)
+
+// Target describes one OpenWrt build target: how to name it in a tag, where
+// its files live on the download server, and how to ask Docker for it.
+//
+// The Arch/Target split is not cosmetic. OpenWrt publishes both forms as tags
+// ("x86-64-25.12.4" and "x86_64-25.12.4" are the same image), but the download
+// paths use the target form and the package feeds use the arch form.
+type Target struct {
+	// Arch is the OpenWrt architecture name, e.g. "aarch64_generic". This is
+	// what appears in feed URLs and in the arch-form image tags.
+	Arch string
+	// Target is the target/subtarget path, e.g. "armsr/armv8". Used to build
+	// download URLs.
+	Target string
+	// TagPrefix is the target-form image tag prefix, e.g. "armsr-armv8".
+	TagPrefix string
+	// FileSlug is how the target appears inside artifact file names, e.g.
+	// "armsr-armv8" in "openwrt-25.12.4-armsr-armv8-rootfs.tar.gz".
+	FileSlug string
+	// OCIPlatform is what must be passed to `docker --platform`.
+	//
+	// Only x86_64 normalises to a real OCI platform ("amd64"). Every other
+	// target publishes a non-standard architecture string, so a plain pull on
+	// an arm64 host fails with "no matching manifest". We therefore always
+	// pass --platform explicitly rather than relying on default resolution.
+	OCIPlatform string
+	// HostPlatform is the honest OCI platform of the binaries inside. Used
+	// when we build an image ourselves from a rootfs tarball onto scratch,
+	// where we control the metadata and there is no reason to lie.
+	HostPlatform string
+	// HasRootfsImage says whether upstream publishes a container image for
+	// this target. Only 8 targets do; the rest need ImageBuilder.
+	HasRootfsImage bool
+	// QEMUSystem is the qemu-system-* binary that boots this target, or ""
+	// if the VM tier does not support it.
+	QEMUSystem string
+}
+
+// targets is the set owlab supports. It is deliberately limited to what
+// upstream actually publishes a rootfs for, because those are the targets
+// where `up` can be fast (pull an image) rather than slow (run ImageBuilder).
+var targets = map[string]Target{
+	"x86_64": {
+		Arch: "x86_64", Target: "x86/64",
+		TagPrefix: "x86-64", FileSlug: "x86-64",
+		OCIPlatform: "linux/amd64", HostPlatform: "linux/amd64",
+		HasRootfsImage: true, QEMUSystem: "qemu-system-x86_64",
+	},
+	"aarch64_generic": {
+		Arch: "aarch64_generic", Target: "armsr/armv8",
+		TagPrefix: "armsr-armv8", FileSlug: "armsr-armv8",
+		OCIPlatform: "linux/aarch64_generic", HostPlatform: "linux/arm64",
+		HasRootfsImage: true, QEMUSystem: "qemu-system-aarch64",
+	},
+	"arm_cortex-a15_neon-vfpv4": {
+		Arch: "arm_cortex-a15_neon-vfpv4", Target: "armsr/armv7",
+		TagPrefix: "armsr-armv7", FileSlug: "armsr-armv7",
+		OCIPlatform: "linux/arm_cortex-a15_neon-vfpv4", HostPlatform: "linux/arm/v7",
+		HasRootfsImage: true, QEMUSystem: "qemu-system-arm",
+	},
+	"arm_cortex-a9_vfpv3-d16": {
+		Arch: "arm_cortex-a9_vfpv3-d16", Target: "mvebu/cortexa9",
+		TagPrefix: "mvebu-cortexa9", FileSlug: "mvebu-cortexa9",
+		OCIPlatform: "linux/arm_cortex-a9_vfpv3-d16", HostPlatform: "linux/arm/v7",
+		HasRootfsImage: true,
+	},
+	"mips_24kc": {
+		Arch: "mips_24kc", Target: "malta/be",
+		TagPrefix: "malta-be", FileSlug: "malta-be",
+		OCIPlatform: "linux/mips_24kc", HostPlatform: "linux/mips",
+		HasRootfsImage: true, QEMUSystem: "qemu-system-mips",
+	},
+	"i386_pentium4": {
+		Arch: "i386_pentium4", Target: "x86/generic",
+		TagPrefix: "x86-generic", FileSlug: "x86-generic",
+		OCIPlatform: "linux/i386_pentium4", HostPlatform: "linux/386",
+		HasRootfsImage: true, QEMUSystem: "qemu-system-i386",
+	},
+}
+
+// LookupTarget resolves an architecture name, or "auto" to match the host.
+func LookupTarget(arch string) (Target, error) {
+	if arch == "" || arch == "auto" {
+		arch = HostArch()
+	}
+	t, ok := targets[arch]
+	if !ok {
+		return Target{}, fmt.Errorf("unknown arch %q (known: %s)", arch, strings.Join(KnownArches(), ", "))
+	}
+	return t, nil
+}
+
+// HostArch is the OpenWrt arch that runs natively on this machine.
+func HostArch() string {
+	switch runtime.GOARCH {
+	case "arm64":
+		return "aarch64_generic"
+	case "amd64":
+		return "x86_64"
+	case "386":
+		return "i386_pentium4"
+	case "arm":
+		return "arm_cortex-a15_neon-vfpv4"
+	default:
+		// Emulation is better than refusing to start.
+		return "x86_64"
+	}
+}
+
+// KnownArches lists supported architectures, sorted for stable messages.
+func KnownArches() []string {
+	out := make([]string, 0, len(targets))
+	for k := range targets {
+		out = append(out, k)
+	}
+	sortStrings(out)
+	return out
+}
+
+// PackageManager is apk or opkg, decided by release.
+type PackageManager string
+
+const (
+	APK  PackageManager = "apk"
+	OPKG PackageManager = "opkg"
+)
+
+// PackageManagerFor returns the package manager a release ships.
+//
+// OpenWrt switched from opkg to apk in 25.12; master/SNAPSHOT switched in
+// November 2024. Everything at or below 24.10 is opkg. ImmortalWrt tracks
+// OpenWrt here, so the same rule applies to both.
+func PackageManagerFor(release string) PackageManager {
+	if isSnapshot(release) {
+		return APK
+	}
+	major, minor, ok := parseRelease(release)
+	if !ok {
+		// Unrecognised version strings are assumed modern: a wrong guess
+		// toward apk fails loudly at build time, while a wrong guess toward
+		// opkg silently produces an image with no working package manager.
+		return APK
+	}
+	if major > 25 || (major == 25 && minor >= 12) {
+		return APK
+	}
+	return OPKG
+}
+
+func isSnapshot(release string) bool {
+	r := strings.ToLower(release)
+	return r == "snapshot" || r == "master" || r == "main" || strings.HasSuffix(r, "-snapshot")
+}
+
+func parseRelease(release string) (major, minor int, ok bool) {
+	parts := strings.SplitN(strings.TrimPrefix(release, "v"), ".", 3)
+	if len(parts) < 2 {
+		return 0, 0, false
+	}
+	major, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, false
+	}
+	minor, err = strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, false
+	}
+	return major, minor, true
+}
+
+// spec is this router's distribution, falling back to OpenWrt so that a
+// validated config never has to nil-check.
+func (r *Router) spec() DistroSpec {
+	if s, ok := distros[r.Distro]; ok {
+		return s
+	}
+	return distros[OpenWrt]
+}
+
+// ReleaseDir is the directory holding one release's artifacts for a target.
+func (r *Router) ReleaseDir() string {
+	s := r.spec()
+	if isSnapshot(r.Release) {
+		return fmt.Sprintf("%s/%s/targets/%s", s.DownloadHost, s.SnapshotPath, r.target.Target)
+	}
+	return fmt.Sprintf("%s/%s/%s/targets/%s", s.DownloadHost, s.ReleasesPath, r.Release, r.target.Target)
+}
+
+// RootfsTarballURL is the rootfs tarball for this router's release/target.
+//
+// This is the base for any distribution with no usable container image, and
+// the fallback when someone pins a point release whose images have not been
+// published yet.
+func (r *Router) RootfsTarballURL() string {
+	s := r.spec()
+	ver := r.Release
+	if isSnapshot(r.Release) {
+		ver = s.SnapshotVersion
+	}
+	return fmt.Sprintf("%s/%s-%s-%s-rootfs.tar.gz", r.ReleaseDir(), s.FilePrefix, ver, r.target.FileSlug)
+}
+
+// BaseImage is the upstream container image for this router, or "" when the
+// router must be built from a rootfs tarball instead.
+func (r *Router) BaseImage() string {
+	s := r.spec()
+	if s.ImageRepo == "" || !r.target.HasRootfsImage {
+		return ""
+	}
+	if isSnapshot(r.Release) {
+		return fmt.Sprintf("%s:%s-master", s.ImageRepo, r.target.Arch)
+	}
+	return fmt.Sprintf("%s:%s-%s", s.ImageRepo, r.target.Arch, r.Release)
+}
+
+// FeedBase is the root under which this release's package feeds live.
+//
+// The exact point release matters. apk records hard pins in /etc/apk/world
+// (base-files=1707~4ccb782af7); pointing a 25.12.1 rootfs at the 25.12.5 feed
+// makes every install fail with "breaks: world[...]". Old point releases stay
+// available on the download server, so pinning is always possible.
+func (r *Router) FeedBase() string {
+	s := r.spec()
+	if isSnapshot(r.Release) {
+		return s.DownloadHost + "/" + s.SnapshotPath
+	}
+	return fmt.Sprintf("%s/%s/%s", s.DownloadHost, s.ReleasesPath, r.Release)
+}
+
+// Title is how this router's distribution calls itself.
+func (r *Router) Title() string { return r.spec().Title }
+
+func sortStrings(s []string) {
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j] < s[j-1]; j-- {
+			s[j], s[j-1] = s[j-1], s[j]
+		}
+	}
+}

@@ -1,0 +1,61 @@
+#!/bin/sh
+# Runtime state that makes the box look inhabited: fake DHCP leases and fake
+# ARP neighbours.
+#
+# This cannot be a uci-default. Both live under /tmp, a tmpfs procd mounts
+# during boot, so both are gone on every start. rc.local runs from
+# /etc/init.d/done at S95 — after dnsmasq (S19) has written its own empty
+# lease file. Written any earlier, dnsmasq truncates it back.
+#
+# It STAYS written because lan has dhcp ignore=1 (95_owlab-base): dnsmasq
+# never serves a lease here, so it never rewrites the file it would otherwise
+# own.
+#
+# What this buys: "Active DHCP Leases" on the Overview, the DHCP pages, and
+# the ARP table under Status -> Routes are the only DATA TABLES stock LuCI
+# renders on a quiet router. With no rows they collapse to "There are no
+# active leases" and every bit of table styling goes unexercised.
+
+[ -f /etc/owlab/want-fake-leases ] || exit 0
+
+lan_ip="$(uci -q get network.lan.ipaddr)"
+lan_prefix="${lan_ip%.*}"
+[ -n "$lan_prefix" ] || exit 0
+
+LEASEFILE="$(uci -q get dhcp.@dnsmasq[0].leasefile)"
+LEASEFILE="${LEASEFILE:-/tmp/dhcp.leases}"
+
+# dnsmasq's own format: expiry, mac, ip, hostname, client-id.
+#
+# 4102444800 is 2100-01-01. A relative expiry would tick down to "expired" and
+# rows would start vanishing partway through a long session, which looks like
+# a bug in whatever is being tested.
+cat > "$LEASEFILE" <<EOF
+4102444800 b8:27:eb:1a:2b:3c $lan_prefix.20 nas 01:b8:27:eb:1a:2b:3c
+4102444800 00:1b:a9:4f:11:22 $lan_prefix.21 printer *
+4102444800 cc:2d:8c:77:88:99 $lan_prefix.22 tv-lg 01:cc:2d:8c:77:88:99
+4102444800 3c:22:fb:8a:1d:44 $lan_prefix.30 macbook-pro 01:3c:22:fb:8a:1d:44
+4102444800 f0:18:98:2c:5e:71 $lan_prefix.31 iphone-15 01:f0:18:98:2c:5e:71
+4102444800 dc:a6:32:77:0b:19 $lan_prefix.32 rpi-hass 01:dc:a6:32:77:0b:19
+4102444800 54:ef:44:0a:bb:cd 192.168.4.60 vacuum 01:54:ef:44:0a:bb:cd
+4102444800 a4:cf:12:9e:34:56 192.168.4.61 esp-sensor-hall 01:a4:cf:12:9e:34:56
+4102444800 2c:f0:5d:11:73:8e 192.168.3.101 guest-android *
+EOF
+
+# `nud stale`, never `permanent`. A permanent entry would make the kernel
+# answer for an address nothing owns, on a bridge SHARED with the engine's
+# other containers. A stale entry is a cache line — it is what the ARP table
+# is made of, and it influences nothing.
+for e in \
+	"$lan_prefix.20 b8:27:eb:1a:2b:3c" \
+	"$lan_prefix.21 00:1b:a9:4f:11:22" \
+	"$lan_prefix.22 cc:2d:8c:77:88:99" \
+	"$lan_prefix.30 3c:22:fb:8a:1d:44" \
+	"$lan_prefix.31 f0:18:98:2c:5e:71" \
+	"$lan_prefix.32 dc:a6:32:77:0b:19"
+do
+	set -- $e
+	ip neigh replace "$1" lladdr "$2" dev eth0 nud stale 2>/dev/null
+done
+
+exit 0

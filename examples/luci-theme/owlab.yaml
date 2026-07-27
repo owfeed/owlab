@@ -1,0 +1,68 @@
+# A theme developer's setup: the same theme on three userlands at once.
+#
+# Why three: a LuCI theme has to survive the package manager change (apk from
+# 25.12, opkg on 24.10) and the fact that a fork's LuCI is not upstream's —
+# ImmortalWrt ships its own luci feed with its own patches, and differences
+# there are invisible from reading openwrt/luci.
+
+version: 1
+
+project:
+  name: luci-theme-example
+  # Themes need this: LuCI resolves templates through luci.main.mediaurlbase,
+  # and a theme whose templates are not where mediaurlbase points crashes the
+  # dispatcher rather than falling back.
+  theme: example
+
+defaults:
+  fidelity: basic
+  arch: auto
+
+  # A bare `luci` renders three menus, and a theme whose dev box shows three
+  # menus is a theme nobody can look at. The sections, tabs, tables and
+  # widgets that actually need styling live in the apps.
+  packages:
+    - luci
+    - luci-app-firewall
+    - luci-app-package-manager
+    - luci-app-ddns
+    - luci-app-upnp
+    - luci-app-sqm
+    - luci-app-wol
+    - luci-app-nlbwmon
+    - luci-mod-dashboard
+    - luci-proto-wireguard
+    # The wifi userland. LuCI's wireless pages key off the existence of
+    # /sbin/wifi (from wifi-scripts) and read the radio list straight out of
+    # UCI, so they render with no radios present at all.
+    - wpad-basic-mbedtls
+    - wifi-scripts
+    - iwinfo
+    # dropbear ships no sftp-server, and OpenSSH 9+ scp speaks SFTP by
+    # default — without this every scp against the box fails.
+    - openssh-sftp-server
+
+routers:
+  - id: owrt2512
+    release: "25.12.4"
+    ports: { http: 8025, ssh: 2225 }
+
+  - id: owrt2410
+    release: "24.10.8"
+    # 24.10 predates several of the packages above; the ones missing from its
+    # feed are reported and skipped rather than failing the build.
+    ports: { http: 8024, ssh: 2224 }
+
+  - id: imm2512
+    distro: immortalwrt
+    release: "25.12.1"
+    ports: { http: 8026, ssh: 2226 }
+
+  # The fourth corner of the matrix. The three axes that actually change how a
+  # theme renders are the package manager (apk vs opkg), the LuCI feed
+  # (upstream vs the fork's own patched one), and the release — and only
+  # having all four boxes covers every pairing of them.
+  - id: imm2410
+    distro: immortalwrt
+    release: "24.10.6"
+    ports: { http: 8027, ssh: 2227 }

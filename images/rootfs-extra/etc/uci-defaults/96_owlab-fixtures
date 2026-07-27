@@ -1,0 +1,34 @@
+#!/bin/sh
+# Run the fixture profiles this image was built with.
+#
+# The list comes from /etc/owlab/fixtures, written at build time from the
+# `fixtures:` key in owlab.yaml. Iteration is over the FILES in name
+# order, not over the requested list, because the profiles have dependencies:
+# portforwards needs the `wan` zone that networks creates, and wireguard's
+# forwarding needs `lan` to already be a zone. Honouring the order the user
+# happened to type would make those silently incomplete.
+
+WANT_FILE=/etc/owlab/fixtures
+[ -s "$WANT_FILE" ] || exit 0
+want=" $(tr '\n' ' ' < "$WANT_FILE") "
+
+for f in /usr/share/owlab/fixtures/*.sh; do
+	[ -f "$f" ] || continue
+	name="$(basename "$f" .sh)"
+	name="${name#*-}"            # "10-networks" -> "networks"
+	case "$want" in
+		*" $name "*)
+			echo "owlab: fixture $name"
+			# Not sourced: a fixture that exits or fails must not take the
+			# rest of the boot with it.
+			sh "$f" || echo "owlab: fixture $name failed" >&2
+			;;
+	esac
+done
+
+# The fixtures above added sections to network, firewall, dhcp and system.
+# LuCI's dispatch tree was built before any of that existed.
+rm -f /tmp/luci-indexcache*
+rm -rf /tmp/luci-modulecache
+
+exit 0

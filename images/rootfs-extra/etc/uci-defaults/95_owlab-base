@@ -1,0 +1,38 @@
+#!/bin/sh
+# What every owlab container needs regardless of what is being developed
+# on it. Runs once, on first boot, from procd's boot sequence.
+#
+# Fixture profiles (which invent VLANs, WireGuard peers, DHCP leases and so
+# on) are separate files and are opt-in. This one is not optional: without it
+# the container either hands out DHCP to its own Docker network or answers
+# only on https with a self-signed certificate.
+
+# The container's single interface is Docker's, on Docker's subnet, shared
+# with every other container on that network. Serving DHCP there means racing
+# Docker's own IPAM to answer other containers — so dnsmasq keeps running (LuCI
+# has pages for it, and fixture leases want a leasefile) but stops offering
+# addresses.
+uci -q set dhcp.lan.ignore='1'
+
+# Plain HTTP on all interfaces. The default redirects to https with a
+# self-signed certificate, which every browser interrupts and every scripted
+# check has to be told to ignore — for a throwaway dev box on localhost that
+# is pure friction. Port 80 inside is what compose forwards to the host.
+uci -q set uhttpd.main.listen_http='0.0.0.0:80'
+uci -q delete uhttpd.main.listen_https
+uci -q delete uhttpd.main.redirect_https
+
+# The attended-sysupgrade check fires a modal on the first LuCI page load and
+# lands in the middle of every screenshot. There is nothing to upgrade to in a
+# container anyway.
+uci -q set attendedsysupgrade.client.login_check_for_upgrades='0'
+
+uci commit
+
+# LuCI caches its dispatch tree and its module list. Both were built before
+# the packages above were installed, so they describe a router that no longer
+# exists.
+rm -f /tmp/luci-indexcache*
+rm -rf /tmp/luci-modulecache
+
+exit 0
