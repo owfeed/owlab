@@ -49,6 +49,16 @@ type Project struct {
 	// and a theme whose templates are not where mediaurlbase points crashes
 	// the dispatcher rather than falling back.
 	Theme string `yaml:"theme"`
+
+	// Build is a command run in the project directory before every sync.
+	//
+	// Many LuCI packages do not keep their shipped assets in the tree: a
+	// theme's cascade.css is concatenated from styles/, translations are
+	// compiled from .po, and JS may be bundled. Syncing without that step
+	// copies a tree that is missing exactly the files LuCI asks for, and the
+	// result is a router serving 404s for its own stylesheet — which looks
+	// like a broken sync rather than a missing build.
+	Build string `yaml:"build"`
 }
 
 // Ports are the host ports forwarded to a router.

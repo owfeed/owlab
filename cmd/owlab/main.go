@@ -33,6 +33,7 @@ Commands:
   down        stop routers
   shell       open a shell on a router
   exec        run a command on a router
+  sync        copy this package's source into the routers and reload LuCI
   install     install packages on a running router
   logs        show a router's boot and service log
   status      list routers and where to reach them
@@ -118,6 +119,8 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return a.shell(ctx, args)
 	case "exec":
 		return a.exec(ctx, args)
+	case "sync":
+		return a.sync(ctx, args)
 	case "install":
 		return a.install(ctx, args)
 	case "logs":

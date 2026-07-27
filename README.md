@@ -90,6 +90,51 @@ rebuild. `owlab install` is for trying something out — containers hold no
 volumes, so `owlab up --rebuild` is a factory reset and anything installed that
 way is gone.
 
+## The inner loop
+
+```console
+$ owlab sync                 # copy your sources in, reload LuCI
+  owrt2512   42 files, 846 KB
+
+$ owlab sync --watch         # ...and keep doing it as you edit
+```
+
+`sync` puts files exactly where `luci.mk`'s install rules would, then drops
+the caches its postinst drops (`/tmp/luci-indexcache*`,
+`/tmp/luci-modulecache`, `rpcd reload`). Without that last part an edited
+template keeps rendering its old text, which reads like the sync silently
+failed.
+
+It does **not** build a real package — that is a separate, slower verification
+step. What it gives you is edit, `sync`, reload.
+
+Two things it will not overwrite: `/etc/config/` and `/etc/uci-defaults/`.
+Those are the router's state, not your package's; a real install ships them as
+conffiles and leaves an existing one alone.
+
+### If your package builds its assets
+
+Many do. A theme's `cascade.css` is concatenated from `styles/`, translations
+are compiled from `.po`, JS gets bundled. Syncing the tree as-is copies
+everything *except* the files LuCI actually asks for, and the router serves
+404s for its own stylesheet — which looks like a broken sync rather than a
+missing build.
+
+```yaml
+project:
+  build: ./build-css.sh htdocs/luci-static/footstrap/cascade.css --dev
+```
+
+Runs in the project directory before every sync, including every `--watch`
+iteration. `--no-build` skips it.
+
+`--watch` polls rather than using filesystem events: inotify does not
+propagate from a Windows drive into WSL, and the desktop engines' shared
+filesystems have their own gaps. A poll is slower to notice but it notices
+everywhere. When a build step is configured the whole project is watched, not
+just the `install:` directories — the files a build *reads* are by definition
+not the files it installs.
+
 Routers are named by the ids in `owlab.yaml`. With no ids, commands that
 can act on many routers act on all of them.
 

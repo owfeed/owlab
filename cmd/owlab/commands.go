@@ -14,6 +14,7 @@ import (
 
 	"github.com/VizzleTF/owlab/internal/compose"
 	"github.com/VizzleTF/owlab/internal/config"
+	syncpkg "github.com/VizzleTF/owlab/internal/sync"
 )
 
 // parseMixed lets flags appear before or after router ids, because
@@ -156,6 +157,70 @@ func (a *app) exec(ctx context.Context, args []string) error {
 	// Joined and handed to sh -c rather than exec'd directly, so that pipes
 	// and redirection in the command work the way the developer typed them.
 	return a.docker.Run(ctx, "exec", a.containerName(r.ID), "/bin/sh", "-c", strings.Join(cmd, " "))
+}
+
+// sync copies the project's source tree into running routers.
+func (a *app) sync(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
+	watch := fs.Bool("watch", false, "keep running, re-syncing whenever a source file changes")
+	interval := fs.Duration("interval", time.Second, "how often to poll for changes when watching")
+	verbose := fs.Bool("v", false, "list every file synced")
+	noBuild := fs.Bool("no-build", false, "skip project.build")
+	ids, err := parseMixed(fs, args)
+	if err != nil {
+		return err
+	}
+
+	routers, err := a.cfg.Select(ids)
+	if err != nil {
+		return err
+	}
+	opts := syncpkg.Options{
+		Config:        a.cfg,
+		ContainerName: a.containerName,
+		Verbose:       *verbose,
+		SkipBuild:     *noBuild,
+	}
+
+	report := func(results []syncpkg.Result) {
+		var failed int
+		for _, res := range results {
+			if res.Err != nil {
+				fmt.Fprintf(os.Stderr, "! %-14s %v\n", res.Router, res.Err)
+				failed++
+				continue
+			}
+			fmt.Printf("  %-14s %d files, %s\n", res.Router, res.Files, humanBytes(res.Bytes))
+		}
+		if failed > 0 && failed == len(results) {
+			fmt.Fprintf(os.Stderr, "\nAre the routers running? Try `owlab status`.\n")
+		}
+	}
+
+	if *watch {
+		report(syncpkg.Run(ctx, opts, routers))
+		return syncpkg.Watch(ctx, opts, routers, *interval, report)
+	}
+
+	results := syncpkg.Run(ctx, opts, routers)
+	report(results)
+	for _, res := range results {
+		if res.Err != nil {
+			return fmt.Errorf("sync failed on %s", res.Router)
+		}
+	}
+	return nil
+}
+
+func humanBytes(n int64) string {
+	switch {
+	case n > 1<<20:
+		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
+	case n > 1<<10:
+		return fmt.Sprintf("%.0f KB", float64(n)/(1<<10))
+	default:
+		return fmt.Sprintf("%d B", n)
+	}
 }
 
 // install adds packages to a running router.

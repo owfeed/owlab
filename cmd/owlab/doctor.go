@@ -4,11 +4,15 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
+	"github.com/VizzleTF/owlab/internal/compose"
 	"github.com/VizzleTF/owlab/internal/config"
 	"github.com/VizzleTF/owlab/internal/dockercli"
 	"github.com/VizzleTF/owlab/internal/engine"
@@ -125,6 +129,18 @@ func (a *app) doctor(ctx context.Context, args []string) error {
 			} else {
 				add("config", pass, "%s — %d router(s): %s",
 					path, len(cfg.Routers), strings.Join(cfg.RouterIDs(), ", "))
+				// A build command that is not there fails every sync, and the
+				// shell's "not found" does not say where the string came from.
+				if b := cfg.Project.Build; b != "" {
+					script := strings.Fields(b)[0]
+					if _, err := os.Stat(filepath.Join(cfg.Dir, script)); err == nil {
+						add("build", pass, "%s", b)
+					} else if _, err := exec.LookPath(script); err == nil {
+						add("build", pass, "%s", b)
+					} else {
+						add("build", fail, "project.build runs %q, which is neither a file in %s nor on PATH", script, cfg.Dir)
+					}
+				}
 				checks = append(checks, configChecks(cfg)...)
 			}
 		} else {
@@ -164,8 +180,53 @@ func configChecks(cfg *config.Config) []check {
 				"snapshot images and snapshot feeds are rebuilt daily and independently; " +
 					"package installs will start failing as they drift. Pin a point release for repeatable work."})
 		}
+
+		// A port already taken fails only at `up`, and the message docker
+		// gives ("Bind for 0.0.0.0:2225 failed: port is already allocated")
+		// names the port but not who holds it or which router wanted it.
+		for _, p := range []struct {
+			kind string
+			port int
+		}{{"http", r.Ports.HTTP}, {"ssh", r.Ports.SSH}} {
+			busy, by := portInUse(p.port)
+			if !busy {
+				continue
+			}
+			// This router's own container holding its own port is the normal
+			// state of a running lab, not a problem to report.
+			if strings.Contains(by, compose.ProjectName(cfg.Project.Name)+"-"+r.ID) {
+				continue
+			}
+			out = append(out, check{name, warn,
+				fmt.Sprintf("host %s port %d is already in use%s — `owlab up` will fail until it is free or the config changes",
+					p.kind, p.port, by)})
+		}
 	}
 	return out
+}
+
+// portInUse reports whether something already listens on a host port, and
+// names the container when it is one of ours.
+func portInUse(port int) (bool, string) {
+	// 0.0.0.0, not 127.0.0.1. Docker publishes to all interfaces, and on
+	// macOS binding a specific address does NOT conflict with an existing
+	// wildcard bind — so probing the loopback address reports every port as
+	// free while `up` still fails with "address already in use".
+	ln, err := net.Listen("tcp", net.JoinHostPort("0.0.0.0", strconv.Itoa(port)))
+	if err == nil {
+		ln.Close()
+		return false, ""
+	}
+	// Best effort at naming the holder; a container from another owlab
+	// project is the overwhelmingly common case.
+	out, cerr := exec.Command("docker", "ps", "--filter", "publish="+strconv.Itoa(port),
+		"--format", "{{.Names}}").Output()
+	if cerr == nil {
+		if name := strings.TrimSpace(string(out)); name != "" {
+			return true, " by container " + strings.ReplaceAll(name, "\n", ", ")
+		}
+	}
+	return true, ""
 }
 
 // findCRLF looks for CRLF in the shell scripts most likely to be executed
