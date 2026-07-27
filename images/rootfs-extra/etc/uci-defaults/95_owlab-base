@@ -49,6 +49,34 @@ fi
 
 uci commit
 
+# Stop the services that cut a container off from its own network.
+#
+# These are not arbitrary. Each was measured taking the box down:
+#
+#   mwan3     watches the WAN, decides a dummy interface is dead, and installs
+#             ip rules that blackhole everything:
+#               2061: from all fwmark 0x3d00/0x3f00 blackhole
+#               3001: from all fwmark 0x100/0x3f00 unreachable
+#             The symptom is a router that answers on LuCI while every
+#             outbound connection hangs — `apk add` sits there forever.
+#   watchcat  reboots or reconnects on a schedule when it thinks the network
+#             is down, which in here it always does.
+#
+# They are stopped rather than uninstalled: the LuCI pages stay, which is the
+# reason someone installed them on a dev box in the first place. Anyone who
+# genuinely wants them running can start them by hand.
+#
+# The firewall is deliberately NOT in this list. fw4 works in a container —
+# measured, 193 rules loaded, and the box stays reachable — and turning it off
+# would hide a whole class of real behaviour.
+for svc in mwan3 watchcat; do
+	if [ -x "/etc/init.d/$svc" ]; then
+		"/etc/init.d/$svc" stop >/dev/null 2>&1
+		"/etc/init.d/$svc" disable >/dev/null 2>&1
+		echo "owlab: stopped $svc (it blackholes traffic when the WAN is a dummy)"
+	fi
+done
+
 # LuCI caches its dispatch tree and its module list. Both were built before
 # the packages above were installed, so they describe a router that no longer
 # exists.
