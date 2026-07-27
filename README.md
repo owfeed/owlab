@@ -149,6 +149,19 @@ project:
 Runs in the project directory before every sync, including every `--watch`
 iteration. `--no-build` skips it.
 
+There is a matching `post_sync:`, which runs **on the router** after the files
+land — for the half of an install that copying files does not cover:
+
+```yaml
+project:
+  post_sync: |
+    uci -q set luci.themes.Footstrap=/luci-static/footstrap
+    uci -q commit luci
+```
+
+A package's own `root/etc/uci-defaults/` is not synced (that directory is the
+router's state), so whatever it would have registered goes here.
+
 `--watch` polls rather than using filesystem events: inotify does not
 propagate from a Windows drive into WSL, and the desktop engines' shared
 filesystems have their own gaps. A poll is slower to notice but it notices

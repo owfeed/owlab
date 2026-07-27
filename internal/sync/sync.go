@@ -103,6 +103,13 @@ func Run(ctx context.Context, opts Options, routers []*config.Router) []Result {
 			results = append(results, res)
 			continue
 		}
+		if cmd := opts.Config.Project.PostSync; cmd != "" {
+			if err := postSync(ctx, opts.ContainerName(r.ID), cmd, opts.Verbose); err != nil {
+				res.Err = err
+				results = append(results, res)
+				continue
+			}
+		}
 		if err := reload(ctx, opts.ContainerName(r.ID), opts.Config.Project.Theme); err != nil {
 			res.Err = err
 		}
@@ -255,6 +262,31 @@ func extractInto(ctx context.Context, container string, archive []byte) error {
 			msg = err.Error()
 		}
 		return fmt.Errorf("%s", msg)
+	}
+	return nil
+}
+
+// postSync runs the project's post_sync command inside the router.
+//
+// Before reload(), so that anything it registers is present when the caches
+// are dropped rather than one sync later.
+func postSync(ctx context.Context, container, command string, verbose bool) error {
+	if verbose {
+		fmt.Fprintf(os.Stderr, "+ (router) %s\n", command)
+	}
+	cmd := exec.CommandContext(ctx, "docker", "exec", container, "/bin/sh", "-c", command)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(out.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return fmt.Errorf("post_sync failed: %s", msg)
+	}
+	if verbose && out.Len() > 0 {
+		fmt.Fprint(os.Stderr, out.String())
 	}
 	return nil
 }

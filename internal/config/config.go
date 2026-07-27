@@ -50,6 +50,14 @@ type Project struct {
 	// the dispatcher rather than falling back.
 	Theme string `yaml:"theme"`
 
+	// PostSync is a command run ON THE ROUTER after every sync.
+	//
+	// Copying files in is rarely the whole install. A package's own
+	// uci-defaults register it, translations have to be compiled where the
+	// tools are, caches belong to the router. Those steps run here, in the
+	// same shell the router would run them in.
+	PostSync string `yaml:"post_sync"`
+
 	// Build is a command run in the project directory before every sync.
 	//
 	// Many LuCI packages do not keep their shipped assets in the tree: a
