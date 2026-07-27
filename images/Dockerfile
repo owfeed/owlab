@@ -104,6 +104,25 @@ RUN set -eu; \
 # verifying it needs their public key, which is exactly the trust decision a
 # dev container should not be making silently. Treat anything installed here
 # as trusted-by-URL only. Do not copy this pattern into anything that ships.
+#
+# --force-overwrite is needed on opkg and is not a shortcut. These packages
+# pull dependencies that replace a file another package already owns —
+# luci-app-openclash needs dnsmasq-full, which ships /etc/init.d/dnsmasq and
+# collides with the dnsmasq in the stock image:
+#
+#   check_data_file_clashes: Package dnsmasq-full wants to install file
+#   /etc/init.d/dnsmasq. But that file is already provided by package dnsmasq
+#
+# On a real router that check is a guard worth having. Here the replacement is
+# exactly what was asked for, and ImmortalWrt already ships dnsmasq-full, so
+# without this the same config produces a different router on OpenWrt 24.10
+# than on the other three.
+#
+# A failure here is FATAL, unlike the feed packages above. The distinction is
+# that a feed name can legitimately be missing on an older release, while
+# these are named by URL: the developer said "install this file", and a build
+# that reports success without it hands them a router that is quietly missing
+# the thing they are testing against.
 ARG ROUTER_ID=""
 COPY extra/ /tmp/owlab-extra/
 RUN set -eu; \
@@ -113,9 +132,9 @@ RUN set -eu; \
 			[ -f "$f" ] || continue; \
 			echo "owlab: installing $(basename "$f")"; \
 			if [ "$PKG_MANAGER" = "apk" ]; then \
-				apk add --allow-untrusted "$f" || echo "owlab: FAILED: $(basename "$f")"; \
+				apk add --allow-untrusted --force-overwrite "$f"; \
 			else \
-				opkg install "$f" || echo "owlab: FAILED: $(basename "$f")"; \
+				opkg install --force-overwrite "$f"; \
 			fi; \
 		done; \
 	fi; \
