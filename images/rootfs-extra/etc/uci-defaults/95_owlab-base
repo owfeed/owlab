@@ -47,6 +47,43 @@ if [ -s /etc/owlab/theme ]; then
 	fi
 fi
 
+# Flow offloading, switched off only where it cannot work.
+#
+# ImmortalWrt enables it by default (firewall.@defaults[0].flow_offloading='1'
+# and _hw='1'); OpenWrt does not ship the key at all. The offload rule needs a
+# flowtable, and a flowtable needs nf_flow_table in the RUNNING kernel. In a
+# container the running kernel is the engine's, which generally has no such
+# module and cannot be given one — so nft rejects the WHOLE ruleset:
+#
+#   flowtable ft { ... Error: Could not process rule: No such file or directory
+#   meta l4proto { tcp, udp } flow offload @ft;
+#
+# What survives is the base chains with `policy drop` and no jumps into any
+# zone, so the router answers a TCP handshake and then resets — measured as
+# "connection reset by peer" against a uhttpd that is up and listening.
+#
+# On a vm router the kernel is OpenWrt's own and the flowtable is created
+# without complaint, so the feature is left exactly as the distribution
+# configured it. Hence a probe rather than a blanket disable: the question is
+# not which tier this is, it is whether THIS kernel can do it.
+#
+# The modprobe is not optional. OpenWrt ships no modules.alias, so the kernel
+# cannot autoload a module by the alias nft asks for — the probe would fail
+# for a router that is perfectly capable, purely because nothing had loaded
+# nf_flow_table yet. Loading it by name first makes the answer about the
+# kernel rather than about what happened to run earlier in the boot.
+modprobe nf_flow_table 2>/dev/null
+modprobe nf_flow_table_inet 2>/dev/null
+
+if nft add table inet owlab_probe 2>/dev/null; then
+	if ! nft add flowtable inet owlab_probe ft '{ hook ingress priority filter; devices = { lo }; }' 2>/dev/null; then
+		uci -q set firewall.@defaults[0].flow_offloading='0'
+		uci -q set firewall.@defaults[0].flow_offloading_hw='0'
+		echo "owlab: this kernel has no flowtable support, disabling flow offloading (it would take the whole firewall down)"
+	fi
+	nft delete table inet owlab_probe 2>/dev/null
+fi
+
 uci commit
 
 # Stop the services that cut a container off from its own network.
