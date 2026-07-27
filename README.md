@@ -341,6 +341,39 @@ Silicon, `x86_64` on Intel and AMD. Anything else runs under emulation, which
 works but is slow enough to notice; `owlab doctor` warns when you have asked
 for it.
 
+## Kernel modules do not load
+
+A container shares the host's kernel. The `kmod-*` packages in OpenWrt's feed
+are built against *OpenWrt's* kernel, so their vermagic never matches and
+`kmodloader` cannot load them:
+
+```console
+$ owlab exec owrt2512 -- 'uname -r; ls /lib/modules'
+7.0.11-orbstack-...     # the engine's kernel, actually running
+6.12.87                 # what the modules in the image were built for
+```
+
+They still *install*, which is what matters for dependency resolution — this
+is why owlab leaves the `kmods` feed in place rather than stripping it the way
+most container recipes do. Without it, `apk add luci-app-sqm` fails outright
+with `kmod-ifb (no such package)`.
+
+What actually decides whether a netfilter feature works is **the engine's
+kernel**, not the package. nftables and `fw4` generally do work; so does
+`tproxy` on OrbStack and on most Linux hosts. Check any of them directly:
+
+```console
+$ owlab exec owrt2512 -- 'nft add table inet t; \
+    nft add chain inet t c "{ type filter hook prerouting priority -150; }"; \
+    nft add rule inet t c meta l4proto tcp tproxy to :5678 && echo OK; \
+    nft delete table inet t'
+```
+
+If something is missing: on Linux `modprobe` it on the host (`nft_tproxy`,
+`nf_tproxy_ipv4`); on Docker Desktop for macOS the LinuxKit kernel is fixed
+and there is no portable workaround. `fidelity: vm` runs a real OpenWrt
+kernel, where every `kmod-*` loads for real.
+
 ## How it reaches the routers
 
 Only through published ports. A container's bridge IP is routable from the
