@@ -74,8 +74,37 @@ dns="$(printf '%s %s\n' "$engine_ns" "$fallback_ns" | tr ' ' '\n' | awk 'NF && !
 	echo "options timeout:1"
 } > /etc/resolv.conf
 
+# lan is a BRIDGE named br-lan, with eth0 as its only port.
+#
+# Not decoration. br-lan is what every OpenWrt target with more than one
+# ethernet port actually builds, so packages and scripts refer to it by name:
+# podkop's source_network_interfaces defaults to br-lan, and so do plenty of
+# firewall snippets, hotplug scripts and forum recipes. On a router whose lan
+# is a bare eth0 all of those silently apply to nothing — no error, just a
+# feature that does not work.
+#
+# The bridge takes eth0's MAC (lowest port MAC), so the engine's veth peer
+# keeps delivering to the same address it always did and nothing on the host
+# side notices. eth0's own address and its connected route are removed before
+# netifd starts, because a bridge port cannot carry L3: leaving them there
+# gives the kernel a route out of an interface that no longer transmits.
+#
+# OWLAB_LAN_BRIDGE=0 falls back to lan on eth0 directly. This is the one
+# interface that must not break, and an engine that dislikes bridging its veth
+# should be one variable away from working, not one image rebuild.
+lan_dev="br-lan"
+[ "${OWLAB_LAN_BRIDGE:-1}" = "1" ] || lan_dev="eth0"
+
 if [ -n "$addr" ]; then
 	netmask="$(ipcalc.sh "$addr" | sed -n 's/^NETMASK=//p')"
+	bridge_section=""
+	if [ "$lan_dev" = "br-lan" ]; then
+		bridge_section="config device
+	option name 'br-lan'
+	option type 'bridge'
+	list ports 'eth0'
+"
+	fi
 	cat > /etc/config/network <<-EOF
 		config interface 'loopback'
 			option device 'lo'
@@ -85,8 +114,9 @@ if [ -n "$addr" ]; then
 
 		config globals 'globals'
 
+		$bridge_section
 		config interface 'lan'
-			option device 'eth0'
+			option device '$lan_dev'
 			option proto 'static'
 			option ipaddr '${addr%/*}'
 			option netmask '$netmask'
@@ -94,6 +124,14 @@ if [ -n "$addr" ]; then
 			option dns '$dns'
 			option delegate '0'
 	EOF
+
+	# Hand the address over to netifd rather than leaving two claims on it.
+	# Done last, so that everything above has already been written: from here
+	# until netifd brings br-lan up the container has no address at all, and
+	# an error in between would be unrecoverable.
+	if [ "$lan_dev" = "br-lan" ]; then
+		ip addr flush dev eth0 2>/dev/null
+	fi
 else
 	# Say plainly what is about to happen, because the alternative is a
 	# container that boots cleanly and is simply unreachable.

@@ -22,6 +22,12 @@ lan_ip="$(uci -q get network.lan.ipaddr)"
 lan_prefix="${lan_ip%.*}"
 [ -n "$lan_prefix" ] || exit 0
 
+# The device the neighbours are cached on. Read from config rather than named,
+# because lan is br-lan on a container and could be plain eth0 if bridging was
+# turned off — and `ip neigh` on a device that does not exist fails silently.
+lan_dev="$(uci -q get network.lan.device)"
+[ -n "$lan_dev" ] || lan_dev="br-lan"
+
 LEASEFILE="$(uci -q get dhcp.@dnsmasq[0].leasefile)"
 LEASEFILE="${LEASEFILE:-/tmp/dhcp.leases}"
 
@@ -55,7 +61,7 @@ for e in \
 	"$lan_prefix.32 dc:a6:32:77:0b:19"
 do
 	set -- $e
-	ip neigh replace "$1" lladdr "$2" dev eth0 nud stale 2>/dev/null
+	ip neigh replace "$1" lladdr "$2" dev "$lan_dev" nud stale 2>/dev/null
 done
 
 exit 0
