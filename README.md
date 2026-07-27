@@ -102,6 +102,7 @@ owlab install     install packages on a running router
 owlab logs        show a router's boot and service log
 owlab status      list routers and where to reach them
 owlab open        open a router's LuCI in a browser
+owlab build       build a real .apk/.ipk with the OpenWrt SDK
 owlab doctor      check this machine for problems
 ```
 
@@ -340,6 +341,41 @@ time rather than leaving every downstream user to reconstruct it.
 Silicon, `x86_64` on Intel and AMD. Anything else runs under emulation, which
 works but is slow enough to notice; `owlab doctor` warns when you have asked
 for it.
+
+## Building a real package
+
+`sync` is the development loop; `build` is the verification step.
+
+```console
+$ owlab build
+building luci-theme-footstrap for OpenWrt 25.12.4 (x86_64)
+  sdk    openwrt/sdk:x86-64-25.12.4
+
+built:
+  luci-theme-footstrap-0.260727.54272.apk  (149 KB)
+
+$ owlab install owrt2512 dist/luci-theme-footstrap-0.260727.54272.apk
+```
+
+They are not the same thing, and the difference is measurable. luci.mk sets
+`LUCI_MINIFY_JS` and `LUCI_MINIFY_CSS` by default, so a real build runs your
+sources through jsmin and csstidy:
+
+```
+from the package:  120358 bytes   (minified)
+from owlab sync:   418930 bytes   (as written)
+```
+
+Code that works unminified and breaks minified is invisible until someone
+builds a package — which, without this, is your users.
+
+`owlab install` takes a path as readily as a package name, so the output of
+`build` goes straight into a router.
+
+**This runs under emulation on Apple Silicon.** Every `openwrt/sdk` tag is
+`linux/amd64` — the SDK is a cross-compiler and upstream publishes only
+Linux-x86_64 SDK tarballs. owlab says so before it starts, because an OpenWrt
+package build is long enough that unexplained slowness is worth a sentence.
 
 ## Kernel modules do not load
 
