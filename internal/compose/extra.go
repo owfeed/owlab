@@ -41,7 +41,7 @@ func fetchExtraPackages(cfg *config.Config, ctxDir, cacheDir string) error {
 		if err := os.MkdirAll(dst, 0o755); err != nil {
 			return err
 		}
-		for _, e := range r.Extra {
+		for n, e := range r.Extra {
 			url := e.URLFor(r.PackageManager())
 			if url == "" {
 				// Nothing published for this package manager. That is a
@@ -55,7 +55,14 @@ func fetchExtraPackages(cfg *config.Config, ctxDir, cacheDir string) error {
 			if err != nil {
 				return fmt.Errorf("%s: %s: %w", r.ID, e.Name, err)
 			}
-			if err := copyFile(cached, filepath.Join(dst, path.Base(url))); err != nil {
+			// Numbered, because the image installs whatever the glob returns
+			// and a glob is alphabetical. These packages depend on each other
+			// — luci-app-podkop needs podkop — and alphabetical order put the
+			// dependent first, which apk rejects outright with "unable to
+			// select packages". The prefix makes glob order the order the
+			// developer wrote them in.
+			staged := fmt.Sprintf("%02d-%s", n, path.Base(url))
+			if err := copyFile(cached, filepath.Join(dst, staged)); err != nil {
 				return err
 			}
 		}

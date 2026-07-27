@@ -125,18 +125,23 @@ RUN set -eu; \
 # the thing they are testing against.
 ARG ROUTER_ID=""
 COPY extra/ /tmp/owlab-extra/
+#
+# All of them in ONE command, in the order owlab staged them. These packages
+# routinely depend on each other — luci-app-podkop requires podkop — and
+# installing one at a time makes that a hard error ("unable to select
+# packages") for anything but the luckiest ordering. Handed the whole set, the
+# package manager resolves among them.
 RUN set -eu; \
 	dir="/tmp/owlab-extra/$ROUTER_ID"; \
-	if [ -d "$dir" ]; then \
-		for f in "$dir"/*; do \
-			[ -f "$f" ] || continue; \
-			echo "owlab: installing $(basename "$f")"; \
-			if [ "$PKG_MANAGER" = "apk" ]; then \
-				apk add --allow-untrusted --force-overwrite "$f"; \
-			else \
-				opkg install --force-overwrite "$f"; \
-			fi; \
-		done; \
+	set -- ; \
+	for f in "$dir"/*; do [ -f "$f" ] && set -- "$@" "$f"; done; \
+	if [ "$#" -gt 0 ]; then \
+		for f in "$@"; do echo "owlab: installing $(basename "$f" | cut -c4-)"; done; \
+		if [ "$PKG_MANAGER" = "apk" ]; then \
+			apk add --allow-untrusted --force-overwrite "$@"; \
+		else \
+			opkg install --force-overwrite "$@"; \
+		fi; \
 	fi; \
 	rm -rf /tmp/owlab-extra
 
@@ -179,6 +184,32 @@ RUN set -eu; \
 		|| dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >/dev/null 2>&1; \
 	[ -f /etc/dropbear/dropbear_rsa_host_key ] \
 		|| dropbearkey -t rsa -s 2048 -f /etc/dropbear/dropbear_rsa_host_key >/dev/null 2>&1
+
+# Take ujail out of procd's reach, so that jailed services actually run.
+#
+# procd jails a good number of them — dnsmasq, ntpd, others — and a jail needs
+# namespaces the container is not allowed to create:
+#
+#   $ ujail -n test -p -- /bin/true
+#   jail: failed to clone/fork: Operation not permitted
+#
+# procd reports that as a crash and respawns, so the service ends up in a
+# permanent crash loop and says so only as "Instance dnsmasq::cfg01411c s in a
+# crash loop 6 crashes". Everything downstream then fails for reasons that
+# never mention dnsmasq: no DNS server on the router at all, and any package
+# that configures dnsmasq to forward somewhere — podkop pointing it at
+# sing-box, for one — is configuring a daemon that is not running.
+#
+# procd falls back to running the service directly when ujail is absent, which
+# is why renaming it is the fix rather than a workaround. The alternative is
+# granting the container CAP_SYS_ADMIN, which is close enough to root on the
+# host that a throwaway dev box has no business asking for it. What is lost is
+# a security boundary between services inside a container that is already a
+# single trust domain.
+#
+# This is a container concern only. A fidelity-vm router runs its own kernel,
+# where ujail works exactly as it does on hardware.
+RUN [ -x /sbin/ujail ] && mv /sbin/ujail /sbin/ujail.disabled-by-owlab || true
 
 COPY rootfs-extra/ /
 

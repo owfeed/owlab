@@ -518,6 +518,44 @@ handshake and then resets, while `uhttpd` is up and listening. owlab probes for
 it on first boot and turns the setting off only where the kernel cannot honour
 it, so a host that *can* offload keeps the distribution's own configuration.
 
+## What else a container changes
+
+Two things bite packages that bring their own daemon, and neither announces
+itself.
+
+**procd jails services, and a container cannot build a jail.** `ujail` needs
+namespaces the container is not allowed to create, procd reports the failure
+as a crash, and the service ends up respawning forever:
+
+```
+procd: Instance dnsmasq::cfg01411c s in a crash loop 6 crashes
+```
+
+Nothing downstream mentions dnsmasq. You get a router with no DNS server, and
+any package that configures dnsmasq to forward somewhere is configuring a
+daemon that is not running. owlab removes `ujail` from the image so procd runs
+those services directly — a lost security boundary inside a container that is
+already one trust domain, in exchange for services that work. On a
+`fidelity: vm` router the kernel is OpenWrt's own and jails work as on
+hardware, so nothing is removed there.
+
+**Outbound UDP port 53 does not leave the container.** The engine's own
+resolver works; anything else times out:
+
+```console
+$ owlab exec pk -- 'dig +short github.com @127.0.0.11; dig +short github.com @8.8.8.8'
+140.82.121.4
+;; communications error to 8.8.8.8#53: timed out
+```
+
+TCP is unaffected — `https://github.com` answers fine. So a package with its
+own resolver has to bootstrap through the engine's, and can then use DoH or
+DoT over TCP normally. For podkop that is `bootstrap_dns_server` set to the
+first `nameserver` in `/etc/resolv.conf`, with `dns_type doh` on top; its
+defaults (`77.88.8.8`, plain UDP) resolve nothing, and sing-box exits with
+`initial rule-set: ... lookup github.com: context deadline exceeded` — a
+message that points at GitHub rather than at the transport.
+
 ## How it reaches the routers
 
 Only through published ports. A container's bridge IP is routable from the
