@@ -34,7 +34,8 @@ Commands:
   shell       open a shell on a router
   exec        run a command on a router
   sync        copy this package's source into the routers and reload LuCI
-  install     install packages on a running router
+  install     install packages (or a local .apk/.ipk) on a running router
+  build       build a real .apk/.ipk with the OpenWrt SDK
   logs        show a router's boot and service log
   status      list routers and where to reach them
   open        open a router's LuCI in a browser
@@ -125,6 +126,8 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return a.buildContext(ctx, args)
 	case "install":
 		return a.install(ctx, args)
+	case "build":
+		return a.build(ctx, args)
 	case "logs":
 		return a.logs(ctx, args)
 	case "status":

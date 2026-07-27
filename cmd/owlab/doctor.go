@@ -95,6 +95,19 @@ func (a *app) doctor(ctx context.Context, args []string) error {
 		add("bind mounts", info, "presented as owned by the container user")
 	}
 
+	// ssh keys: what will be installed, or why nothing will be.
+	if keys, src := compose.PublicKeys(); len(keys) > 0 {
+		names := make([]string, 0, len(keys))
+		for _, k := range keys {
+			names = append(names, filepath.Base(k))
+		}
+		add("ssh keys", pass, "%s (from %s)", strings.Join(names, ", "), src)
+	} else {
+		add("ssh keys", warn,
+			"no id_*.pub found in ~/.ssh — ssh will fall back to password auth. "+
+				"Run `ssh-keygen -t ed25519`, or set OWLAB_PUBKEY to an existing key.")
+	}
+
 	// Sources on a Windows drive under WSL: inotify does not propagate and
 	// filesystem access is slow enough to notice.
 	if cwd, err := os.Getwd(); err == nil {

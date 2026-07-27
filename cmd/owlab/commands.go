@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -268,19 +269,53 @@ func (a *app) install(ctx context.Context, args []string) error {
 		return fmt.Errorf("no packages given\n\nusage: owlab install <router> <package>... (or --all)")
 	}
 
+	// A path to a package file on the host is not a name the router can
+	// resolve, so those are copied in first. This is what makes the output of
+	// `owlab build` directly installable.
+	var localFiles []string
+	var names []string
+	for _, p := range pkgs {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			localFiles = append(localFiles, p)
+			continue
+		}
+		names = append(names, p)
+	}
+
 	var failed []string
 	for _, r := range routers {
 		if r.Fidelity == config.VM {
 			continue
 		}
+		container := a.containerName(r.ID)
+
+		var installArgs []string
+		installArgs = append(installArgs, names...)
+		for _, f := range localFiles {
+			dest := "/tmp/" + filepath.Base(f)
+			if err := a.docker.Run(ctx, "cp", f, container+":"+dest); err != nil {
+				failed = append(failed, r.ID)
+				continue
+			}
+			installArgs = append(installArgs, dest)
+		}
+		if len(installArgs) == 0 {
+			continue
+		}
+
 		// apk and opkg differ by release, and a router's own package manager
-		// is the only correct one to use.
-		cmd := "opkg update >/dev/null 2>&1; opkg install " + strings.Join(pkgs, " ")
+		// is the only correct one to use. Local files need the untrusted flag
+		// on apk: they carry no signature the router's keyring knows.
+		cmd := "opkg update >/dev/null 2>&1; opkg install " + strings.Join(installArgs, " ")
 		if r.PackageManager() == config.APK {
-			cmd = "apk add " + strings.Join(pkgs, " ")
+			flags := ""
+			if len(localFiles) > 0 {
+				flags = "--allow-untrusted "
+			}
+			cmd = "apk add " + flags + strings.Join(installArgs, " ")
 		}
 		fmt.Printf("== %s (%s)\n", r.ID, r.PackageManager())
-		if err := a.docker.Run(ctx, "exec", a.containerName(r.ID), "/bin/sh", "-c", cmd); err != nil {
+		if err := a.docker.Run(ctx, "exec", container, "/bin/sh", "-c", cmd); err != nil {
 			failed = append(failed, r.ID)
 		}
 	}
@@ -338,7 +373,12 @@ func (a *app) status(ctx context.Context, args []string) error {
 	}
 
 	fmt.Printf("project  %s\n", a.cfg.Project.Name)
-	fmt.Printf("engine   %s\n\n", a.eng.Describe())
+	fmt.Printf("engine   %s\n", a.eng.Describe())
+	login := "root, empty password"
+	if pw := compose.RootPassword(); pw != "" {
+		login = "root / " + pw
+	}
+	fmt.Printf("login    %s\n\n", login)
 
 	fmt.Printf("%-14s %-12s %-9s %-18s %-9s %-8s %s\n",
 		"ROUTER", "RELEASE", "PKGMGR", "ARCH", "FIDELITY", "STATE", "LUCI")
@@ -508,6 +548,30 @@ func (a *app) printReady(routers []*config.Router, ready map[string]bool) error 
 			stalled = append(stalled, r.ID)
 		}
 		fmt.Printf("%s %-14s %s   ssh -p %d root@localhost\n", mark, r.ID, url, r.Ports.SSH)
+	}
+	// Say how to log in. LuCI asks on the first page load, and "leave it
+	// blank" is not something a developer should have to discover.
+	if pw := compose.RootPassword(); pw != "" {
+		fmt.Printf("\n  log in as root / %s\n", pw)
+	} else {
+		fmt.Printf("\n  log in as root, empty password   (set OWLAB_ROOT_PASSWORD to require one)\n")
+	}
+
+	// ssh keys. Silence here is the failure mode worth avoiding: without a
+	// key, `ssh root@localhost` prompts for a password nobody was told about,
+	// and the reason is a file that does not exist on the host.
+	if keys, src := compose.PublicKeys(); len(keys) > 0 {
+		names := make([]string, 0, len(keys))
+		for _, k := range keys {
+			names = append(names, filepath.Base(k))
+		}
+		fmt.Printf("  ssh keys installed: %s   (from %s)\n", strings.Join(names, ", "), src)
+	} else {
+		fmt.Fprintf(os.Stderr,
+			"\n! no ssh public key found — `ssh root@localhost` will ask for a password.\n"+
+				"!   Generate one:   ssh-keygen -t ed25519\n"+
+				"!   Or point owlab at an existing key:  export OWLAB_PUBKEY=/path/to/key.pub\n"+
+				"!   Then re-run `owlab up` to install it.\n")
 	}
 	if len(stalled) > 0 {
 		fmt.Fprintf(os.Stderr,

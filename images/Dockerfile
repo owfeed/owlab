@@ -121,11 +121,26 @@ RUN set -eu; \
 	fi; \
 	rm -rf /tmp/owlab-extra
 
-# LuCI accepts an empty root password, but the tooling authenticates for real
-# — ssh's own PasswordAuthentication, and whatever the developer's browser
-# does — so there has to be one.
-ARG ROOT_PASSWORD=owlab
-RUN printf '%s\n%s\n' "$ROOT_PASSWORD" "$ROOT_PASSWORD" | passwd root >/dev/null
+# The root password, empty by default.
+#
+# An empty password is what a stock OpenWrt rootfs ships with, and it is the
+# right default here: LuCI still shows its login form but accepts an empty
+# field, so there is nothing to look up and nothing to remember on a
+# throwaway box. ssh key auth is unaffected — the entrypoint installs the
+# host's public key.
+#
+# Set one with OWLAB_ROOT_PASSWORD when the box needs to be reachable by
+# password, e.g. for tooling that authenticates for real.
+#
+# Cleared rather than skipped when empty, because this same Dockerfile also
+# runs on top of an already-built owlab image that may carry one.
+ARG ROOT_PASSWORD=""
+RUN set -eu; \
+	if [ -n "$ROOT_PASSWORD" ]; then \
+		printf '%s\n%s\n' "$ROOT_PASSWORD" "$ROOT_PASSWORD" | passwd root >/dev/null; \
+	else \
+		passwd -d root >/dev/null 2>&1 || sed -i 's|^root:[^:]*:|root::|' /etc/shadow; \
+	fi
 
 # Host keys are baked into the image rather than generated on first boot: a
 # dev container is recreated constantly, and a host key that changes every

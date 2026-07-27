@@ -27,7 +27,27 @@ $ owlab up
   owrt2512   http://localhost:8080   ssh -p 2222 root@localhost
   owrt2410   http://localhost:8081   ssh -p 2223 root@localhost
   imm2512    http://localhost:8082   ssh -p 2224 root@localhost
+
+  log in as root, empty password   (set OWLAB_ROOT_PASSWORD to require one)
 ```
+
+**Log in as `root` with an empty password.** That is what a stock OpenWrt
+rootfs ships with, and it is the right default for a throwaway box on
+localhost — LuCI still shows its login form, it just accepts a blank field.
+Set `OWLAB_ROOT_PASSWORD` before `owlab up` if you need one, e.g. for tooling
+that authenticates for real.
+
+ssh works by key. owlab installs **every** `~/.ssh/id_*.pub` it finds — all of
+them, not the first one, so reaching for a key you own never gets you
+"Permission denied (publickey)" from a box that holds another of your keys.
+Point it elsewhere with `OWLAB_PUBKEY=/path/to/key.pub` (several allowed,
+separated the way `PATH` is). Only `id_*.pub` is collected: `~/.ssh` routinely
+holds other people's keys, and those are not yours to install. If nothing is
+found, `owlab up` says so and tells you how to fix it.
+
+The ssh *host* keys are baked into the image and shared by everyone using it —
+they authenticate nothing, they only stop ssh from prompting. Do not put these
+routers on a network you care about.
 
 Each of those is a stock rootfs for that release with procd as PID 1 — the
 same userland your package will ship against, not an approximation. `apk` and
