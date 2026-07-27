@@ -27,6 +27,26 @@ uci -q delete uhttpd.main.redirect_https
 # container anyway.
 uci -q set attendedsysupgrade.client.login_check_for_upgrades='0'
 
+# Activate the theme under development, if there is one.
+#
+# Installing a theme package only REGISTERS it — it adds luci.themes.<Name>
+# and leaves luci.main.mediaurlbase alone, because a package has no business
+# changing what the user is looking at. On a dev box that is exactly backwards:
+# the whole reason the theme is here is to be looked at.
+#
+# This runs after the package's own 30_luci-theme-* uci-default (numbered
+# lower), so it wins. It also matters for more than cosmetics: LuCI resolves
+# templates through mediaurlbase, and pointing it at a theme whose templates
+# are missing crashes the dispatcher rather than falling back.
+if [ -s /etc/owlab/theme ]; then
+	theme="$(cat /etc/owlab/theme)"
+	if [ -d "/www/luci-static/$theme" ]; then
+		uci -q set luci.main.mediaurlbase="/luci-static/$theme"
+	else
+		echo "owlab: theme '$theme' asked for, but /www/luci-static/$theme does not exist" >&2
+	fi
+fi
+
 uci commit
 
 # LuCI caches its dispatch tree and its module list. Both were built before

@@ -92,6 +92,10 @@ func Prepare(cfg *config.Config, eng engine.Info) (*Project, error) {
 	if err := extractContext(ctxDir); err != nil {
 		return nil, fmt.Errorf("writing build context: %w", err)
 	}
+	// After extractContext, which wipes the directory first.
+	if err := fetchExtraPackages(cfg, ctxDir, filepath.Join(work, "cache")); err != nil {
+		return nil, err
+	}
 
 	name := ProjectName(cfg.Project.Name)
 	doc := File{
@@ -140,6 +144,8 @@ func service(cfg *config.Config, r *config.Router, eng engine.Info, project, ctx
 		"PKG_MANAGER":   string(r.PackageManager()),
 		"PACKAGES":      strings.Join(r.Packages, " "),
 		"FIXTURES":      strings.Join(r.Fixtures, " "),
+		"ROUTER_ID":     r.ID,
+		"THEME":         cfg.Project.Theme,
 		"ROOT_PASSWORD": rootPassword(),
 	}
 	if base := r.BaseImage(); base != "" {

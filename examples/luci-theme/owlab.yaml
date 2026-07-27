@@ -12,7 +12,7 @@ project:
   # Themes need this: LuCI resolves templates through luci.main.mediaurlbase,
   # and a theme whose templates are not where mediaurlbase points crashes the
   # dispatcher rather than falling back.
-  theme: example
+  theme: footstrap
 
 defaults:
   fidelity: basic
@@ -41,6 +41,17 @@ defaults:
     # dropbear ships no sftp-server, and OpenSSH 9+ scp speaks SFTP by
     # default — without this every scp against the box fails.
     - openssh-sftp-server
+
+  # Packages that are in no feed. Two URLs because the managers do not share
+  # a naming scheme: the same release publishes
+  # luci-theme-footstrap-0.11.5-r1.apk for apk and
+  # luci-theme-footstrap_0.11.5-r1_all.ipk for opkg.
+  #
+  # Installed without signature verification — see the README.
+  extra_packages:
+    - name: luci-theme-footstrap
+      apk: https://github.com/VizzleTF/luci-theme-footstrap/releases/download/v0.11.5/luci-theme-footstrap-0.11.5-r1.apk
+      ipk: https://github.com/VizzleTF/luci-theme-footstrap/releases/download/v0.11.5/luci-theme-footstrap_0.11.5-r1_all.ipk
 
 routers:
   - id: owrt2512

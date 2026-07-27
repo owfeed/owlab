@@ -123,6 +123,61 @@ routers:
 A package list with `+`/`-` entries is applied on top of the defaults; a list
 without any prefix replaces them.
 
+### Packages that are in no feed
+
+Most of what a router needs is in OpenWrt's own feeds and goes in `packages:`.
+Your own package is not, and neither is anything published on GitHub Releases.
+That is what `extra_packages:` is for:
+
+```yaml
+project:
+  theme: footstrap          # activate it once installed; see below
+
+defaults:
+  extra_packages:
+    - name: luci-theme-footstrap
+      apk: https://github.com/VizzleTF/luci-theme-footstrap/releases/download/v0.11.5/luci-theme-footstrap-0.11.5-r1.apk
+      ipk: https://github.com/VizzleTF/luci-theme-footstrap/releases/download/v0.11.5/luci-theme-footstrap_0.11.5-r1_all.ipk
+```
+
+```console
+$ owlab up
+owlab: fetching https://github.com/VizzleTF/luci-theme-footstrap/releases/download/v0.11.5/luci-theme-footstrap-0.11.5-r1.apk
+owlab: installing luci-theme-footstrap-0.11.5-r1.apk
+  owrt2512   http://localhost:8025   ssh -p 2225 root@localhost
+```
+
+Two URLs, because the two package managers do not share a naming scheme — the
+same release publishes `luci-theme-footstrap-0.11.5-r1.apk` and
+`luci-theme-footstrap_0.11.5-r1_all.ipk`. owlab picks the right one per router
+and never hands a `.apk` to a 24.10 box. Either key may be omitted; a router
+whose manager has no build is told so and carries on.
+
+Downloads happen on the host and are cached in `.owlab/cache/`, so `up` does
+not re-fetch them. They have to: a stock OpenWrt rootfs has no `curl`, and its
+busybox `wget` cannot do TLS.
+
+**These are installed without signature verification.** Projects publishing
+this way usually sign with usign and ship a `.sig` beside the artifact, but
+checking it needs their public key — a trust decision a dev container should
+not be making on your behalf. Treat anything installed this way as
+trusted-by-URL, pin an exact release rather than a `latest` link, and do not
+copy the pattern into anything that ships.
+
+#### Themes need one more step
+
+Installing a theme package only *registers* it: it adds `luci.themes.<Name>`
+and leaves `luci.main.mediaurlbase` alone, because a package has no business
+changing what the user is looking at. On a dev box that is backwards — the
+reason the theme is there is to be looked at. Set `project.theme` and owlab
+activates it on first boot, after the package's own uci-defaults have run.
+
+The value is the media directory name, i.e. `footstrap` for
+`/www/luci-static/footstrap`. If that directory does not exist, owlab says so
+in the boot log rather than pointing `mediaurlbase` at nothing — LuCI resolves
+templates through it, so a wrong value crashes the dispatcher instead of
+falling back.
+
 ### Fixtures
 
 LuCI renders almost nothing on its own. The sections, tabs, tables, badges and

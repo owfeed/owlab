@@ -90,6 +90,37 @@ RUN set -eu; \
 		for p in $PACKAGES; do opkg install "$p" 2>/dev/null || echo "owlab: skip (not in this feed): $p"; done; \
 	fi
 
+# Packages that do not live in any feed — the developer's own package, or
+# anything published on GitHub Releases.
+#
+# owlab downloads these on the host and stages them per router, because a
+# stock rootfs has no curl and its busybox wget cannot do TLS: an in-image
+# download would depend on which packages the user happened to choose.
+# Per-router, because the two managers do not share a naming scheme and a
+# 24.10 box must never be handed a .apk built for 25.12.
+#
+# These are installed WITHOUT SIGNATURE VERIFICATION. Projects publishing this
+# way typically sign with usign and ship a .sig beside the artifact, but
+# verifying it needs their public key, which is exactly the trust decision a
+# dev container should not be making silently. Treat anything installed here
+# as trusted-by-URL only. Do not copy this pattern into anything that ships.
+ARG ROUTER_ID=""
+COPY extra/ /tmp/owlab-extra/
+RUN set -eu; \
+	dir="/tmp/owlab-extra/$ROUTER_ID"; \
+	if [ -d "$dir" ]; then \
+		for f in "$dir"/*; do \
+			[ -f "$f" ] || continue; \
+			echo "owlab: installing $(basename "$f")"; \
+			if [ "$PKG_MANAGER" = "apk" ]; then \
+				apk add --allow-untrusted "$f" || echo "owlab: FAILED: $(basename "$f")"; \
+			else \
+				opkg install "$f" || echo "owlab: FAILED: $(basename "$f")"; \
+			fi; \
+		done; \
+	fi; \
+	rm -rf /tmp/owlab-extra
+
 # LuCI accepts an empty root password, but the tooling authenticates for real
 # — ssh's own PasswordAuthentication, and whatever the developer's browser
 # does — so there has to be one.
@@ -112,8 +143,12 @@ COPY rootfs-extra/ /
 # themselves are all present in the image; this file selects them, so the same
 # layer cache serves every combination.
 ARG FIXTURES=""
+# The theme to activate on first boot, if the project is a theme. Installing a
+# theme package only registers it; see 95_owlab-base.
+ARG THEME=""
 RUN mkdir -p /etc/owlab \
-	&& printf '%s\n' "$FIXTURES" > /etc/owlab/fixtures
+	&& printf '%s\n' "$FIXTURES" > /etc/owlab/fixtures \
+	&& printf '%s' "$THEME" > /etc/owlab/theme
 
 RUN chmod +x /usr/lib/owlab/* /etc/uci-defaults/* \
 	/usr/share/owlab/fixtures/* /etc/rc.local 2>/dev/null || true

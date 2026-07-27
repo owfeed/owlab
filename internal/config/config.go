@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -61,6 +62,33 @@ type Ports struct {
 	SSH  int `yaml:"ssh"`
 }
 
+// ExtraPackage is a package installed from a URL rather than from a feed.
+//
+// This is how a developer gets their own package — or anything else that
+// lives on GitHub Releases rather than in OpenWrt's feeds — onto the router.
+// It needs two URLs because the two package managers do not share a file
+// naming scheme: the same release publishes
+// luci-theme-footstrap-0.11.5-r1.apk and
+// luci-theme-footstrap_0.11.5-r1_all.ipk.
+type ExtraPackage struct {
+	// Name is for messages and for the downloaded file; defaults to the
+	// basename of whichever URL is used.
+	Name string `yaml:"name"`
+	// APK is used on releases that ship apk (25.12 and later).
+	APK string `yaml:"apk"`
+	// IPK is used on releases that ship opkg (24.10 and earlier).
+	IPK string `yaml:"ipk"`
+}
+
+// URLFor returns the download URL for a package manager, or "" when this
+// package has nothing for it.
+func (e ExtraPackage) URLFor(pm PackageManager) string {
+	if pm == APK {
+		return e.APK
+	}
+	return e.IPK
+}
+
 // Router is one emulated router, after defaults have been merged in.
 type Router struct {
 	ID       string
@@ -69,6 +97,7 @@ type Router struct {
 	Arch     string
 	Fidelity Fidelity
 	Packages []string
+	Extra    []ExtraPackage
 	Fixtures []string
 	Ports    Ports
 	Hostname string
@@ -115,15 +144,16 @@ type rawConfig struct {
 }
 
 type rawRouter struct {
-	ID       *string  `yaml:"id"`
-	Distro   *string  `yaml:"distro"`
-	Release  *string  `yaml:"release"`
-	Arch     *string  `yaml:"arch"`
-	Fidelity *string  `yaml:"fidelity"`
-	Packages []string `yaml:"packages"`
-	Fixtures []string `yaml:"fixtures"`
-	Ports    *Ports   `yaml:"ports"`
-	Hostname *string  `yaml:"hostname"`
+	ID       *string        `yaml:"id"`
+	Distro   *string        `yaml:"distro"`
+	Release  *string        `yaml:"release"`
+	Arch     *string        `yaml:"arch"`
+	Fidelity *string        `yaml:"fidelity"`
+	Packages []string       `yaml:"packages"`
+	Extra    []ExtraPackage `yaml:"extra_packages"`
+	Fixtures []string       `yaml:"fixtures"`
+	Ports    *Ports         `yaml:"ports"`
+	Hostname *string        `yaml:"hostname"`
 }
 
 // Find walks up from dir looking for owlab.yaml.
@@ -273,6 +303,23 @@ func merge(def, r rawRouter, index int) (Router, error) {
 		// luci-light is LuCI plus the handful of packages that make it
 		// usable; a bare `luci` renders almost nothing.
 		out.Packages = []string{"luci-light"}
+	}
+
+	// Extra packages accumulate: a default set plus whatever the router adds.
+	// There is no subtraction syntax here because these are named by URL, and
+	// a list short enough to write out is short enough to edit.
+	out.Extra = append(append([]ExtraPackage(nil), def.Extra...), r.Extra...)
+	for i, e := range out.Extra {
+		if e.APK == "" && e.IPK == "" {
+			return Router{}, fmt.Errorf("extra_packages[%d]: needs at least one of apk: or ipk:", i)
+		}
+		if e.Name == "" {
+			url := e.APK
+			if url == "" {
+				url = e.IPK
+			}
+			out.Extra[i].Name = path.Base(url)
+		}
 	}
 
 	if len(out.Fixtures) == 0 {
