@@ -273,6 +273,47 @@ point releases stay available upstream, so this always works.
 and snapshot feeds are rebuilt daily and independently, and drift apart within
 a day.
 
+### Prebuilt images
+
+Assembling a router from the upstream rootfs takes about a minute, most of it
+installing the LuCI set. Starting from a published image takes seconds:
+
+```yaml
+routers:
+  - id: owrt2512
+    release: "25.12.4"
+    arch: x86_64
+    image: ghcr.io/vizzletf/owlab-rootfs:openwrt-25.12.4-x86_64
+```
+
+Everything else still applies on top — your `packages:` are installed (the
+package manager reports the ones already there as up to date), fixtures are
+re-applied, the theme is set. A prebuilt image is an accelerator, not a
+different code path, so nothing behaves differently from a locally built one.
+
+Published tags are `<distro>-<release>-<arch>`:
+
+```
+ghcr.io/vizzletf/owlab-rootfs:openwrt-25.12.4-x86_64
+ghcr.io/vizzletf/owlab-rootfs:openwrt-25.12.4-aarch64_generic
+ghcr.io/vizzletf/owlab-rootfs:openwrt-24.10.8-x86_64
+ghcr.io/vizzletf/owlab-rootfs:immortalwrt-25.12.1-x86_64
+...
+```
+
+One tag is one target — there is no multi-arch manifest and there should not
+be. An OCI image index has no field for "distro version", and most OpenWrt
+architecture names (`aarch64_generic`, `mips_24kc`) have no valid GOARCH
+mapping, so a manifest list cannot express this matrix. Upstream does not try
+either.
+
+Each image carries its own provenance at `/usr/share/owlab/compliance/`: the
+package manifest, a CycloneDX SBOM with per-package licences, and the
+buildinfo files pinning the tree and every feed to an exact commit. That
+material exists upstream but is *not* inside the rootfs — the tarball ships no
+licence texts and no copyright notices at all — so owlab assembles it at build
+time rather than leaving every downstream user to reconstruct it.
+
 ### Architecture
 
 `arch: auto` picks whatever runs natively — `aarch64_generic` on Apple

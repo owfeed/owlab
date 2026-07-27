@@ -92,8 +92,12 @@ func Prepare(cfg *config.Config, eng engine.Info) (*Project, error) {
 	if err := extractContext(ctxDir); err != nil {
 		return nil, fmt.Errorf("writing build context: %w", err)
 	}
-	// After extractContext, which wipes the directory first.
-	if err := fetchExtraPackages(cfg, ctxDir, filepath.Join(work, "cache")); err != nil {
+	// Both after extractContext, which wipes the directory first.
+	cacheDir := filepath.Join(work, "cache")
+	if err := fetchExtraPackages(cfg, ctxDir, cacheDir); err != nil {
+		return nil, err
+	}
+	if err := fetchCompliance(cfg, ctxDir, cacheDir); err != nil {
 		return nil, err
 	}
 
@@ -139,7 +143,12 @@ func Prepare(cfg *config.Config, eng engine.Info) (*Project, error) {
 	}, nil
 }
 
-func service(cfg *config.Config, r *config.Router, eng engine.Info, project, ctxDir string) (Service, error) {
+// BuildArgsFor is every ARG the Dockerfile needs for one router.
+//
+// Exported because CI builds the published images with `docker buildx build`
+// rather than through compose. Sharing this function is what keeps a
+// published image identical to the one a developer builds locally.
+func BuildArgsFor(cfg *config.Config, r *config.Router) map[string]string {
 	args := map[string]string{
 		"PKG_MANAGER":   string(r.PackageManager()),
 		"PACKAGES":      strings.Join(r.Packages, " "),
@@ -155,6 +164,11 @@ func service(cfg *config.Config, r *config.Router, eng engine.Info, project, ctx
 		args["BASE_STAGE"] = "tarball"
 		args["ROOTFS_URL"] = r.RootfsTarballURL()
 	}
+	return args
+}
+
+func service(cfg *config.Config, r *config.Router, eng engine.Info, project, ctxDir string) (Service, error) {
+	args := BuildArgsFor(cfg, r)
 
 	svc := Service{
 		Build: &Build{

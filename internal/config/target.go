@@ -310,6 +310,10 @@ func (r *Router) RootfsTarballURL() string {
 // BaseImage is the upstream container image for this router, or "" when the
 // router must be built from a rootfs tarball instead.
 func (r *Router) BaseImage() string {
+	// An explicit image wins: it is the whole point of pointing at one.
+	if r.Image != "" {
+		return r.Image
+	}
 	s := r.spec()
 	if s.ImageRepo == "" || !r.target.HasRootfsImage {
 		return ""

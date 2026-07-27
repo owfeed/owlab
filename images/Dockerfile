@@ -134,10 +134,36 @@ RUN printf '%s\n%s\n' "$ROOT_PASSWORD" "$ROOT_PASSWORD" | passwd root >/dev/null
 # These keys are PUBLIC — they are in a published image and shared by every
 # user of it. That is the point: they authenticate nothing, they only keep
 # ssh from complaining. Never reuse this image where the host key matters.
-RUN dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >/dev/null 2>&1 \
-	&& dropbearkey -t rsa -s 2048 -f /etc/dropbear/dropbear_rsa_host_key >/dev/null 2>&1
+#
+# Generated only when absent, because this same Dockerfile runs on top of an
+# already-built owlab image when a router names one in image:. dropbearkey
+# refuses to overwrite an existing key and exits non-zero, which would fail
+# every prebuilt build at a step that has nothing to do with what changed.
+RUN set -eu; \
+	mkdir -p /etc/dropbear; \
+	[ -f /etc/dropbear/dropbear_ed25519_host_key ] \
+		|| dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >/dev/null 2>&1; \
+	[ -f /etc/dropbear/dropbear_rsa_host_key ] \
+		|| dropbearkey -t rsa -s 2048 -f /etc/dropbear/dropbear_rsa_host_key >/dev/null 2>&1
 
 COPY rootfs-extra/ /
+
+# Provenance and licence material, baked in at a known path.
+#
+# Publishing an image built from an OpenWrt rootfs redistributes GPL'd
+# binaries. Upstream publishes the manifest, a CycloneDX SBOM with per-package
+# licences, and buildinfo files pinning the tree and every feed to an exact
+# commit — but none of it INSIDE the rootfs, which carries no licence texts and
+# no copyright notices at all. Staging it here is what makes the image
+# self-documenting rather than leaving every downstream user to reconstruct it.
+COPY compliance/ /tmp/owlab-compliance/
+RUN set -eu; \
+	src="/tmp/owlab-compliance/$ROUTER_ID"; \
+	if [ -d "$src" ]; then \
+		mkdir -p /usr/share/owlab/compliance; \
+		cp -r "$src"/. /usr/share/owlab/compliance/; \
+	fi; \
+	rm -rf /tmp/owlab-compliance
 
 # Which fixture profiles this image should apply on first boot. The profiles
 # themselves are all present in the image; this file selects them, so the same

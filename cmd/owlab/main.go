@@ -121,6 +121,8 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return a.exec(ctx, args)
 	case "sync":
 		return a.sync(ctx, args)
+	case "context":
+		return a.buildContext(ctx, args)
 	case "install":
 		return a.install(ctx, args)
 	case "logs":

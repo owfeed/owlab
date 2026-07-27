@@ -114,6 +114,14 @@ type Router struct {
 	// PkgManager overrides the package manager. Normally empty: it is derived
 	// from the distribution and the release.
 	PkgManager PackageManager
+	// Image is a prebuilt base image to start from instead of assembling one
+	// from the upstream rootfs.
+	//
+	// Everything else still applies on top: packages listed here are
+	// installed (the package manager reports the ones already present as
+	// up to date), fixtures are re-applied, and the theme is set. So a
+	// prebuilt image is an accelerator, not a different code path.
+	Image string
 
 	target Target
 }
@@ -137,9 +145,19 @@ func (r *Router) PackageManager() PackageManager {
 	return PackageManagerFor(r.Release)
 }
 
-// FromTarball reports whether this router must be built by unpacking a rootfs
-// tarball rather than by pulling an upstream image.
-func (r *Router) FromTarball() bool { return r.BaseImage() == "" }
+// FromTarball reports whether this router's image is assembled by unpacking a
+// rootfs tarball rather than inherited from a published one.
+//
+// Deliberately independent of Image: it answers "what platform metadata do
+// the binaries in this image carry", and that is decided by the distribution
+// and the target, not by whether the user pointed at a prebuilt copy. An
+// owlab-published ImmortalWrt image was built from a tarball onto scratch and
+// carries the honest linux/arm64; naming it in image: must not flip the
+// answer to OpenWrt's non-standard linux/aarch64_generic.
+func (r *Router) FromTarball() bool {
+	s := r.spec()
+	return s.ImageRepo == "" || !r.target.HasRootfsImage
+}
 
 // Platform is what to pass to `docker --platform` for this router.
 //
@@ -176,6 +194,7 @@ type rawRouter struct {
 	Arch     *string        `yaml:"arch"`
 	Fidelity *string        `yaml:"fidelity"`
 	PkgMgr   *string        `yaml:"package_manager"`
+	Image    *string        `yaml:"image"`
 	Packages []string       `yaml:"packages"`
 	Extra    []ExtraPackage `yaml:"extra_packages"`
 	Fixtures []string       `yaml:"fixtures"`
@@ -293,6 +312,7 @@ func merge(def, r rawRouter, index int) (Router, error) {
 		Arch:       pick(def.Arch, r.Arch, "auto"),
 		Fidelity:   Fidelity(pick(def.Fidelity, r.Fidelity, string(Basic))),
 		PkgManager: PackageManager(pick(def.PkgMgr, r.PkgMgr, "")),
+		Image:      pick(def.Image, r.Image, ""),
 		Packages:   mergeList(def.Packages, r.Packages),
 		Fixtures:   mergeList(def.Fixtures, r.Fixtures),
 	}

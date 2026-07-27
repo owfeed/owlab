@@ -283,3 +283,40 @@ routers:
 		t.Fatal("expected an unknown package manager to be rejected")
 	}
 }
+
+func TestPrebuiltImageKeepsPlatformHonest(t *testing.T) {
+	// Pointing at a prebuilt image must not change what platform its contents
+	// are. An owlab-published ImmortalWrt image was built from a tarball onto
+	// scratch and carries linux/arm64; naming it must not make owlab ask the
+	// daemon for OpenWrt's non-standard linux/aarch64_generic.
+	p := write(t, `
+version: 1
+defaults: { arch: aarch64_generic }
+routers:
+  - id: owrt
+    release: "25.12.4"
+    image: ghcr.io/vizzletf/owlab-rootfs:openwrt-25.12.4-aarch64_generic
+  - id: imm
+    distro: immortalwrt
+    release: "25.12.1"
+    image: ghcr.io/vizzletf/owlab-rootfs:immortalwrt-25.12.1-aarch64_generic
+`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owrt, _ := cfg.Router("owrt")
+	if owrt.Platform() != "linux/aarch64_generic" {
+		t.Errorf("openwrt prebuilt platform: %q", owrt.Platform())
+	}
+	if owrt.BaseImage() != "ghcr.io/vizzletf/owlab-rootfs:openwrt-25.12.4-aarch64_generic" {
+		t.Errorf("openwrt base image: %q", owrt.BaseImage())
+	}
+	imm, _ := cfg.Router("imm")
+	if imm.Platform() != "linux/arm64" {
+		t.Errorf("immortalwrt prebuilt platform: %q", imm.Platform())
+	}
+	if imm.BaseImage() != "ghcr.io/vizzletf/owlab-rootfs:immortalwrt-25.12.1-aarch64_generic" {
+		t.Errorf("immortalwrt base image: %q", imm.BaseImage())
+	}
+}

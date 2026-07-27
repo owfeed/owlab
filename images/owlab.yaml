@@ -1,0 +1,86 @@
+# The images owlab publishes to GHCR.
+#
+# This is an ordinary owlab.yaml, and that is the point: the published images
+# go through exactly the context and build args that `owlab up` uses locally,
+# so what CI ships cannot drift away from what a developer builds. CI reads
+# the matrix from `owlab context --list`.
+#
+# One tag is one target. All three of distro, exact release and OpenWrt
+# architecture belong in the tag: an OCI image index has no field for "distro
+# version", and most OpenWrt architecture names (aarch64_generic, mips_24kc)
+# have no valid GOARCH mapping — so a manifest list cannot express this matrix.
+# Upstream does not try either.
+#
+# The package set is what a LuCI developer actually needs to look at: a bare
+# `luci` renders three menus, and the sections, tabs, tables and widgets that
+# need styling live in the apps. Anyone wanting a different set builds their
+# own — that path stays fast because these images share every layer below the
+# package install.
+
+version: 1
+
+project:
+  name: owlab
+
+defaults:
+  fidelity: basic
+  fixtures: [all]
+  packages:
+    - luci
+    - luci-app-firewall
+    - luci-app-package-manager
+    - luci-app-ddns
+    - luci-app-upnp
+    - luci-app-sqm
+    - luci-app-wol
+    - luci-app-nlbwmon
+    - luci-app-watchcat
+    - luci-mod-dashboard
+    - luci-proto-wireguard
+    # The wifi userland. LuCI's wireless pages read the radio list from UCI
+    # and gate the menu on the existence of /sbin/wifi, so they render with
+    # no radios present at all.
+    - wpad-basic-mbedtls
+    - wifi-scripts
+    - iwinfo
+    # dropbear ships no sftp-server, and OpenSSH 9+ scp speaks SFTP by
+    # default — without this every scp against the box fails.
+    - openssh-sftp-server
+
+routers:
+  # OpenWrt 25.12 — apk
+  - id: openwrt-2512-x86-64
+    release: "25.12.4"
+    arch: x86_64
+  - id: openwrt-2512-aarch64
+    release: "25.12.4"
+    arch: aarch64_generic
+
+  # OpenWrt 24.10 — opkg
+  - id: openwrt-2410-x86-64
+    release: "24.10.8"
+    arch: x86_64
+  - id: openwrt-2410-aarch64
+    release: "24.10.8"
+    arch: aarch64_generic
+
+  # ImmortalWrt 25.12 — apk, built from the rootfs tarball because every tag
+  # in immortalwrt/rootfs is labelled linux/amd64, including the aarch64 ones.
+  - id: immortalwrt-2512-x86-64
+    distro: immortalwrt
+    release: "25.12.1"
+    arch: x86_64
+  - id: immortalwrt-2512-aarch64
+    distro: immortalwrt
+    release: "25.12.1"
+    arch: aarch64_generic
+
+  # ImmortalWrt 24.10 — opkg
+  - id: immortalwrt-2410-x86-64
+    distro: immortalwrt
+    release: "24.10.6"
+    arch: x86_64
+  - id: immortalwrt-2410-aarch64
+    distro: immortalwrt
+    release: "24.10.6"
+    arch: aarch64_generic
