@@ -1,6 +1,6 @@
 # Internals
 
-[Русская версия](internals.ru.md)
+[Русская версия](internals_ru.md)
 
 How owlab is put together and why it behaves the way it does. Nothing here is
 needed to use it — start with the [runbook](runbook.md).

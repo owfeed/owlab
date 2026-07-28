@@ -1,6 +1,6 @@
 # Configuration reference
 
-[Русская версия](reference.ru.md)
+[Русская версия](reference_ru.md)
 
 Every key of `owlab.yaml`. For "how do I do X" see the [runbook](runbook.md);
 for why the defaults are what they are, [internals](internals.md).

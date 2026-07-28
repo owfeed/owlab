@@ -1,6 +1,6 @@
 # owlab
 
-[Русская версия](README.ru.md)
+[Русская версия](README_ru.md)
 
 Throwaway OpenWrt and ImmortalWrt routers. One file, one command, working
 routers — on Linux, WSL2, Docker Desktop for Windows, or macOS.

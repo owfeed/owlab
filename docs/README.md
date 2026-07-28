@@ -1,6 +1,6 @@
 # owlab documentation
 
-[Русская версия](README.ru.md)
+[Русская версия](README_ru.md)
 
 Start with the [README](../README.md) if you have never run owlab. These pages
 are for when you have.
@@ -14,7 +14,7 @@ are for when you have.
 | [Releasing](releasing.md) | Cutting a release, and how the images track upstream |
 | [Status](STATUS.md) | What is built, what is not, and why — a snapshot, unlike the rest |
 
-Every page has a `.ru.md` beside it, except the status snapshot.
+Every page has a `_ru.md` beside it, except the status snapshot.
 
 ## What is written here
 

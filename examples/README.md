@@ -1,6 +1,6 @@
 # Examples
 
-[Русская версия](README.ru.md)
+[Русская версия](README_ru.md)
 
 Configs that do something real. Point owlab at one from anywhere:
 

@@ -4,9 +4,9 @@
 
 Процедуры. Каждая — задача, команды и способ убедиться, что вышло.
 
-Что означает ключ — в [справочнике](reference.ru.md). Почему оно так себя ведёт
-— во [внутренностях](internals.ru.md). Когда что-то сломалось — в
-[диагностике](troubleshooting.ru.md), она отсортирована по симптомам.
+Что означает ключ — в [справочнике](reference_ru.md). Почему оно так себя ведёт
+— во [внутренностях](internals_ru.md). Когда что-то сломалось — в
+[диагностике](troubleshooting_ru.md), она отсортирована по симптомам.
 
 ---
 
@@ -208,7 +208,7 @@ opkg, артефакты называются по-разному, и LuCI вн�
 
 Готовый workflow для копирования — в
 [examples/workflow/package-ci.yml](../examples/workflow/package-ci.yml), все
-флаги — в [справочнике](reference.ru.md#owlab-test).
+флаги — в [справочнике](reference_ru.md#owlab-test).
 
 ---
 
@@ -290,9 +290,9 @@ $ owlab exec owrt2512 -- 'ip route; ping -c1 -W3 8.8.8.8'
 
 Роутер, который завершает TCP-рукопожатие и тут же сбрасывает соединение, а
 uhttpd при этом жив и слушает — это
-[flow offloading](troubleshooting.ru.md#роутер-сбрасывает-каждое-соединение).
+[flow offloading](troubleshooting_ru.md#роутер-сбрасывает-каждое-соединение).
 Роутер, который отдаёт LuCI, но у которого висит любое исходящее соединение —
-это [mwan3](troubleshooting.ru.md#luci-отвечает-но-исходящее-не-работает).
+это [mwan3](troubleshooting_ru.md#luci-отвечает-но-исходящее-не-работает).
 
 ---
 
@@ -337,4 +337,4 @@ $ export OWLAB_CONFIG=~/src/other-project
 
 ## Опубликовать образы, выпустить релиз
 
-См. [релизы](releasing.ru.md).
+См. [релизы](releasing_ru.md).

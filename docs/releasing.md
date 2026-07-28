@@ -1,6 +1,6 @@
 # Releasing
 
-[Русская версия](releasing.ru.md)
+[Русская версия](releasing_ru.md)
 
 ## Cutting a release
 

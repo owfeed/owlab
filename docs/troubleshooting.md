@@ -1,6 +1,6 @@
 # Troubleshooting
 
-[Русская версия](troubleshooting.ru.md)
+[Русская версия](troubleshooting_ru.md)
 
 Everything here was observed on a running router. Each entry is a symptom, its
 cause, and what owlab does about it. They are grouped by what they look like

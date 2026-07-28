@@ -44,7 +44,7 @@ policy are edited by different people with different amounts of review.
 
 ## Where to look
 
-- [reference.md](reference.md) — every `owlab.yaml` key and every flag *([по-русски](reference.ru.md))*
-- [runbook.md](runbook.md) — how to do a particular thing *([по-русски](runbook.ru.md))*
-- [internals.md](internals.md) — why the defaults are what they are *([по-русски](internals.ru.md))*
+- [reference.md](reference.md) — every `owlab.yaml` key and every flag *([по-русски](reference_ru.md))*
+- [runbook.md](runbook.md) — how to do a particular thing *([по-русски](runbook_ru.md))*
+- [internals.md](internals.md) — why the defaults are what they are *([по-русски](internals_ru.md))*
 - [ECOSYSTEM.md](https://github.com/VizzleTF/owfeed/blob/main/docs/ECOSYSTEM.md) — the boundary with owfeed

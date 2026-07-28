@@ -2,8 +2,8 @@
 
 [English](reference.md)
 
-Все ключи `owlab.yaml`. «Как сделать X» — в [ранбуке](runbook.ru.md); почему
-дефолты именно такие — во [внутренностях](internals.ru.md).
+Все ключи `owlab.yaml`. «Как сделать X» — в [ранбуке](runbook_ru.md); почему
+дефолты именно такие — во [внутренностях](internals_ru.md).
 
 ```yaml
 version: 1

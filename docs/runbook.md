@@ -1,6 +1,6 @@
 # Runbook
 
-[Русская версия](runbook.ru.md)
+[Русская версия](runbook_ru.md)
 
 Procedures. Each one is a goal, the commands, and how to tell it worked.
 
