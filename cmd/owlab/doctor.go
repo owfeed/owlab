@@ -166,6 +166,7 @@ func (a *app) doctor(ctx context.Context, args []string) error {
 					}
 				}
 				checks = append(checks, configChecks(cfg)...)
+				checks = append(checks, dnsEgressChecks(ctx, cfg)...)
 			}
 		} else {
 			add("config", info, "no %s here; run owlab from a project that has one", config.FileName)
@@ -173,6 +174,73 @@ func (a *app) doctor(ctx context.Context, args []string) error {
 	}
 
 	return report(checks)
+}
+
+// dnsEgressChecks reports whether a container can send DNS queries to a
+// resolver of its own choosing.
+//
+// Worth a check of its own because the failure is silent and the error it
+// eventually produces names the wrong thing. Some engines — OrbStack, measured
+// — do not forward outbound UDP port 53 at all, while TCP leaves normally. A
+// package that ships its own resolver then cannot look anything up: podkop's
+// sing-box exits with
+//
+//	initial rule-set: ... lookup github.com: context deadline exceeded
+//
+// which reads as "GitHub is unreachable" when GitHub over https is fine. The
+// fix is always the same — point the package's bootstrap resolver at the
+// engine's own, which does answer — so the useful thing owlab can do is say
+// which resolver that is.
+//
+// Probed through a router that is already running rather than by starting a
+// container, so that `doctor` stays fast and never pulls an image.
+func dnsEgressChecks(ctx context.Context, cfg *config.Config) []check {
+	var container string
+	for i := range cfg.Routers {
+		r := &cfg.Routers[i]
+		if r.Fidelity == config.VM {
+			continue
+		}
+		name := compose.ProjectName(cfg.Project.Name) + "-" + r.ID
+		out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}}", name).Output()
+		if err == nil && strings.TrimSpace(string(out)) == "true" {
+			container = name
+			break
+		}
+	}
+	if container == "" {
+		return nil
+	}
+
+	// busybox nslookup takes the server as its second argument, and `timeout`
+	// bounds a query that would otherwise sit through several retries.
+	script := `timeout 4 nslookup openwrt.org 1.1.1.1 >/dev/null 2>&1 && echo direct-ok
+awk '$1 == "nameserver" { print "engine " $2; exit }' /etc/resolv.conf`
+	out, err := exec.CommandContext(ctx, "docker", "exec", container, "/bin/sh", "-c", script).Output()
+	if err != nil {
+		return nil
+	}
+
+	direct := strings.Contains(string(out), "direct-ok")
+	engineNS := ""
+	for _, line := range strings.Split(string(out), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "engine "); ok {
+			engineNS = rest
+		}
+	}
+
+	if direct {
+		return []check{{"dns egress", pass,
+			"containers can query any resolver over UDP; a package that brings its own works unconfigured"}}
+	}
+	detail := "this engine does not forward outbound UDP port 53 — a package with its own resolver " +
+		"(podkop, https-dns-proxy, AdGuard Home) resolves nothing and reports it as the destination being " +
+		"unreachable. Point its bootstrap resolver at the engine's"
+	if engineNS != "" {
+		detail += " (" + engineNS + ")"
+	}
+	detail += "; TCP, and so DoH and DoT, are unaffected."
+	return []check{{"dns egress", warn, detail}}
 }
 
 // vmChecks reports what the VM tier can do on this machine.
