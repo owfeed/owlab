@@ -1,14 +1,11 @@
 // Package engine identifies which container engine is in front of us and what
 // it can and cannot do.
 //
-// This exists because the honest answer to "does WiFi simulation work here?"
-// is different on every macOS setup, and guessing wrong is worse than saying
-// no. Docker Desktop's LinuxKit kernel is built with `# CONFIG_CFG80211 is not
-// set`, so mac80211_hwsim — and virt_wifi, and vwifi, and wmediumd, all of
-// which sit on top of cfg80211 — cannot load there at all. OrbStack's kernel
-// has no wireless stack either. Colima and Lima run a stock Ubuntu kernel the
-// user has root on, so there the same technique that works on Linux works
-// unchanged.
+// The engines differ in ways that change owlab's behaviour and that no amount
+// of reading the host OS will tell you: whether a bind-mounted file keeps the
+// host's ownership inside the container, whether outbound UDP leaves at all,
+// which resolver address the container is handed. Naming the engine is what
+// lets a message say the true reason rather than a guess.
 package engine
 
 import (
@@ -101,39 +98,6 @@ func classify(osName, dockerCtx, hostOS string, wsl bool) Kind {
 		return NativeLinux
 	}
 	return Unknown
-}
-
-// HostKernelWiFi reports whether this engine can give a container real
-// mac80211_hwsim radios, and why not when it cannot.
-//
-// The rule is about whose kernel the containers run under and whether the
-// user can load modules into it — not about the host OS.
-func (i Info) HostKernelWiFi() (ok bool, reason string) {
-	switch i.Kind {
-	case NativeLinux:
-		return true, ""
-	case Colima, Lima:
-		// Stock Ubuntu cloud-image kernel; cfg80211, mac80211 and
-		// mac80211_hwsim ship in linux-modules-extra-$(uname -r), which is
-		// not installed by default but can be.
-		return true, ""
-	case DockerDesktop:
-		if i.HostOS == "windows" || i.WSL {
-			// The WSL2 backend runs containers under the WSL kernel, which is
-			// a real Linux kernel — the same path as native Linux.
-			return true, ""
-		}
-		return false, "Docker Desktop's LinuxKit kernel is built with CONFIG_CFG80211 unset, " +
-			"so mac80211_hwsim cannot load (and neither can virt_wifi, vwifi or wmediumd, " +
-			"which all sit on top of cfg80211)"
-	case OrbStack:
-		return false, "OrbStack's kernel ships no wireless stack and does not support custom modules"
-	case RancherDesktop:
-		return false, "Rancher Desktop's alpine-lima kernel is fixed and has no supported way to add modules"
-	case Podman:
-		return false, "the Podman machine image is immutable; adding kernel modules needs rpm-ostree and a reboot"
-	}
-	return false, "unrecognised container engine"
 }
 
 // BindMountsAreHostOwned reports whether a bind-mounted file keeps the host's

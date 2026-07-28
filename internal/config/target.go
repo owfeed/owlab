@@ -96,12 +96,14 @@ func KnownDistros() []string {
 // LuCI work and the expensive ones are not available on every host.
 type Fidelity string
 
+// Two tiers, deliberately. An earlier design had a third — a container with
+// mac80211_hwsim phys moved in from the HOST kernel — and the VM tier made it
+// pointless: a VM has real radios on every host, while the container variant
+// needed a Linux kernel the developer controls and could never work on the
+// machines that need it most.
 const (
 	// Basic is a container with procd as PID 1. Works on every host OS.
 	Basic Fidelity = "basic"
-	// Full is Basic plus real mac80211_hwsim phys moved in from the host
-	// kernel. Needs a Linux kernel the user controls.
-	Full Fidelity = "full"
 	// VM is a real OpenWrt kernel under QEMU, run natively on the host.
 	VM Fidelity = "vm"
 )

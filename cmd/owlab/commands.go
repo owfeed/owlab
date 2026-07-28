@@ -651,15 +651,6 @@ func routerIDs(routers []*config.Router) []string {
 func (a *app) checkFidelity(ctx context.Context, routers []*config.Router) error {
 	for _, r := range routers {
 		switch r.Fidelity {
-		case config.Full:
-			ok, reason := a.eng.HostKernelWiFi()
-			if !ok {
-				return fmt.Errorf(
-					"router %q asks for fidelity full, which needs real mac80211_hwsim radios, but %s.\n\n"+
-						"Use fidelity basic (LuCI's wireless pages still render from config), or\n"+
-						"fidelity vm, which runs a real OpenWrt kernel under QEMU on this host.",
-					r.ID, reason)
-			}
 		case config.VM:
 			// Probed, not assumed: the emulator and the firmware are the two
 			// things a machine can be missing, and finding out at boot time

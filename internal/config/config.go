@@ -157,6 +157,16 @@ type VMSpec struct {
 	// first provisioning, and grows sparsely — a 2G disk occupies what is
 	// actually written and nothing more.
 	Disk string
+
+	// Radios is how many mac80211_hwsim radios to give the router, or 0 for
+	// none.
+	//
+	// This is the one thing the VM tier does that no container can. The
+	// kernel here is OpenWrt's own, so the module loads for real: hostapd
+	// runs on genuine phys, iwinfo reports signal and noise, and a scan
+	// returns results. Two by default, because a dual-band router is what
+	// LuCI's wireless pages are laid out for.
+	Radios int
 }
 
 // Target is the resolved build target for this router.
@@ -236,6 +246,7 @@ type rawRouter struct {
 	Memory   *string        `yaml:"memory"`
 	CPUs     *int           `yaml:"cpus"`
 	Disk     *string        `yaml:"disk"`
+	Radios   *int           `yaml:"radios"`
 }
 
 // Find walks up from dir looking for owlab.yaml.
@@ -364,12 +375,17 @@ func merge(def, r rawRouter, index int) (Router, error) {
 		Memory: pick(def.Memory, r.Memory, "512M"),
 		Disk:   pick(def.Disk, r.Disk, "2G"),
 		CPUs:   2,
+		Radios: 2,
 	}
-	if def.CPUs != nil {
-		out.VM.CPUs = *def.CPUs
+	for _, n := range []*int{def.CPUs, r.CPUs} {
+		if n != nil {
+			out.VM.CPUs = *n
+		}
 	}
-	if r.CPUs != nil {
-		out.VM.CPUs = *r.CPUs
+	for _, n := range []*int{def.Radios, r.Radios} {
+		if n != nil {
+			out.VM.Radios = *n
+		}
 	}
 	// "0" and "none" are how a config says "no second disk", since an empty
 	// string is indistinguishable from the key being absent.
@@ -517,9 +533,9 @@ func (c *Config) validate() error {
 				r.ID, r.Distro, strings.Join(KnownDistros(), ", "))
 		}
 		switch r.Fidelity {
-		case Basic, Full, VM:
+		case Basic, VM:
 		default:
-			return fmt.Errorf("router %q: unknown fidelity %q (known: basic, full, vm)", r.ID, r.Fidelity)
+			return fmt.Errorf("router %q: unknown fidelity %q (known: basic, vm)", r.ID, r.Fidelity)
 		}
 		switch r.PkgManager {
 		case "", APK, OPKG:

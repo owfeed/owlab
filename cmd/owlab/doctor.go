@@ -88,13 +88,6 @@ func (a *app) doctor(ctx context.Context, args []string) error {
 	add("arch", info, "native OpenWrt arch for this host is %s", hostArch)
 
 	if haveDocker {
-		// fidelity full
-		if ok, reason := eng.HostKernelWiFi(); ok {
-			add("fidelity full", pass, "this engine can host mac80211_hwsim radios")
-		} else {
-			add("fidelity full", warn, "%s", reason)
-		}
-
 		// Bind-mount ownership: only native Linux keeps host uid/gid, which is
 		// the one case where a mounted authorized_keys is rejected by dropbear.
 		if eng.BindMountsAreHostOwned() {

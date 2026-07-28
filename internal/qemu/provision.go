@@ -74,6 +74,43 @@ func (v *VM) Provision(ctx context.Context, progress io.Writer) error {
 		}
 	}
 
+	if v.Router.VM.Radios > 0 {
+		say("adding %d mac80211_hwsim radios", v.Router.VM.Radios)
+		if err := v.setupRadios(ctx); err != nil {
+			return err
+		}
+	}
+
+	// A reboot BEFORE the overlay, and it is not cosmetic.
+	//
+	// Everything above was installed onto a system that had already finished
+	// booting, and a good deal of OpenWrt reads its inputs exactly once, at
+	// boot:
+	//
+	//   * procd starts the services a package enabled — wpad among them — at
+	//     boot, and never notices one that appeared afterwards.
+	//   * netifd loads /lib/netifd/wireless/* at startup, so wifi-scripts
+	//     installed later leaves `wifi up` reporting "Command failed: Not
+	//     found" against a netifd with no wireless support loaded.
+	//   * ubusd reads /usr/share/acl.d/ at startup. wpad's ACL is what lets
+	//     hostapd — which runs as the unprivileged `network` user — publish
+	//     its ubus object at all, and without that object the wireless setup
+	//     script waits forever and the radios stay `pending: true`.
+	//   * kmodloader loads /etc/modules.d/* at boot, which is when the hwsim
+	//     radios come into existence.
+	//
+	// Each of those was measured on a router that looked fully provisioned,
+	// and not one of them reports anything that names the cause.
+	//
+	// Before the overlay rather than after, because the fixtures have to see
+	// the result: 60-wifi.sh asks whether real phys are present and configures
+	// them if they are, and run one reboot earlier it would find none and
+	// write the invented radios a container gets.
+	say("rebooting so the services these packages enabled actually start")
+	if err := v.reboot(ctx); err != nil {
+		return err
+	}
+
 	say("applying the owlab overlay and fixtures")
 	if err := v.applyOverlay(ctx); err != nil {
 		return err
@@ -81,6 +118,24 @@ func (v *VM) Provision(ctx context.Context, progress io.Writer) error {
 
 	st.Provisioned = true
 	return v.saveState(st)
+}
+
+// setupRadios installs mac80211_hwsim and asks for it at boot.
+//
+// A module file rather than a modprobe: the radios have to exist before netifd
+// looks for them, and /etc/modules.d is how OpenWrt says that. The count is
+// the module's own parameter, so two radios here are two phys — a dual-band
+// router — rather than one phy pretending to be two bands.
+func (v *VM) setupRadios(ctx context.Context) error {
+	script := v.pkgInstallCmd([]string{"kmod-mac80211-hwsim"}) + `
+printf 'mac80211_hwsim radios=%d\n' ` + fmt.Sprint(v.Router.VM.Radios) + ` > /etc/modules.d/mac80211-hwsim
+`
+	if out, err := v.SSH().Output(ctx, script); err != nil {
+		// Not fatal: a target whose kmods feed has no hwsim should cost the
+		// router its radios, not its existence.
+		return fmt.Errorf("installing mac80211_hwsim: %s", strings.TrimSpace(out))
+	}
+	return nil
 }
 
 // setupExtroot points /overlay at the second disk.
@@ -264,6 +319,10 @@ sh /etc/uci-defaults/96_owlab-fixtures
 /etc/init.d/uhttpd restart >/dev/null 2>&1 || true
 /etc/init.d/rpcd reload >/dev/null 2>&1 || true
 sh /etc/rc.local >/dev/null 2>&1 || true
+# The wifi fixture has just written /etc/config/wireless against the real
+# phys; nothing has told netifd to act on it yet.
+[ -n "$(ls /sys/class/ieee80211/ 2>/dev/null)" ] && wifi up >/dev/null 2>&1
+true
 `
 	if _, err := v.SSH().Output(ctx, script); err != nil {
 		return fmt.Errorf("applying the overlay: %w", err)

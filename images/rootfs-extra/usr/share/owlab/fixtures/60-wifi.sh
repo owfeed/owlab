@@ -26,6 +26,63 @@
 # with the engine's address on it and the only way into this container; no
 # fixture may put anything near it.
 
+# None of the above applies if there are REAL radios.
+#
+# A fidelity-vm router runs OpenWrt's own kernel, so mac80211_hwsim loads and
+# presents genuine phys — hostapd runs on them, iwinfo reports signal and
+# noise, and a scan returns results. Overwriting that with the invented
+# sections below would be strictly worse than doing nothing: netifd matches a
+# wifi-device to a phy by its `path`, the paths here name hardware that is not
+# there, and the real radios would sit unclaimed while LuCI drew rows for
+# radios that do not exist.
+#
+# `wifi config` is OpenWrt's own detection — the same code a first boot runs —
+# so the result is what the router would have written for itself.
+if [ -n "$(ls /sys/class/ieee80211/ 2>/dev/null)" ]; then
+	echo "owlab: real radios present, letting wifi config detect them"
+	rm -f /etc/config/wireless
+	wifi config
+
+	# Detection leaves every interface disabled, which is right for hardware
+	# a user has not configured and wrong for a dev box whose entire reason
+	# for having radios is to have them up.
+	for s in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)\.disabled=.*/\1/p'); do
+		uci -q set "wireless.$s.disabled=0"
+	done
+	for s in $(uci -q show wireless | sed -n "s/^wireless\.\([^.]*\)=wifi-iface$/\1/p"); do
+		uci -q set "wireless.$s.ssid=owlab"
+		uci -q set "wireless.$s.encryption=psk2"
+		uci -q set "wireless.$s.key=owlab123"
+		uci -q set "wireless.$s.network=guest"
+	done
+	# Bands and channels, rather than what detection picked.
+	#
+	# `wifi config` puts every hwsim radio on 6 GHz with channel auto, because
+	# the simulated phy advertises every band and 6 GHz is the highest. That is
+	# not what a router looks like: the pages owlab exists to exercise are laid
+	# out for a 2.4 GHz radio and a 5 GHz one, and a 6 GHz radio with country
+	# '00' comes up on channel 0 with no width the UI can name.
+	#
+	# A country is not optional either: the default '00' permits almost
+	# nothing, and 5 GHz channels come up disabled under it.
+	n=0
+	for s in $(uci -q show wireless | sed -n "s/^wireless\.\([^.]*\)=wifi-device$/\1/p"); do
+		uci -q set "wireless.$s.country=DE"
+		if [ "$n" = 0 ]; then
+			uci -q set "wireless.$s.band=2g"
+			uci -q set "wireless.$s.channel=6"
+			uci -q set "wireless.$s.htmode=HT20"
+		else
+			uci -q set "wireless.$s.band=5g"
+			uci -q set "wireless.$s.channel=36"
+			uci -q set "wireless.$s.htmode=VHT80"
+		fi
+		n=$((n + 1))
+	done
+	uci -q commit wireless
+	exit 0
+fi
+
 cat > /etc/config/wireless <<'EOF'
 config wifi-device 'radio0'
 	option type 'mac80211'

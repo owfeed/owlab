@@ -76,20 +76,25 @@ Compose v2. Run `owlab doctor` to see what your machine supports.
 ## Fidelity
 
 How closely a router has to resemble real hardware is chosen per router,
-because the cheap tier is enough for most LuCI work and the expensive ones are
-not available everywhere.
+because the cheap tier is enough for most LuCI work and the expensive one is
+not free.
 
-| `fidelity` | what it is | where it runs |
-|---|---|---|
-| `basic` (default) | container, procd as PID 1 | everywhere |
-| `full` | plus real `mac80211_hwsim` radios from the host kernel | Linux, WSL2, Colima, Lima |
-| `vm` | a real OpenWrt kernel under QEMU on the host | everywhere, accelerator permitting |
+| `fidelity` | what it is | what it costs | where it runs |
+|---|---|---|---|
+| `basic` (default) | container, procd as PID 1 | seconds to start | everywhere |
+| `vm` | a real OpenWrt kernel under QEMU on the host | ~10 s to boot, ~100 s the first time | everywhere, accelerator permitting |
 
-`owlab doctor` will tell you plainly when a tier is unavailable rather than
-starting something quietly less than what you asked for. On Docker Desktop for
-macOS, for instance, `full` can never work: that VM's kernel is built with
-`CONFIG_CFG80211` unset, so `mac80211_hwsim` — and `virt_wifi`, and `vwifi`,
-and `wmediumd`, which all sit on top of cfg80211 — cannot load at all.
+Two tiers, not three. An earlier design had a middle one — a container with
+`mac80211_hwsim` radios moved in from the *host* kernel — and the VM tier made
+it pointless: a VM has real radios on every host, while the container variant
+needed a Linux kernel the developer controls and could never work on the
+machines that need it most. Docker Desktop for macOS, for instance, builds its
+LinuxKit kernel with `CONFIG_CFG80211` unset, so `mac80211_hwsim` — and
+`virt_wifi`, and `vwifi`, and `wmediumd`, which all sit on top of cfg80211 —
+cannot load there at all.
+
+`owlab doctor` says plainly when a tier is unavailable rather than starting
+something quietly less than what you asked for.
 
 ### `fidelity: vm`
 
@@ -151,9 +156,33 @@ Requirements and behaviour:
   router's LAN side. `sync`, `install`, `exec`, `shell` and `logs` all work,
   over ssh instead of `docker exec`.
 
-Not yet working: `mac80211_hwsim` radios inside a VM appear as real phys and
-accept `iw` commands, but netifd's wireless setup does not complete for them
-on 25.12. Use `fidelity: basic`, whose wireless pages render from config.
+#### Real radios
+
+A VM router gets two `mac80211_hwsim` radios by default, and they are real:
+hostapd runs on them, `iwinfo` reports signal, noise and tx power, and LuCI's
+wireless pages show what the router is actually doing rather than what its
+config says.
+
+```console
+$ owlab exec real -- iwinfo
+phy0-ap0  ESSID: "owlab"
+          Mode: Master  Channel: 6 (2.437 GHz)  HT Mode: HT20
+          Tx-Power: 20 dBm  Link Quality: 70/70
+          Encryption: WPA-PSK (CCMP)
+phy1-ap0  ESSID: "owlab"
+          Mode: Master  Channel: 36 (5.180 GHz)
+          Tx-Power: 23 dBm  Link Quality: 70/70
+```
+
+The first radio is put on 2.4 GHz and the second on 5 GHz, because that is the
+router LuCI's wireless pages are laid out for — detection alone puts every
+hwsim radio on 6 GHz with channel auto, which under the default regulatory
+domain comes up on channel 0 with no width the UI can name. `radios: 0` turns
+them off; any other number is passed to the module.
+
+This is what the tier exists for, alongside kernel modules. No container can do
+it: `mac80211_hwsim` is a kernel module, and a container has no kernel of its
+own to load it into.
 
 ## Commands
 
@@ -406,14 +435,21 @@ everything. `none` gives a bare router. Dependencies are pulled in
 automatically, so `fixtures: [portforwards]` also gets `networks`.
 
 The `wifi` profile is opt-in because it claims `/etc/config/wireless`
-outright. It is worth knowing what it achieves: LuCI's wireless pages are
-almost entirely config-driven — the menu appears when `/sbin/wifi` exists, the
-radio list comes straight from UCI, and the encryption capability matrix is
-built by asking the `hostapd` binary what it supports. So the menu, the radio
-rows, the SSIDs, the modes and the full edit form all render correctly with no
-kernel wireless support of any kind. Only signal, scan results and the
-associated-stations table stay empty; those need real radios (`fidelity:
-full`) or a VM.
+outright. What it achieves on a container is worth knowing: LuCI's wireless
+pages are almost entirely config-driven — the menu appears when `/sbin/wifi`
+exists, the radio list comes straight from UCI, and the encryption capability
+matrix is built by asking the `hostapd` binary what it supports. So the menu,
+the radio rows, the SSIDs, the modes and the whole edit form render correctly
+with no kernel wireless support of any kind. Only signal, scan results and the
+associated-stations table stay empty; those need real radios, which means
+`fidelity: vm`.
+
+On a VM the profile does something different, and checks rather than assumes:
+if real phys are present it deletes the invented config and runs OpenWrt's own
+`wifi config` against them. Writing the invented sections there would be
+strictly worse than doing nothing — netifd matches a `wifi-device` to a phy by
+its `path`, the invented paths name hardware that is not there, and the real
+radios would sit unclaimed while LuCI drew rows for radios that do not exist.
 
 **Nothing in a fixture may touch `lan`.** That is eth0, with the container
 engine's own address on it, and it is the only way in — there is no console to
@@ -618,3 +654,13 @@ only to say what this tool works with.
 
 Images built by owlab contain unmodified OpenWrt or ImmortalWrt software,
 which is licensed under the GPL and other licences by its own authors.
+
+## Documentation
+
+The [docs](docs/) directory covers how owlab is built and why: the
+[architecture](docs/01-architecture.md), the [two tiers](docs/02-tiers.md),
+[networking](docs/03-networking.md), [packages](docs/04-packages.md), [the VM
+tier in depth](docs/05-vm-tier.md), and a [log of measured
+findings](docs/06-findings.md) — the one to read when something is behaving
+strangely, because most of what goes wrong here presents as something other
+than its cause.
