@@ -79,6 +79,30 @@ routers:
     release: "24.10.8"
     ports: { http: 8096, ssh: 2296 }
 
+  # The same router with OpenWrt's own kernel under it.
+  #
+  # kmod-nft-tproxy LOADS here — measured, `lsmod | grep nft_tproxy` and two
+  # tproxy rules in the live ruleset. In a container the module installs as a
+  # file and never loads, and whether tproxy works at all is then a property of
+  # the engine's kernel rather than of the router. That is the whole reason to
+  # want this tier for podkop.
+  #
+  # The DNS workaround below is still needed, just with a different address.
+  # QEMU's user networking does not pass arbitrary UDP 53 either: podkop's
+  # default 77.88.8.8 times out exactly as it does in a container, sing-box
+  # never answers, dnsmasq forwards to it, and the router loses DNS entirely.
+  # The resolver that does answer is SLIRP's own, always the WAN gateway with
+  # .3 in the last octet — 10.0.2.3 for the default 10.0.2.2.
+  #
+  # About a minute and a half to build the first time, twenty seconds to start
+  # after that. Radios off: podkop has nothing to do with wireless and two
+  # hwsim phys would only slow the boot.
+  - id: pkvm
+    fidelity: vm
+    release: "25.12.5"
+    radios: 0
+    ports: { http: 8097, ssh: 2297 }
+
 # ---------------------------------------------------------------------------
 # Configuring it once the router is up
 #
@@ -121,7 +145,19 @@ routers:
 #
 # Two different addresses means the tunnel carries traffic.
 #
-# `fidelity: vm` is the other option here. It boots OpenWrt's own kernel, so
-# the tproxy modules load for real and outbound UDP is not the engine's to
-# block — closer to the router podkop actually runs on, at the cost of a
-# slower first start.
+# On the vm router the same two settings apply; only the bootstrap address
+# differs, because there the resolver that answers is QEMU's rather than the
+# container engine's:
+#
+#   owlab --config examples/podkop exec pkvm -- '
+#     gw=$(ip route | awk "/^default/{print \$3; exit}")
+#     uci set podkop.settings.dns_type=doh
+#     uci set podkop.settings.dns_server=https://dns.google/dns-query
+#     uci set podkop.settings.bootstrap_dns_server="${gw%.*}.3"
+#     uci set podkop.main.mixed_proxy_enabled=1
+#     uci set podkop.main.mixed_proxy_port=2080
+#     uci commit podkop
+#     /etc/init.d/podkop restart'
+#
+# Verified on all three: fake-IP answered for a listed domain, and traffic
+# through the SOCKS port left from a different address than direct.

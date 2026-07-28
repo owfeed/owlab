@@ -120,7 +120,7 @@ If your package generates files that are not in the tree — a theme's
 
 ```yaml
 project:
-  build: ./build-css.sh htdocs/luci-static/mytheme/cascade.css
+  build: ./build-css.sh htdocs/luci-static/footstrap/cascade.css
 ```
 
 ### Run something on the router after every sync
@@ -130,7 +130,7 @@ Registering the package, dropping a cache, restarting a service:
 ```yaml
 project:
   post_sync: |
-    uci -q set luci.themes.MyTheme=/luci-static/mytheme
+    uci -q set luci.themes.Footstrap=/luci-static/footstrap
     uci -q commit luci
 ```
 
@@ -138,11 +138,16 @@ project:
 
 ```yaml
 project:
-  theme: mytheme
+  theme: footstrap
 ```
 
 owlab selects it after each sync. Without this a theme is registered but not
-shown.
+shown — installing a theme package adds `luci.themes.<Name>` and deliberately
+leaves `luci.main.mediaurlbase` alone.
+
+[examples/luci-theme-footstrap](examples/luci-theme-footstrap/owlab.yaml) is a
+real one: four routers, a build step for the generated CSS, and third-party
+apps to check the cascade against.
 
 ### Load kernel modules, or get real WiFi
 
