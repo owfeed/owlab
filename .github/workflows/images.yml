@@ -26,6 +26,10 @@ on:
         description: 'Point releases to publish per branch'
         type: string
         default: '2'
+      version:
+        description: 'Release tag to stamp an immutable tag with, e.g. v0.1.0'
+        type: string
+        required: false
   # Called by the release workflow at a tag, so a released owlab has images
   # whose overlay is the one that binary ships with.
   workflow_call:
