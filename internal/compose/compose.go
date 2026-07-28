@@ -42,6 +42,7 @@ type Service struct {
 	CapAdd          []string          `yaml:"cap_add,omitempty"`
 	Privileged      bool              `yaml:"privileged,omitempty"`
 	Ports           []string          `yaml:"ports,omitempty"`
+	ExtraHosts      []string          `yaml:"extra_hosts,omitempty"`
 	Environment     map[string]string `yaml:"environment,omitempty"`
 	Volumes         []string          `yaml:"volumes,omitempty"`
 	Restart         string            `yaml:"restart,omitempty"`
@@ -222,6 +223,14 @@ func service(cfg *config.Config, r *config.Router, eng engine.Info, project, ctx
 			fmt.Sprintf("%d:80", r.Ports.HTTP),
 			fmt.Sprintf("%d:22", r.Ports.SSH),
 		},
+		// The way back out, and the reason it is a name rather than an address:
+		// a router that installs from a feed served by the machine running owlab
+		// has to address that machine, and no literal is right everywhere. The
+		// default bridge gateway is 172.17.0.1 on a Linux runner, a user-defined
+		// bridge has a different one, and Docker Desktop has none at all.
+		// host-gateway is the daemon's own name for the answer, so the daemon
+		// resolves it instead of us guessing. See pkgmgr.HostToken.
+		ExtraHosts: []string{"host.docker.internal:host-gateway"},
 		Environment: map[string]string{
 			"OWLAB_DNS": dns(),
 		},

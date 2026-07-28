@@ -105,3 +105,35 @@ func TestAddFeedSpeaksEachManagersDialect(t *testing.T) {
 		t.Errorf("opkg feed does not install the key:\n%s", opkg)
 	}
 }
+
+// The two tiers reach the host by completely different means, and the token
+// exists so that one command line works on both. A regression here is a feed
+// URL that resolves on a laptop and 404s in CI, or the reverse.
+func TestResolveHostAnswersPerTier(t *testing.T) {
+	const in = "http://" + HostToken + ":8080/packages/noarch/packages.adb"
+
+	container := ResolveHost(in, false)
+	if !strings.Contains(container, "host.docker.internal") {
+		t.Errorf("container tier does not resolve to the docker host alias: %s", container)
+	}
+
+	vm := ResolveHost(in, true)
+	if !strings.Contains(vm, "192.168.1.254") {
+		t.Errorf("vm tier does not resolve to the SLIRP host address: %s", vm)
+	}
+
+	if strings.Contains(container, HostToken) || strings.Contains(vm, HostToken) {
+		t.Error("the token survived substitution")
+	}
+}
+
+// A real feed URL must come out byte-identical. Substitution that rewrites URLs
+// it was not asked about is how a published feed silently becomes a local one.
+func TestResolveHostLeavesARealURLAlone(t *testing.T) {
+	const in = "https://vizzletf.github.io/owfeed-packages/releases/25.12/noarch/packages.adb"
+	for _, vm := range []bool{false, true} {
+		if got := ResolveHost(in, vm); got != in {
+			t.Errorf("vm=%v: rewrote a real URL: %s", vm, got)
+		}
+	}
+}

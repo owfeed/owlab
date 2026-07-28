@@ -375,7 +375,8 @@ func (a *app) testInstall(ctx context.Context, r *config.Router, run syncpkg.Exe
 			res.Detail = fmt.Sprintf("pushing the feed key: %v %s", err, strings.TrimSpace(log.String()))
 			return res
 		}
-		pre = pkgmgr.AddFeed(r.PackageManager(), feedSrc.Name, shQuote(feedSrc.URL), dest)
+		url := pkgmgr.ResolveHost(feedSrc.URL, r.Fidelity == config.VM)
+		pre = pkgmgr.AddFeed(r.PackageManager(), feedSrc.Name, shQuote(url), dest)
 	}
 
 	for _, f := range files {

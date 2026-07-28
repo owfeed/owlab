@@ -470,7 +470,8 @@ func (a *app) install(ctx context.Context, args []string) error {
 				markFailed(r.ID)
 				continue
 			}
-			cmd = pkgmgr.AddFeed(r.PackageManager(), *feedName, shQuote(*feed), feedKeyDest)
+			url := pkgmgr.ResolveHost(*feed, r.Fidelity == config.VM)
+			cmd = pkgmgr.AddFeed(r.PackageManager(), *feedName, shQuote(url), feedKeyDest)
 		}
 
 		cmd += pkgmgr.Install(r.PackageManager(), installArgs, pkgmgr.Options{

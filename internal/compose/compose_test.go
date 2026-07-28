@@ -177,4 +177,9 @@ routers:
 	if strings.Contains(doc, "owlab-demo-box") {
 		t.Errorf("compose file has a service for a fidelity-vm router:\n%s", doc)
 	}
+	// Without this a router cannot install from a feed served by the machine
+	// running owlab, which is how a feed's own CI proves what it publishes works.
+	if !strings.Contains(doc, "host.docker.internal:host-gateway") {
+		t.Errorf("compose file gives the router no route back to the host:\n%s", doc)
+	}
 }

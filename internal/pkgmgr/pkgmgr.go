@@ -15,6 +15,50 @@ import (
 	"github.com/VizzleTF/owlab/internal/config"
 )
 
+// HostToken is what a feed URL carries in place of an address when the feed is
+// being served by the machine running owlab.
+//
+// There is no literal that is right everywhere, which is why this is a token and
+// not documentation telling people what to type. A container reaches the host at
+// the bridge gateway, which is 172.17.0.1 on the default bridge of a Linux CI
+// runner, something else on a user-defined bridge, and nothing at all under
+// Docker Desktop. A VM never sees any of those, because QEMU's user-mode stack
+// puts the host at the LAN address owlab hands it. Every pipeline that has tried
+// to serve a feed off the runner has hardcoded 172.17.0.1 and then broken on the
+// first developer machine.
+//
+// So the caller writes the token, and owlab substitutes the answer for the tier
+// the router actually runs on:
+//
+//	owlab test --feed 'http://{host}:8080/packages/noarch/packages.adb' --feed-key feed.pem
+const HostToken = "{host}"
+
+const (
+	// dockerHostAlias resolves through the extra_hosts entry every generated
+	// service carries, where it is mapped to Docker's own host-gateway.
+	dockerHostAlias = "host.docker.internal"
+
+	// slirpHostAddr is where QEMU's user-mode stack answers for the host on the
+	// LAN network owlab configures: net=192.168.1.0/24, host=192.168.1.254.
+	// Fixed by owlab, so it is a constant here rather than a lookup.
+	slirpHostAddr = "192.168.1.254"
+)
+
+// ResolveHost substitutes HostToken for the address this tier reaches the host on.
+//
+// Left alone when the token is absent, so a URL naming a real feed passes through
+// untouched and no caller has to know whether it is dealing with one or the other.
+func ResolveHost(url string, vm bool) string {
+	if !strings.Contains(url, HostToken) {
+		return url
+	}
+	host := dockerHostAlias
+	if vm {
+		host = slirpHostAddr
+	}
+	return strings.ReplaceAll(url, HostToken, host)
+}
+
 // Options are the differences between one install and another.
 type Options struct {
 	// Update refreshes the package index first. Wanted for anything named by
