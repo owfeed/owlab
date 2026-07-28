@@ -21,6 +21,24 @@ on:
   schedule:
     - cron: '17 4 * * 1'
   workflow_dispatch:
+    inputs:
+      keep:
+        description: 'Point releases to publish per branch'
+        type: string
+        default: '2'
+  # Called by the release workflow at a tag, so a released owlab has images
+  # whose overlay is the one that binary ships with.
+  workflow_call:
+    inputs:
+      version:
+        description: 'Release tag these images belong to, e.g. v0.1.0'
+        type: string
+        required: false
+      keep:
+        description: 'Point releases to publish per branch'
+        type: string
+        required: false
+        default: '2'
 
 env:
   REGISTRY: ghcr.io
@@ -38,11 +56,21 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      # KEEP is why this job reads the download server rather than just the
+      # config. images/owlab.yaml pins one release per branch, and the pin is
+      # what a developer building locally gets; the published set is the newest
+      # KEEP point releases of those same branches, resolved here. So upstream
+      # tagging 25.12.5 puts an image on GHCR without anyone editing a version
+      # number, and the release before it stays available for whoever has not
+      # moved yet.
       - id: gen
         working-directory: images
+        env:
+          KEEP: ${{ inputs.keep || '2' }}
         run: |
           go build -o /tmp/owlab ../cmd/owlab
-          echo "matrix=$(/tmp/owlab context --list)" >> "$GITHUB_OUTPUT"
+          /tmp/owlab releases || true
+          echo "matrix=$(/tmp/owlab context --list --keep "$KEEP")" >> "$GITHUB_OUTPUT"
 
   build:
     needs: matrix
@@ -68,7 +96,28 @@ jobs:
         working-directory: images
         run: |
           go build -o /tmp/owlab ../cmd/owlab
-          /tmp/owlab context --router '${{ matrix.id }}' --out /tmp/publish >> "$GITHUB_OUTPUT"
+          /tmp/owlab context --router '${{ matrix.id }}' --release '${{ matrix.release }}' \
+            --out /tmp/publish >> "$GITHUB_OUTPUT"
+
+      - name: Decide the tags
+        id: tags
+        run: |
+          set -euo pipefail
+          # The moving tag always. A release adds an immutable one beside it,
+          # so `image: ghcr.io/...:x86_64-25.12.4-v0.1.0` in an owlab.yaml
+          # keeps meaning the same bytes after the next rebuild — the moving
+          # tag does not, because a weekly rebuild picks up feed changes
+          # within the same pinned release.
+          {
+            echo "args<<EOF"
+            echo "--tag"
+            echo "$IMAGE:${{ matrix.tag }}"
+            if [ -n "${{ inputs.version }}" ]; then
+              echo "--tag"
+              echo "$IMAGE:${{ matrix.tag }}-${{ inputs.version }}"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v4
 
@@ -83,10 +132,11 @@ jobs:
           # One argument per line, so values containing spaces (PACKAGES
           # always does) survive without quoting games.
           mapfile -t build_args < /tmp/publish/buildargs
+          mapfile -t tag_args <<< '${{ steps.tags.outputs.args }}'
           docker buildx build \
             --platform '${{ matrix.platform }}' \
             "${build_args[@]}" \
-            --tag "$IMAGE:${{ matrix.tag }}" \
+            "${tag_args[@]}" \
             --annotation "index:org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
             --annotation "index:org.opencontainers.image.description=${{ matrix.distro }} ${{ matrix.release }} (${{ matrix.arch }}) dev router — procd as PID 1, LuCI installed" \
             --annotation "index:org.opencontainers.image.licenses=GPL-2.0-only" \
@@ -96,6 +146,7 @@ jobs:
             --label "org.owlab.distro=${{ matrix.distro }}" \
             --label "org.owlab.release=${{ matrix.release }}" \
             --label "org.owlab.arch=${{ matrix.arch }}" \
+            --label "org.opencontainers.image.version=${{ inputs.version || github.sha }}" \
             --push \
             '${{ steps.ctx.outputs.context }}'
 

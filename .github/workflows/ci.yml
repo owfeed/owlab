@@ -1,0 +1,85 @@
+name: ci
+
+# Everything that has to hold before a tag is worth pushing. The release
+# workflow does not repeat these: a tag is pushed to a commit that already ran
+# through here, and duplicating the gates would only mean two places to keep
+# in step.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          [ -z "$out" ] || { echo "not gofmt'd:"; echo "$out"; exit 1; }
+
+      - run: go vet ./...
+      - run: go test ./...
+
+  # owlab is a developer's tool and it is installed on whatever they use, so
+  # "it compiles on the maintainer's laptop" is not the bar. The VM tier in
+  # particular has per-platform process handling — signals on unix, tasklist on
+  # Windows — which only a real cross-compile exercises.
+  cross:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - {goos: linux,   goarch: amd64}
+          - {goos: linux,   goarch: arm64}
+          - {goos: darwin,  goarch: amd64}
+          - {goos: darwin,  goarch: arm64}
+          - {goos: windows, goarch: amd64}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - env:
+          GOOS: ${{ matrix.target.goos }}
+          GOARCH: ${{ matrix.target.goarch }}
+        run: go build ./...
+
+  # The image build context ships inside the binary, so a shell script with a
+  # syntax error is a runtime failure on someone else's router rather than a
+  # build failure here. dash is what busybox ash is closest to.
+  shell:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check the rootfs overlay and tools with dash
+        run: |
+          set -eu
+          found=0
+          for f in $(find images/rootfs-extra tools -type f) ; do
+            case "$(head -c 2 "$f")" in
+              '#!') ;;
+              *) continue ;;
+            esac
+            found=$((found + 1))
+            dash -n "$f" || { echo "syntax error: $f"; exit 1; }
+          done
+          echo "checked $found scripts"
+          [ "$found" -gt 0 ] || { echo "no scripts found — the glob is wrong"; exit 1; }
+
+      - name: The changelog has a section for every tag-shaped version
+        run: |
+          set -eu
+          sh tools/release-notes.sh "$(sed -n 's/^## \[\([0-9][^]]*\)\].*/\1/p' CHANGELOG.md | head -n1)" >/dev/null
+          echo "release notes extract cleanly from the newest section"

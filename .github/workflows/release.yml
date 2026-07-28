@@ -1,0 +1,170 @@
+name: release
+
+# Push a tag, get a release.
+#
+#   git tag -a v0.2.0 -m 'owlab 0.2.0' && git push origin v0.2.0
+#
+# The tag is the only input. The version in the binary, the archive names, the
+# release title and the notes all come from it, so there is nothing to keep in
+# step by hand and nothing that can disagree.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)build, e.g. v0.1.0'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - {goos: linux,   goarch: amd64}
+          - {goos: linux,   goarch: arm64}
+          - {goos: darwin,  goarch: amd64}
+          - {goos: darwin,  goarch: arm64}
+          - {goos: windows, goarch: amd64}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.target.goos }}
+          GOARCH: ${{ matrix.target.goarch }}
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          tag='${{ inputs.tag || github.ref_name }}'
+          ver="${tag#v}"
+          out="owlab"
+          [ "$GOOS" != windows ] || out="owlab.exe"
+
+          # -trimpath so the binary carries no path from this runner, and the
+          # build date from the commit rather than from `now`: a rebuild of the
+          # same tag should produce the same file, and a wall clock guarantees
+          # it does not.
+          date="$(git log -1 --format=%cd --date=format:%Y-%m-%d)"
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${ver} -X main.commit=${GITHUB_SHA} -X main.date=${date}" \
+            -o "dist/${out}" ./cmd/owlab
+
+          name="owlab_${ver}_${GOOS}_${GOARCH}"
+          mkdir -p "stage/${name}"
+          cp "dist/${out}" README.md CHANGELOG.md LICENSE "stage/${name}/"
+          cp -r docs "stage/${name}/docs"
+
+          mkdir -p out
+          if [ "$GOOS" = windows ]; then
+            (cd stage && zip -qr "../out/${name}.zip" "${name}")
+          else
+            tar -C stage -czf "out/${name}.tar.gz" "${name}"
+          fi
+          ls -l out
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: owlab-${{ matrix.target.goos }}-${{ matrix.target.goarch }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    # The only job that writes anything. Everything above runs with the
+    # read-only token declared at the top of the file.
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Build the release notes from the CHANGELOG
+        run: |
+          set -euo pipefail
+          tag='${{ inputs.tag || github.ref_name }}'
+          sh tools/release-notes.sh "${tag#v}" > "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+
+      # One file with every checksum, rather than one per archive. Whoever
+      # verifies a download is checking one thing against one list, and the
+      # list is small enough to read.
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      # Pinned by commit, not by the `v2` tag. This is the only third-party
+      # action in the repository and it runs in the only job that can write to
+      # the release, so whoever can move that tag can publish assets under our
+      # name. (= v3.0.2)
+      #
+      # Published as a draft and flipped afterwards, so `releases/latest` moves
+      # once, with every asset already uploaded. The action creates the release
+      # first and uploads after, which leaves a window where `latest` resolves
+      # to a release that has nothing in it.
+      - name: Attach the archives (draft)
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: owlab ${{ inputs.tag || github.ref_name }}
+          body_path: ${{ runner.temp }}/notes.md
+          files: dist/*
+          draft: true
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"
+
+          # Prove the assets resolve from the URL an install script would use,
+          # not from the API. A 404 here means every download would have
+          # failed, and this is the last moment it is a red build rather than a
+          # bug report.
+          for i in 1 2 3 4 5; do
+            if curl -fsSL --retry 2 -o "$RUNNER_TEMP/sums" \
+                 "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/SHA256SUMS"; then
+              break
+            fi
+            [ "$i" = 5 ] && { echo "releases/latest/download/SHA256SUMS does not resolve"; exit 1; }
+            sleep 5
+          done
+          diff -u dist/SHA256SUMS "$RUNNER_TEMP/sums" || {
+            echo "the checksums served by latest/download are not the ones just built"; exit 1; }
+          echo "SHA256SUMS resolves through releases/latest/download and matches."
+
+  # Rebuild the router images at the tag, so a released owlab has images whose
+  # overlay is the one it ships with. The moving tags stay where they are; the
+  # tag adds an immutable one beside them.
+  images:
+    needs: release
+    uses: ./.github/workflows/images.yml
+    permissions:
+      contents: read
+      packages: write
+    with:
+      version: ${{ inputs.tag || github.ref_name }}

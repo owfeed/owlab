@@ -14,9 +14,6 @@ import (
 	"github.com/VizzleTF/owlab/internal/engine"
 )
 
-// version is stamped by the release build.
-var version = "dev"
-
 type app struct {
 	docker dockercli.Runner
 	cfg    *config.Config
@@ -37,6 +34,7 @@ Commands:
   install     install packages (or a local .apk/.ipk) on a running router
   build       build a real .apk/.ipk with the OpenWrt SDK
   logs        show a router's boot and service log
+  releases    what the download servers publish, and how stale the pins are
   status      list routers and where to reach them
   open        open a router's LuCI in a browser
   doctor      check this machine for problems
@@ -65,7 +63,7 @@ func main() {
 		fmt.Print(usage)
 		return
 	case "version", "--version", "-v":
-		fmt.Printf("owlab %s\n", version)
+		fmt.Print(versionLine())
 		return
 	}
 
@@ -136,6 +134,8 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return a.build(ctx, args)
 	case "logs":
 		return a.logs(ctx, args)
+	case "releases":
+		return a.releases(ctx, args)
 	case "status":
 		return a.status(ctx, args)
 	case "open":

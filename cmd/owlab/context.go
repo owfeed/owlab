@@ -11,6 +11,7 @@ import (
 
 	"github.com/VizzleTF/owlab/internal/compose"
 	"github.com/VizzleTF/owlab/internal/config"
+	"github.com/VizzleTF/owlab/internal/upstream"
 )
 
 // buildContext prepares a docker build context for one router and prints the
@@ -29,12 +30,14 @@ func (a *app) buildContext(ctx context.Context, args []string) error {
 	list := fs.Bool("list", false, "print the routers as a JSON matrix for CI, and exit")
 	out := fs.String("out", ".owlab/publish", "directory to write the context into")
 	router := fs.String("router", "", "which router to prepare (required unless --list)")
+	release := fs.String("release", "", "build this release instead of the one pinned in the config")
+	keep := fs.Int("keep", 1, "with --list, how many point releases per branch to emit")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 
 	if *list {
-		return a.printMatrix()
+		return a.printMatrix(ctx, *keep)
 	}
 	if *router == "" {
 		return fmt.Errorf("--router is required (or --list to see them)\n\nhave: %s",
@@ -43,6 +46,12 @@ func (a *app) buildContext(ctx context.Context, args []string) error {
 	r, ok := a.cfg.Router(*router)
 	if !ok {
 		return fmt.Errorf("no router %q (have: %s)", *router, strings.Join(a.cfg.RouterIDs(), ", "))
+	}
+	// The matrix may name a release the config does not pin — that is the
+	// whole point of resolving it against the download server — so the release
+	// travels with the matrix entry and is applied here.
+	if *release != "" {
+		r.Release = *release
 	}
 
 	// Prepare writes the shared context, the per-router extra packages and
@@ -98,25 +107,76 @@ type matrixEntry struct {
 	Runner string `json:"runner"`
 }
 
-func (a *app) printMatrix() error {
+// printMatrix emits one row per image to build.
+//
+// With keep=1 that is one row per router, at the release the config pins. With
+// more, each router's pin is replaced by the newest N point releases of its
+// own branch, resolved against the download server — so the published set
+// tracks upstream without anyone editing a version number, and the previous
+// release stays available for whoever has not moved yet.
+func (a *app) printMatrix(ctx context.Context, keep int) error {
 	var entries []matrixEntry
 	for i := range a.cfg.Routers {
 		r := &a.cfg.Routers[i]
 		if r.Fidelity == config.VM {
 			continue
 		}
-		entries = append(entries, matrixEntry{
-			ID:       r.ID,
-			Distro:   string(r.Distro),
-			Release:  r.Release,
-			Arch:     r.Arch,
-			Tag:      imageTag(r),
-			Platform: r.Platform(),
-			Runner:   runnerFor(r),
-		})
+		for _, rel := range a.releasesFor(ctx, r, keep) {
+			build := *r
+			build.Release = rel
+			entries = append(entries, matrixEntry{
+				ID:       build.ID,
+				Distro:   string(build.Distro),
+				Release:  rel,
+				Arch:     build.Arch,
+				Tag:      imageTag(&build),
+				Platform: build.Platform(),
+				Runner:   runnerFor(&build),
+			})
+		}
 	}
 	enc := json.NewEncoder(os.Stdout)
 	return enc.Encode(map[string]any{"include": entries})
+}
+
+// releasesFor is the list of point releases to build for one router.
+//
+// The pinned release is always included, even when it has fallen off the end
+// of the list: someone may be pinning it in their own owlab.yaml, and the
+// weekly rebuild is what keeps that image current with its feed.
+//
+// Falls back to the pin alone whenever the server cannot be read. A publish
+// job that fails because a listing timed out would be a worse outcome than one
+// that publishes what the config already says.
+func (a *app) releasesFor(ctx context.Context, r *config.Router, keep int) []string {
+	if keep <= 1 {
+		return []string{r.Release}
+	}
+	all, err := upstream.Releases(ctx, r.Distro)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "owlab: %s: cannot list releases (%v); building only the pinned %s\n",
+			r.Distro, err, r.Release)
+		return []string{r.Release}
+	}
+
+	out := []string{}
+	seen := map[string]bool{}
+	for _, rel := range upstream.Newest(all, upstream.Branch(r.Release), keep) {
+		// A release is in the listing as soon as it is tagged; a given
+		// target's images land when that target's build finishes. Taking the
+		// listing at its word produces a job that 404s twenty minutes in.
+		if !upstream.Published(ctx, r, rel) {
+			fmt.Fprintf(os.Stderr, "owlab: %s %s has no artifacts for %s yet, skipping\n",
+				r.Distro, rel, r.Arch)
+			continue
+		}
+		out = append(out, rel)
+		seen[rel] = true
+	}
+	if !seen[r.Release] {
+		out = append(out, r.Release)
+	}
+	return out
 }
 
 // imageTag is the published tag for a router: distro, exact release, and

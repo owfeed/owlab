@@ -218,6 +218,21 @@ $ OWLAB_ROOT_PASSWORD=hunter2 owlab up --rebuild
 Default is no password. Fine for a box on localhost, and LuCI accepts the empty
 field.
 
+### Find out if your pins are stale
+
+```console
+$ owlab releases
+ROUTER          DISTRO    PINNED     NEWEST
+owrt2512        openwrt   25.12.4    25.12.5    1 release behind
+owrt2410        openwrt   24.10.8    24.10.8    up to date
+```
+
+`owlab releases --all` lists everything the download servers publish.
+
+Pin exact point releases and move them deliberately. A rootfs and its feed have
+to name the same release; mixing them fails every install with
+`breaks: world[...]`.
+
 ### Start over
 
 ```console
@@ -236,6 +251,7 @@ owlab exec        run a command
 owlab install     install packages on a running router
 owlab build       build a real .apk/.ipk with the SDK
 owlab logs        boot and service log
+owlab releases    check the pins against the download servers
 owlab status      what is running and where
 owlab open        open LuCI in a browser
 owlab doctor      check this machine

@@ -10,6 +10,7 @@ thing works and why it was built this way.
 - [04 — Packages](04-packages.md) — the stock set, feed pinning, the two package managers
 - [05 — The VM tier](05-vm-tier.md) — QEMU, accelerators, disk images, extroot, radios
 - [06 — Findings](06-findings.md) — every measured surprise, with its symptom and its cause
+- [07 — Releasing](07-releasing.md) — cutting a release, and how the images track upstream
 
 ## How to read these
 
