@@ -9,6 +9,13 @@ one waits for a major.
 
 ## [Unreleased]
 
+### Changed
+
+- The documentation is a runbook now. `docs/runbook.md` is procedures — a goal,
+  the commands, and how to tell it worked; `docs/troubleshooting.md` is sorted
+  by symptom; the reference, the internals and the release process each have a
+  page. Every one of them, and both README files, exist in English and Russian.
+
 ## [0.1.0] - 2026-07-28
 
 First release.

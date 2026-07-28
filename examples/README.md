@@ -1,5 +1,7 @@
 # Examples
 
+[Русская версия](README.ru.md)
+
 Configs that do something real. Point owlab at one from anywhere:
 
 ```console

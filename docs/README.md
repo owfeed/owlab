@@ -1,24 +1,22 @@
 # owlab documentation
 
-The [README](../README.md) tells you what to type. These pages say how the
-thing works and why it was built this way.
+[Русская версия](README.ru.md)
 
-- [00 — Overview](00-overview.md) — every config key, in full
-- [01 — Architecture](01-architecture.md) — the packages, and how a command flows through them
-- [02 — Tiers](02-tiers.md) — `basic` and `vm`, and the third tier that was removed
-- [03 — Networking](03-networking.md) — br-lan, ports, DNS, what the engine will not forward
-- [04 — Packages](04-packages.md) — the stock set, feed pinning, the two package managers
-- [05 — The VM tier](05-vm-tier.md) — QEMU, accelerators, disk images, extroot, radios
-- [06 — Findings](06-findings.md) — every measured surprise, with its symptom and its cause
-- [07 — Releasing](07-releasing.md) — cutting a release, and how the images track upstream
+Start with the [README](../README.md) if you have never run owlab. These pages
+are for when you have.
 
-## How to read these
+| | |
+|---|---|
+| [Runbook](runbook.md) | Procedures. A goal, the commands, and how to tell it worked |
+| [Troubleshooting](troubleshooting.md) | Sorted by symptom, because almost nothing here presents as its cause |
+| [Reference](reference.md) | Every key of `owlab.yaml` |
+| [Internals](internals.md) | How it is put together and why it behaves that way |
+| [Releasing](releasing.md) | Cutting a release, and how the images track upstream |
 
-Nearly everything here is written the same way: a symptom that was observed, a
-cause that was measured, and the decision that followed. Where a page says a
-thing does not work, it was tried. Where it names a number, that number came
-off a running router.
+Every page has a `.ru.md` beside it.
 
-[06 — Findings](06-findings.md) is the index of those, and probably the most
-useful page if something is behaving strangely: most of what has gone wrong
-here presents as something other than its cause.
+## What is written here
+
+A symptom that was observed, a cause that was measured, and the decision that
+followed. Where a page says something does not work, it was tried. Where it
+names a number, that number came off a running router.

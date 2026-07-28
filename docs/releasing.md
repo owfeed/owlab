@@ -1,5 +1,7 @@
 # Releasing
 
+[Русская версия](releasing.ru.md)
+
 ## Cutting a release
 
 Move the `## [Unreleased]` heading in `CHANGELOG.md` down to a version and a

@@ -1,5 +1,7 @@
 # owlab
 
+[Русская версия](README.ru.md)
+
 Dev routers for OpenWrt and ImmortalWrt package development. One file, one
 command, working routers — on Linux, WSL2, Docker Desktop for Windows, or macOS.
 
@@ -282,10 +284,13 @@ Every command takes router ids. With none, it acts on all of them.
 Run `owlab doctor` first. It checks ports, ssh keys, line endings, QEMU, and
 whether your engine forwards DNS.
 
-Then `docs/06-findings.md`. Most things that go wrong here look like something
-else entirely: a router that answers LuCI but resets every connection, a
-package that installs and does nothing, radios that exist but never come up.
-They are all in there, sorted by symptom.
+Then [docs/troubleshooting.md](docs/troubleshooting.md). Most things that go
+wrong here look like something else entirely: a router that answers LuCI but
+resets every connection, a package that installs and does nothing, radios that
+exist but never come up. They are all in there, sorted by symptom.
+
+[docs/runbook.md](docs/runbook.md) has the procedures — each one a goal, the
+commands, and how to tell it worked.
 
 ## Notes
 
@@ -299,8 +304,9 @@ daily and independently, so installs start failing within a day.
 
 ## Docs
 
-[docs/](docs/) has the rest: how owlab works, the two tiers, networking,
-packages, the VM tier, and the findings log.
+[docs/](docs/) has the rest, in English and Russian: the runbook, the
+troubleshooting log, the config reference, how it all works, and how releases
+are cut.
 
 ## Licence
 

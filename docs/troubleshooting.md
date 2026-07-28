@@ -1,4 +1,6 @@
-# Findings
+# Troubleshooting
+
+[Русская версия](troubleshooting.ru.md)
 
 Everything here was observed on a running router. Each entry is a symptom, its
 cause, and what owlab does about it. They are grouped by what they look like
@@ -45,7 +47,7 @@ This had been true of every owlab container from the start. It went unnoticed
 because LuCI renders the DHCP and DNS pages from config, not from a running
 daemon.
 
-### Flow offloading takes the whole firewall down
+### The router resets every connection
 
 **Symptom.** TCP connects and is then reset — "connection reset by peer" —
 against a `uhttpd` that is up and listening on `0.0.0.0:80`. Only on
@@ -62,7 +64,7 @@ ships no `modules.alias`, so the kernel cannot autoload the module by the alias
 nft asks for, and without it the probe failed on a router that was perfectly
 capable.
 
-### mwan3 blackholes everything
+### LuCI answers but nothing outbound works
 
 **Symptom.** LuCI answers 200 while every outbound connection hangs with no
 error. `apk` appears frozen.
@@ -88,7 +90,7 @@ lan was a bare `eth0`. The same is true of a great many firewall snippets and
 hotplug scripts.
 
 **Fix.** The container's lan is a bridge named `br-lan` with `eth0` as its port.
-See [03 — Networking](03-networking.md).
+See [internals](internals.md#br-lan).
 
 ### Out-of-feed packages installed in the wrong order
 
