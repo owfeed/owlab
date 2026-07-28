@@ -218,6 +218,18 @@ $ OWLAB_ROOT_PASSWORD=hunter2 owlab up --rebuild
 Default is no password. Fine for a box on localhost, and LuCI accepts the empty
 field.
 
+### Keep the config somewhere else
+
+```console
+$ owlab --config ../my-package/owlab.yaml up
+$ owlab --config ../my-package status        # a directory works too
+$ export OWLAB_CONFIG=~/src/my-package
+```
+
+Without it, owlab looks in the working directory and its parents.
+
+[examples/](examples/) has configs you can point at directly.
+
 ### Find out if your pins are stale
 
 ```console
@@ -258,6 +270,7 @@ owlab doctor      check this machine
 ```
 
 Every command takes router ids. With none, it acts on all of them.
+`--config <path>` (or `-c`) works on any of them, before or after the command.
 
 ## When something breaks
 

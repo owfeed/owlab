@@ -28,6 +28,10 @@ ARG BASE_IMAGE=openwrt/rootfs:x86_64-25.12.4
 ARG ROOTFS_URL=
 ARG ALPINE_TAG=3.22
 
+# BASE_IMAGE is set to `scratch` on the tarball path, and that is not cosmetic:
+# buildkit resolves the metadata for every FROM in this file before it prunes
+# the stages the target does not need, so a tarball build would otherwise fail
+# on an image it never intends to pull.
 FROM ${BASE_IMAGE} AS upstream
 
 # Unreachable, and therefore never even fetched, unless BASE_STAGE=tarball:

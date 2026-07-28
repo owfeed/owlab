@@ -168,6 +168,16 @@ func BuildArgsFor(cfg *config.Config, r *config.Router) map[string]string {
 	} else {
 		args["BASE_STAGE"] = "tarball"
 		args["ROOTFS_URL"] = r.RootfsTarballURL()
+		// BASE_IMAGE still has to name something that resolves. buildkit reads
+		// the metadata for every FROM in the file before it works out which
+		// stages the target depends on, so leaving the default here makes a
+		// tarball build fail on an image it is not going to use:
+		//
+		//   failed to resolve source metadata for
+		//   docker.io/openwrt/rootfs:aarch64_generic-25.12.5: not found
+		//
+		// scratch resolves to nothing and costs nothing.
+		args["BASE_IMAGE"] = "scratch"
 	}
 	return args
 }

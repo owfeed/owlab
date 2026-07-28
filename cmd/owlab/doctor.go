@@ -50,7 +50,7 @@ type check struct {
 // doctor reports what this machine can and cannot do, before anything is
 // built. It deliberately loads no config and requires no daemon, because the
 // times it is most needed are the times nothing else works.
-func (a *app) doctor(ctx context.Context, args []string) error {
+func (a *app) doctor(ctx context.Context, args []string, configPath string) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -137,9 +137,11 @@ func (a *app) doctor(ctx context.Context, args []string) error {
 		}
 	}
 
-	// The config, if there is one.
-	if cwd, err := os.Getwd(); err == nil {
-		if path, err := config.Find(cwd); err == nil {
+	// The config, if there is one. Reported through the same resolution the
+	// other commands use, so `owlab --config x doctor` checks x rather than
+	// whatever happens to be above the working directory.
+	{
+		if path, err := resolveConfig(configPath); err == nil {
 			cfg, err := config.Load(path)
 			if err != nil {
 				add("config", fail, "%v", err)

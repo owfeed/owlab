@@ -54,6 +54,8 @@ func (a *app) buildContext(ctx context.Context, args []string) error {
 		r.Release = *release
 	}
 
+	resolveBaseImages(ctx, []*config.Router{r})
+
 	// Prepare writes the shared context, the per-router extra packages and
 	// the compliance bundle.
 	proj, err := compose.Prepare(a.cfg, a.eng)

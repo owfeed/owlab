@@ -23,7 +23,7 @@ type app struct {
 const usage = `owlab — dev routers for OpenWrt/ImmortalWrt package development
 
 Usage:
-  owlab <command> [routers...] [flags]
+  owlab [--config <path>] <command> [routers...] [flags]
 
 Commands:
   up          build and start routers
@@ -44,6 +44,10 @@ Run 'owlab <command> -h' for the flags of one command.
 
 Routers are named by the ids in owlab.yaml. With no ids, commands that
 can act on many routers act on all of them.
+
+owlab.yaml is looked for in the working directory and its parents. Point it
+somewhere else with --config (or -c), which takes the file or the directory
+holding it, or set OWLAB_CONFIG.
 `
 
 func main() {
@@ -55,8 +59,17 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	cmd := os.Args[1]
-	args := os.Args[2:]
+	argv, configPath, err := extractConfigFlag(os.Args[1:])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "owlab: "+err.Error())
+		os.Exit(2)
+	}
+	if len(argv) == 0 {
+		fmt.Fprint(os.Stderr, usage)
+		os.Exit(2)
+	}
+	cmd := argv[0]
+	args := argv[1:]
 
 	switch cmd {
 	case "-h", "--help", "help":
@@ -67,7 +80,7 @@ func main() {
 		return
 	}
 
-	if err := run(ctx, cmd, args); err != nil {
+	if err := run(ctx, cmd, args, configPath); err != nil {
 		if errors.Is(err, context.Canceled) {
 			os.Exit(130)
 		}
@@ -79,22 +92,18 @@ func main() {
 	}
 }
 
-func run(ctx context.Context, cmd string, args []string) error {
+func run(ctx context.Context, cmd string, args []string, configPath string) error {
 	a := &app{}
 
 	// doctor is the one command that must work when everything else is
 	// broken, so it loads nothing up front.
 	if cmd == "doctor" {
-		return a.doctor(ctx, args)
+		return a.doctor(ctx, args, configPath)
 	}
 
-	cwd, err := os.Getwd()
+	path, err := resolveConfig(configPath)
 	if err != nil {
 		return err
-	}
-	path, err := config.Find(cwd)
-	if err != nil {
-		return fmt.Errorf("%w\n\nCreate one with the routers you want; see `owlab doctor` for what this machine supports", err)
 	}
 	a.cfg, err = config.Load(path)
 	if err != nil {

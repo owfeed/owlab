@@ -404,7 +404,7 @@ func (r *Router) BaseImage() string {
 		return r.Image
 	}
 	s := r.spec()
-	if s.ImageRepo == "" || !r.target.HasRootfsImage {
+	if s.ImageRepo == "" || !r.target.HasRootfsImage || r.noUpstreamImage {
 		return ""
 	}
 	if isSnapshot(r.Release) {

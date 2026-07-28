@@ -232,3 +232,45 @@ func head(ctx context.Context, url string) bool {
 	resp.Body.Close()
 	return resp.StatusCode == http.StatusOK
 }
+
+// HasContainerImage reports whether the upstream container image for a
+// router's release actually exists.
+//
+// The two are published on different schedules. A point release lands on the
+// download server when it is built; the matching openwrt/rootfs tag appears
+// when somebody's job gets round to it, and sometimes days later. Assuming the
+// image exists because the release does produces
+//
+//	failed to resolve source metadata for docker.io/openwrt/rootfs:aarch64_generic-25.12.5:
+//	not found
+//
+// on a release that is perfectly buildable — owlab can unpack the tarball
+// itself, which is the path ImmortalWrt takes for every image already.
+//
+// Only a definitive 404 counts. A network failure or a rate limit leaves the
+// answer as "yes", because falling back to a 250 MB tarball download every
+// time Docker Hub is slow would be a worse trade than one clear build error.
+func HasContainerImage(ctx context.Context, r *config.Router) bool {
+	image := r.BaseImage()
+	if image == "" {
+		return false
+	}
+	repo, tag, ok := strings.Cut(image, ":")
+	if !ok {
+		return true
+	}
+	// The Hub API rather than the registry, because the registry wants a token
+	// even for a public read and this needs no credentials at all.
+	url := fmt.Sprintf("https://hub.docker.com/v2/repositories/%s/tags/%s", repo, tag)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return true
+	}
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return true
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode != http.StatusNotFound
+}

@@ -136,7 +136,19 @@ type Router struct {
 	VM VMSpec
 
 	target Target
+	// noUpstreamImage records that the published container image for this
+	// release does not exist, so the image has to be assembled from the rootfs
+	// tarball instead. Set by whoever asked the registry; never parsed.
+	noUpstreamImage bool
 }
+
+// UseTarball tells this router that there is no upstream container image for
+// its release, so the build must unpack the rootfs tarball.
+//
+// A separate step rather than something BaseImage works out for itself,
+// because answering it needs a network round trip and most commands have no
+// business making one.
+func (r *Router) UseTarball() { r.noUpstreamImage = true }
 
 // VMSpec is the virtual hardware a fidelity-vm router boots with.
 type VMSpec struct {
@@ -199,7 +211,7 @@ func (r *Router) PackageManager() PackageManager {
 // answer to OpenWrt's non-standard linux/aarch64_generic.
 func (r *Router) FromTarball() bool {
 	s := r.spec()
-	return s.ImageRepo == "" || !r.target.HasRootfsImage
+	return s.ImageRepo == "" || !r.target.HasRootfsImage || r.noUpstreamImage
 }
 
 // Platform is what to pass to `docker --platform` for this router.

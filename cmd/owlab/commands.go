@@ -21,6 +21,7 @@ import (
 	"github.com/VizzleTF/owlab/internal/config"
 	"github.com/VizzleTF/owlab/internal/qemu"
 	syncpkg "github.com/VizzleTF/owlab/internal/sync"
+	"github.com/VizzleTF/owlab/internal/upstream"
 )
 
 // parseMixed lets flags appear before or after router ids, because
@@ -61,6 +62,7 @@ func (a *app) up(ctx context.Context, args []string) error {
 		return err
 	}
 	containers, vms := splitTiers(routers)
+	resolveBaseImages(ctx, containers)
 
 	if len(containers) > 0 {
 		proj, err := compose.Prepare(a.cfg, a.eng)
@@ -94,6 +96,27 @@ func (a *app) up(ctx context.Context, args []string) error {
 	}
 	ready := a.waitForLuCI(ctx, routers)
 	return a.printReady(routers, ready)
+}
+
+// resolveBaseImages asks the registry whether each router's upstream image
+// exists, and switches the ones that do not onto the rootfs tarball.
+//
+// Only on a build path. The two are published on different schedules — the
+// tarball when the release is built, the container image whenever the job that
+// mirrors it runs — so a freshly pinned release can have one and not the
+// other, and owlab can build from either.
+func resolveBaseImages(ctx context.Context, routers []*config.Router) {
+	for _, r := range routers {
+		if r.FromTarball() || r.Image != "" {
+			continue
+		}
+		if !upstream.HasContainerImage(ctx, r) {
+			fmt.Fprintf(os.Stderr,
+				"owlab: %s has no published container image yet; building %s from the rootfs tarball\n",
+				r.BaseImage(), r.ID)
+			r.UseTarball()
+		}
+	}
 }
 
 // startVM boots one fidelity-vm router and sets it up if it is new.
