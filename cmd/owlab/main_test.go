@@ -52,7 +52,7 @@ func TestCommandTableIsWellFormed(t *testing.T) {
 	// reports on config resolution itself, and version is a property of the
 	// binary rather than of any project — neither may require a loadable
 	// owlab.yaml or a running daemon.
-	for _, name := range []string{"doctor", "version"} {
+	for _, name := range []string{"doctor", "version", "releases"} {
 		c, ok := lookupCommand(name)
 		if !ok {
 			t.Fatalf("%q is not in the table", name)
@@ -63,8 +63,14 @@ func TestCommandTableIsWellFormed(t *testing.T) {
 	}
 	// Everything else does need one; a command that skips the load would get a
 	// nil config and panic rather than explain itself.
+	//
+	// `releases` is bare and still uses a config when there is one: it loads it
+	// itself and falls back to the full listing when there is none. That is the
+	// only shape allowed here, and it is why the exception is a list rather than
+	// a flag — adding a name to it should require reading this.
+	bare := map[string]bool{"doctor": true, "version": true, "releases": true}
 	for _, c := range commands {
-		if c.bare && c.name != "doctor" && c.name != "version" {
+		if c.bare && !bare[c.name] {
 			t.Errorf("%q skips the config load — is that deliberate?", c.name)
 		}
 	}

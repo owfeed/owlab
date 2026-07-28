@@ -63,7 +63,11 @@ var commands = []command{
 	{name: "build", summary: "build a real .apk/.ipk with the OpenWrt SDK", optionalConfig: true, run: (*app).build},
 	{name: "test", summary: "start, install, assert, tear down — one command, one exit code", optionalConfig: true, run: (*app).test},
 	{name: "logs", summary: "show a router's boot and service log", run: (*app).logs},
-	{name: "releases", summary: "what the download servers publish, and how stale the pins are", run: (*app).releases},
+	// bare, and it loads a config itself when there is one. Asking a download
+	// server what it publishes needs neither a project nor a container engine —
+	// requiring either would make `owlab releases` unusable from the one place
+	// it is most useful, a shell anywhere that is not a package repository.
+	{name: "releases", summary: "what the download servers publish, and how stale the pins are", bare: true, run: (*app).releases},
 	{name: "status", summary: "list routers and where to reach them", run: (*app).status},
 	{name: "open", summary: "open a router's LuCI in a browser", run: (*app).open},
 	{name: "doctor", summary: "check this machine for problems", bare: true, run: (*app).doctor},

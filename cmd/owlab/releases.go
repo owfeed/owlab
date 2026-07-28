@@ -34,6 +34,20 @@ func (a *app) releases(ctx context.Context, args []string) error {
 		return a.listAllReleases(ctx, *keep)
 	}
 
+	// "How stale are the pins" is a question about a project, so without one
+	// there is nothing to compare and the honest answer is the full list.
+	if a.cfg == nil {
+		if path, err := resolveConfig(a.configPath); err == nil {
+			a.cfg, _ = config.Load(path)
+		}
+	}
+	if a.cfg == nil {
+		if *asJSON {
+			return a.allReleasesJSON(ctx, *keep)
+		}
+		return a.listAllReleases(ctx, *keep)
+	}
+
 	updates, err := upstream.Check(ctx, a.cfg)
 	if err != nil {
 		return err
@@ -112,9 +126,19 @@ func (a *app) allReleasesJSON(ctx context.Context, keep int) error {
 		Branches []branch `json:"branches"`
 	}
 
+	// Which distributions to list. A project narrows it to the ones it actually
+	// uses; with no project there is nothing to narrow by, so list them all --
+	// that is the answer to "what do the download servers publish".
 	seen := map[config.Distro]bool{}
-	for i := range a.cfg.Routers {
-		seen[a.cfg.Routers[i].Distro] = true
+	if a.cfg == nil {
+		for _, d := range config.KnownDistros() {
+			seen[config.Distro(d)] = true
+		}
+	}
+	if a.cfg != nil {
+		for i := range a.cfg.Routers {
+			seen[a.cfg.Routers[i].Distro] = true
+		}
 	}
 	var out []distroDoc
 	for _, d := range config.KnownDistros() {
@@ -157,9 +181,19 @@ func (a *app) allReleasesJSON(ctx context.Context, keep int) error {
 }
 
 func (a *app) listAllReleases(ctx context.Context, keep int) error {
+	// Which distributions to list. A project narrows it to the ones it actually
+	// uses; with no project there is nothing to narrow by, so list them all --
+	// that is the answer to "what do the download servers publish".
 	seen := map[config.Distro]bool{}
-	for i := range a.cfg.Routers {
-		seen[a.cfg.Routers[i].Distro] = true
+	if a.cfg == nil {
+		for _, d := range config.KnownDistros() {
+			seen[config.Distro(d)] = true
+		}
+	}
+	if a.cfg != nil {
+		for i := range a.cfg.Routers {
+			seen[a.cfg.Routers[i].Distro] = true
+		}
 	}
 	for _, d := range config.KnownDistros() {
 		distro := config.Distro(d)
