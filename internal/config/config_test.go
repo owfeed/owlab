@@ -397,3 +397,80 @@ routers:
 		t.Errorf("unhelpful error: %v", err)
 	}
 }
+
+func TestStockPackageSetIsTheDefault(t *testing.T) {
+	p := write(t, `
+version: 1
+routers:
+  - id: a
+    release: "25.12.4"
+`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.Routers[0].Packages
+	// A project that says nothing should get a router, not a bare rootfs:
+	// OpenWrt's own DEFAULT_PACKAGES plus the router and LuCI selections.
+	for _, want := range []string{"dnsmasq", "firewall4", "ppp-mod-pppoe", "luci", "wpad-basic-mbedtls"} {
+		if !contains(got, want) {
+			t.Errorf("default set is missing %q: %v", want, got)
+		}
+	}
+	// The TLS backend is a build-time choice, so naming a variant would break
+	// on any image built with a different one.
+	if contains(got, "libustream-mbedtls") {
+		t.Error("default set names a TLS variant; ImmortalWrt 24.10 has no libustream-mbedtls")
+	}
+}
+
+func TestStockPackagesCanBeSubtracted(t *testing.T) {
+	p := write(t, `
+version: 1
+defaults:
+  release: "25.12.4"
+  packages: ["-ppp", "-ppp-mod-pppoe"]
+routers:
+  - id: a
+  - id: b
+    packages: ["-dnsmasq", "+luci-app-sqm"]
+`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := cfg.Router("a")
+	if contains(a.Packages, "ppp") || contains(a.Packages, "ppp-mod-pppoe") {
+		t.Errorf("defaults could not subtract from the stock set: %v", a.Packages)
+	}
+	if !contains(a.Packages, "dnsmasq") {
+		t.Errorf("subtraction removed more than it was asked to: %v", a.Packages)
+	}
+
+	b, _ := cfg.Router("b")
+	// Router arithmetic applies on top of the defaults', not instead of it.
+	if contains(b.Packages, "dnsmasq") || contains(b.Packages, "ppp") {
+		t.Errorf("router subtraction did not compose with defaults: %v", b.Packages)
+	}
+	if !contains(b.Packages, "luci-app-sqm") {
+		t.Errorf("router addition lost: %v", b.Packages)
+	}
+}
+
+func TestAbsolutePackageListReplacesTheStockSet(t *testing.T) {
+	p := write(t, `
+version: 1
+routers:
+  - id: a
+    release: "25.12.4"
+    packages: [luci-light]
+`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.Routers[0].Packages
+	if len(got) != 1 || got[0] != "luci-light" {
+		t.Errorf("a list with no +/- should replace the stock set outright, got %v", got)
+	}
+}

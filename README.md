@@ -253,7 +253,7 @@ project:
 defaults:                         # merged into every router
   fidelity: basic
   arch: auto                      # matches the host; no emulation
-  packages: [luci-light]
+  packages: ["+luci-app-sqm"]     # on top of the stock set; see below
 
 routers:
   - id: owrt2512
@@ -273,6 +273,50 @@ routers:
 
 A package list with `+`/`-` entries is applied on top of the defaults; a list
 without any prefix replaces them.
+
+### The stock package set
+
+A router with no `packages:` at all is not a bare rootfs — it is what a
+shipping OpenWrt device has installed. The set is OpenWrt's own
+`DEFAULT_PACKAGES` and `DEFAULT_PACKAGES.router` from `include/target.mk`, plus
+what the firmware selector adds for a wireless router with LuCI:
+
+```
+base-files ca-bundle dropbear fstools libc libgcc logd mtd netifd uci
+uclient-fetch urandom-seed urngd
+dnsmasq firewall4 nftables kmod-nft-offload odhcp6c odhcpd-ipv6only ppp
+ppp-mod-pppoe
+wpad-basic-mbedtls wifi-scripts
+luci luci-app-firewall luci-app-attendedsysupgrade luci-app-package-manager
+```
+
+Most of it is already in an upstream rootfs tarball, so installing it is
+usually a no-op. Naming it anyway makes the set a property of owlab rather than
+of whichever tarball a distribution happens to publish, so a fork with a
+thinner rootfs still gives you the same router.
+
+Drop any of it with `-`:
+
+```yaml
+packages: ["-ppp", "-ppp-mod-pppoe", "+luci-app-sqm"]
+```
+
+Two deliberate departures from a real device's package list. `libustream-mbedtls`
+is not named even though upstream's list has it: the TLS backend is a build-time
+choice, every image already carries whichever variant it was built with, and
+asking ImmortalWrt 24.10 for the mbedtls one fails outright. And nothing
+board-specific is included — `fitblk`, `uboot-envtools`, `kmod-usb3`,
+`kmod-leds-gpio`, `kmod-gpio-button-hotplug`, `kmod-crypto-hw-safexcel`,
+`kmod-mt7915e` and the mt7986 firmware describe one device's flash layout,
+bootloader, LEDs and radio silicon. None can function without that hardware.
+Add one per project if a package you are developing needs it on disk to
+resolve a dependency.
+
+The wireless pair is in the set for a reason that is not about radios: LuCI
+gates its entire Network → Wireless menu on `access('/sbin/wifi')`, which comes
+from `wifi-scripts`, and builds the encryption matrix by asking `hostapd` what
+it supports. With both present the pages render from config, with no radio
+present anywhere.
 
 ### Packages that are in no feed
 

@@ -349,8 +349,11 @@ func merge(def, r rawRouter, index int) (Router, error) {
 		Fidelity:   Fidelity(pick(def.Fidelity, r.Fidelity, string(Basic))),
 		PkgManager: PackageManager(pick(def.PkgMgr, r.PkgMgr, "")),
 		Image:      pick(def.Image, r.Image, ""),
-		Packages:   mergeList(def.Packages, r.Packages),
-		Fixtures:   mergeList(def.Fixtures, r.Fixtures),
+		// Layered onto the stock router set, so that `-dnsmasq` in a project
+		// means what it says and a project that lists nothing still gets a
+		// router rather than a bare rootfs.
+		Packages: mergeList(mergeList(DefaultPackages(), def.Packages), r.Packages),
+		Fixtures: mergeList(def.Fixtures, r.Fixtures),
 	}
 	if out.ID == "" {
 		return Router{}, errors.New("id is required")
@@ -400,11 +403,10 @@ func merge(def, r rawRouter, index int) (Router, error) {
 	// architecture instead of the word auto.
 	out.Arch = t.Arch
 
-	if len(out.Packages) == 0 {
-		// luci-light is LuCI plus the handful of packages that make it
-		// usable; a bare `luci` renders almost nothing.
-		out.Packages = []string{"luci-light"}
-	}
+	// An empty list is now something a project can ASK for — `packages: ["-luci"]`
+	// down to nothing, or an explicit empty list — and the old fallback to
+	// luci-light would have quietly overruled it. The default set is applied
+	// above, before any of the project's own arithmetic.
 
 	// Extra packages accumulate: a default set plus whatever the router adds.
 	// There is no subtraction syntax here because these are named by URL, and
