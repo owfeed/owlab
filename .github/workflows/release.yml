@@ -33,11 +33,11 @@ jobs:
           - {goos: darwin,  goarch: arm64}
           - {goos: windows, goarch: amd64}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag || github.ref }}
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -75,7 +75,7 @@ jobs:
           fi
           ls -l out
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: owlab-${{ matrix.target.goos }}-${{ matrix.target.goarch }}
           path: out/*
@@ -99,11 +99,11 @@ jobs:
       # attest v3 records artifact storage as well as the attestation itself.
       artifact-metadata: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag || github.ref }}
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: dist
           merge-multiple: true
@@ -132,7 +132,7 @@ jobs:
       #
       # Before the upload, so that an archive can never reach the release
       # without the statement that says where it came from.
-      - uses: actions/attest-build-provenance@v3
+      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
             dist/*.tar.gz
