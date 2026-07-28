@@ -274,6 +274,7 @@ owlab releases    check the pins against the download servers
 owlab status      what is running and where
 owlab open        open LuCI in a browser
 owlab doctor      check this machine
+owlab version     print the owlab version
 ```
 
 Every command takes router ids. With none, it acts on all of them.
