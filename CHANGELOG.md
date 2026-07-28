@@ -9,6 +9,21 @@ one waits for a major.
 
 ## [Unreleased]
 
+### Added
+
+- `--feed` accepts `{host}` for the machine running owlab, and substitutes the
+  address the router actually reaches it at. Serving a freshly built feed over
+  HTTP and installing from it is how a feed's CI proves that what it publishes
+  works, and until now that step had no portable way to name the server: a
+  container on a Linux runner reaches the host at the bridge gateway, a container
+  under Docker Desktop has no gateway to reach, and a `fidelity: vm` router sees
+  neither because QEMU's user-mode stack answers somewhere else. Every pipeline
+  that tried hardcoded `172.17.0.1` and broke on the first developer machine. A
+  URL without the token is passed through unchanged.
+- Generated containers carry `extra_hosts: host.docker.internal:host-gateway`,
+  which is what the substitution above resolves through. The daemon knows where
+  the host is; owlab no longer guesses.
+
 ### Fixed
 
 - `owlab releases` no longer needs an `owlab.yaml`, or a container engine. Asking
