@@ -126,6 +126,15 @@ func (a *app) printMatrix(ctx context.Context, keep int) error {
 		for _, rel := range a.releasesFor(ctx, r, keep) {
 			build := *r
 			build.Release = rel
+			// Resolved here as well as at build time, because the platform
+			// depends on it: an image assembled from a tarball carries the
+			// honest linux/arm64, while one inherited from upstream must
+			// repeat that image's own non-standard string. Emitting the
+			// upstream platform for a router that then falls back to the
+			// tarball asks buildx for a platform alpine does not publish:
+			//
+			//   alpine:3.22: no match for platform in manifest
+			resolveBaseImages(ctx, []*config.Router{&build})
 			entries = append(entries, matrixEntry{
 				ID:       build.ID,
 				Distro:   string(build.Distro),
