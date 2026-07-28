@@ -19,6 +19,10 @@ You need Docker (or OrbStack, Colima, Podman, Rancher Desktop) with Compose v2.
 For `fidelity: vm` you need QEMU as well: `brew install qemu`, or
 `apt install qemu-system-arm qemu-system-x86`.
 
+Shipping the package too, not just developing it? The
+[cookbook](https://owfeed.org/cookbook/) walks the whole path — build, test,
+sign, publish — with files you can copy.
+
 ## Start
 
 Put `owlab.yaml` next to your package:
@@ -81,7 +85,7 @@ $ owlab install owrt2512 luci-app-ttyd
 
 That one is gone after `owlab up --rebuild`. `packages:` survives.
 
-### Install a package that is not in any feed
+## Install a package that is not in any feed
 
 Your own, or anything from GitHub Releases. Both URLs, because apk and opkg
 name their files differently:
@@ -266,6 +270,25 @@ it still answers 200, with the trace in the body.
 
 Full assertion list and the JSON shapes: [docs/reference.md](docs/reference.md#owlab-test).
 
+
+### Check it installs from a feed, not just from a file
+
+```console
+$ owlab test --release 25.12.5 \
+    --feed 'https://example.org/releases/25.12/x86_64/packages.adb' \
+    --feed-key ./myfeed.pem \
+    --install my-app \
+    --assert 'http 200 /cgi-bin/luci/admin/services/mine'
+```
+
+Installing a file proves the package works. Installing it **by name** out of a
+signed index proves the channel does — that the index parses, the URL does not
+redirect, and the key on the router matches the one that signed it. A file
+install cannot fail in any of those ways, so it cannot detect them.
+
+Nothing is installed with `--allow-untrusted` here: the index's signature is
+what makes the package acceptable. For opkg the key file's *name* must be the
+key id, because that is what opkg looks it up by.
 ### Get onto the router
 
 ```console
