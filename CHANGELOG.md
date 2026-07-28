@@ -7,7 +7,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
-## [Unreleased]
+## [0.4.0] - 2026-07-28
 
 ### Added
 
@@ -23,6 +23,10 @@ one waits for a major.
 - Generated containers carry `extra_hosts: host.docker.internal:host-gateway`,
   which is what the substitution above resolves through. The daemon knows where
   the host is; owlab no longer guesses.
+- `owlab releases --all --json` reports the package manager each branch ships.
+  owfeed answers the same question from the same server and neither tool reads
+  the other; without this the two could disagree about apk against opkg and
+  nothing would notice until a router on a 24.10 line got a feed it cannot read.
 
 ### Fixed
 
@@ -167,7 +171,8 @@ First release.
   to be re-run still leaves the immutable tags behind.
 
 [artifact-contract]: https://github.com/VizzleTF/owfeed/blob/main/docs/artifact-contract.md
-[Unreleased]: https://github.com/VizzleTF/owlab/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/VizzleTF/owlab/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/VizzleTF/owlab/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/VizzleTF/owlab/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/VizzleTF/owlab/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/VizzleTF/owlab/releases/tag/v0.1.0

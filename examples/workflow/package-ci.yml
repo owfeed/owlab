@@ -32,7 +32,7 @@ jobs:
 
       # Pin the tag. "latest" means a CI result can change without a commit
       # anywhere in this repository.
-      - uses: VizzleTF/owlab/setup@v0.3.0
+      - uses: VizzleTF/owlab/setup@v0.4.0
 
       # The verification tier: luci.mk minifies JS and CSS by default, so a real
       # package is not the source tree. Code that works unminified and breaks
@@ -41,7 +41,7 @@ jobs:
       - name: Build the package
         run: owlab build --release '${{ matrix.release }}' --out dist
 
-      - uses: VizzleTF/owlab/action@v0.3.0
+      - uses: VizzleTF/owlab/action@v0.4.0
         with:
           releases: ${{ matrix.release }}
           # A glob, because the version in the artifact's file name comes from
