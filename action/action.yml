@@ -1,0 +1,201 @@
+name: owlab test
+description: Start dev routers for the given OpenWrt releases, install a package, assert it works, and fail the job if it does not.
+
+# The whole of a package's CI in one step. What this replaces is roughly forty
+# lines of shell per repository: start a container, wait for uhttpd, copy the
+# package in, install it with the right package manager for that release, log
+# into LuCI to get a session cookie, fetch the page, and tear everything down
+# even when a step failed. Every one of those is easy; the assembly is not, and
+# it is the same assembly for every LuCI package there is.
+
+inputs:
+  releases:
+    description: >-
+      Releases to test against, space or comma separated, e.g. "25.12.4 24.10.8".
+      Pin point releases, not branches: the package manager records hard version
+      pins, so a 25.12.1 rootfs cannot install from the 25.12.5 feed. Leave empty
+      to use the routers in owlab.yaml instead.
+    required: false
+    default: ""
+  distro:
+    description: openwrt or immortalwrt. Applies to the routers `releases` creates.
+    required: false
+    default: openwrt
+  arch:
+    description: >-
+      OpenWrt architecture, e.g. x86_64 or aarch64_generic. Defaults to the
+      runner's own, which is the only one that runs without emulation.
+    required: false
+    default: ""
+  packages:
+    description: >-
+      Extra packages to build the routers with, space separated. A name prefixed
+      with + is added to the default set; a plain list replaces it.
+    required: false
+    default: ""
+  fixtures:
+    description: >-
+      Fixture profiles, e.g. "none" for a bare router or "all" for everything.
+      Defaults to the lived-in set, which is what makes config-driven pages
+      render anything worth asserting on.
+    required: false
+    default: ""
+  install:
+    description: >-
+      Packages to install, one per line. A path (globs allowed, e.g.
+      dist/luci-app-mine-*.apk) is copied to the router and installed from
+      there; anything else is looked up in the router's feeds.
+    required: false
+    default: ""
+  assert:
+    description: |
+      Assertions, one per line. A failure fails the job.
+        http <status> <path>      fetch a LuCI page as root; 200 or 2xx
+        service <name>            the init script reports it running
+        file <path>               the path exists on the router
+        package <name>            the package manager reports it installed
+        uci <config[.sec[.opt]]>  the uci value is set
+        exec <shell command>      the command exits 0
+    required: false
+    default: ""
+  routers:
+    description: Router ids from owlab.yaml to test, space separated. Default is all of them.
+    required: false
+    default: ""
+  sync:
+    description: Sync the project sources into the routers before asserting, as `owlab sync` does.
+    required: false
+    default: "false"
+  working-directory:
+    description: Directory to run in; where owlab.yaml is looked for.
+    required: false
+    default: "."
+  timeout:
+    description: Budget for the whole run, as a Go duration.
+    required: false
+    default: 20m
+  version:
+    description: owlab release to install, such as v0.2.0, or "latest". Pin a tag.
+    required: false
+    default: latest
+  verify:
+    description: Verify the owlab download against its build attestation.
+    required: false
+    default: "true"
+  summary:
+    description: Write a table of the results to the job summary.
+    required: false
+    default: "true"
+  token:
+    description: Token used to reach the owlab release and the attestation API.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  report:
+    description: Path to the JSON report.
+    value: ${{ steps.run.outputs.report }}
+  passed:
+    description: How many routers passed.
+    value: ${{ steps.run.outputs.passed }}
+  failed:
+    description: How many routers failed.
+    value: ${{ steps.run.outputs.failed }}
+
+runs:
+  using: composite
+  steps:
+    # Not `uses: VizzleTF/owlab/setup@...`: a composite action cannot compute
+    # the ref it was itself called at, so pinning one here would silently run a
+    # different version of the installer than the action being used. Calling the
+    # shared script directly keeps both on the same commit by construction.
+    - name: Install owlab
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        OWLAB_VERSION: ${{ inputs.version }}
+        OWLAB_VERIFY: ${{ inputs.verify }}
+      run: bash "$GITHUB_ACTION_PATH/../setup/install.sh"
+
+    - name: Check for a container engine
+      shell: bash
+      run: |
+        if ! docker compose version >/dev/null 2>&1; then
+          echo "::error::owlab needs Docker with Compose v2. GitHub's macOS runners have no container engine — use ubuntu-latest, or a self-hosted macOS runner with Docker installed."
+          exit 1
+        fi
+
+    - id: run
+      shell: bash
+      working-directory: ${{ inputs['working-directory'] }}
+      env:
+        RELEASES: ${{ inputs.releases }}
+        DISTRO: ${{ inputs.distro }}
+        ARCH: ${{ inputs.arch }}
+        PACKAGES: ${{ inputs.packages }}
+        FIXTURES: ${{ inputs.fixtures }}
+        INSTALL: ${{ inputs.install }}
+        ASSERT: ${{ inputs.assert }}
+        ROUTERS: ${{ inputs.routers }}
+        SYNC: ${{ inputs.sync }}
+        TIMEOUT: ${{ inputs.timeout }}
+      run: |
+        set -uo pipefail
+
+        report="${RUNNER_TEMP}/owlab-report.json"
+        echo "report=$report" >> "$GITHUB_OUTPUT"
+
+        args=(test --json --timeout "$TIMEOUT")
+        [ -n "$RELEASES" ] && args+=(--release "$RELEASES")
+        [ -n "$RELEASES" ] && [ -n "$DISTRO" ] && args+=(--distro "$DISTRO")
+        [ -n "$RELEASES" ] && [ -n "$ARCH" ] && args+=(--arch "$ARCH")
+        [ -n "$RELEASES" ] && [ -n "$PACKAGES" ] && args+=(--packages "$PACKAGES")
+        [ -n "$RELEASES" ] && [ -n "$FIXTURES" ] && args+=(--fixtures "$FIXTURES")
+        [ "$SYNC" = "true" ] && args+=(--sync)
+
+        # One flag per line, so a path with a space in it survives and an empty
+        # input adds nothing.
+        while IFS= read -r line; do
+          line="$(echo "$line" | sed 's/[[:space:]]*$//')"
+          [ -n "$line" ] && args+=(--install "$line")
+        done <<< "$INSTALL"
+        while IFS= read -r line; do
+          line="$(echo "$line" | sed 's/[[:space:]]*$//')"
+          [ -n "$line" ] && args+=(--assert "$line")
+        done <<< "$ASSERT"
+        for r in $ROUTERS; do args+=("$r"); done
+
+        # The report goes to a file and the progress to the log, which is what
+        # --json already arranges: the two streams are separate for exactly this.
+        owlab "${args[@]}" > "$report"
+        status=$?
+
+        passed=0; failed=0
+        if [ -s "$report" ]; then
+          passed=$(jq '[.routers[] | select(.ok)] | length' "$report")
+          failed=$(jq '[.routers[] | select(.ok | not)] | length' "$report")
+        fi
+        echo "passed=$passed" >> "$GITHUB_OUTPUT"
+        echo "failed=$failed" >> "$GITHUB_OUTPUT"
+        exit $status
+
+    # always(): a failed run is the one whose table people actually read.
+    - name: Job summary
+      if: ${{ always() && inputs.summary == 'true' }}
+      shell: bash
+      env:
+        REPORT: ${{ steps.run.outputs.report }}
+      run: |
+        set -euo pipefail
+        [ -s "$REPORT" ] || exit 0
+        {
+          echo "### owlab test"
+          echo
+          echo "| router | release | pkgmgr | result | failed checks |"
+          echo "|---|---|---|---|---|"
+          jq -r '.routers[] |
+            [ .id, .release, .package_manager,
+              (if .ok then "pass" else "**fail**" end),
+              ([.steps[] | select(.ok | not) | "`\(.check)` — \(.detail // "")"] | join("<br>"))
+            ] | "| " + join(" | ") + " |"' "$REPORT"
+        } >> "$GITHUB_STEP_SUMMARY"

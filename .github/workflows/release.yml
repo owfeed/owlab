@@ -88,6 +88,16 @@ jobs:
     # read-only token declared at the top of the file.
     permissions:
       contents: write
+      # Build provenance is what makes `owlab/setup` a verified download rather
+      # than a hopeful one. SHA256SUMS beside the archives is not a check on its
+      # own: it is served by the same host, from the same release, so whoever
+      # can replace one can replace the other. An attestation is signed by
+      # GitHub's own identity and recorded in a public transparency log, which
+      # is evidence from somewhere this release does not control.
+      id-token: write
+      attestations: write
+      # attest v3 records artifact storage as well as the attestation itself.
+      artifact-metadata: write
     steps:
       - uses: actions/checkout@v7
         with:
@@ -114,6 +124,19 @@ jobs:
           cd dist
           sha256sum * > SHA256SUMS
           cat SHA256SUMS
+
+      # One attestation covering every archive, not one per archive: the action
+      # collapses multiple subjects into a single statement referencing each
+      # digest. Verification stays per-file, because a verifier looks its own
+      # file's digest up among those subjects.
+      #
+      # Before the upload, so that an archive can never reach the release
+      # without the statement that says where it came from.
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
 
       # Pinned by commit, not by the `v2` tag. This is the only third-party
       # action in the repository and it runs in the only job that can write to

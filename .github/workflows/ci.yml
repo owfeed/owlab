@@ -83,3 +83,84 @@ jobs:
           set -eu
           sh tools/release-notes.sh "$(sed -n 's/^## \[\([0-9][^]]*\)\].*/\1/p' CHANGELOG.md | head -n1)" >/dev/null
           echo "release notes extract cleanly from the newest section"
+
+      - name: The installer the actions share parses
+        run: bash -n setup/install.sh
+
+  # Dogfooding, and the only test here that runs against OpenWrt rather than
+  # against a description of how OpenWrt behaves.
+  #
+  # Both package managers, because that is the axis that breaks: apk from 25.12,
+  # opkg on 24.10, and neither understands the other's command. ImmortalWrt
+  # because it is the distribution assembled from a rootfs tarball rather than
+  # inherited from a published image, so it is the only entry exercising that
+  # half of the build.
+  #
+  # The assertions are about LuCI itself rather than about any package: what is
+  # being verified is that owlab produces a router on which a package's own
+  # assertions could pass — LuCI answers a logged-in request, the dispatcher
+  # renders a config-driven page without an exception, and the fixtures those
+  # pages need are really there.
+  e2e:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {distro: openwrt, release: "25.12.4"}
+          - {distro: openwrt, release: "24.10.8"}
+          - {distro: immortalwrt, release: "25.12.1"}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - run: go build -o "$RUNNER_TEMP/owlab" ./cmd/owlab
+
+      - name: owlab test
+        run: |
+          mkdir -p "$RUNNER_TEMP/e2e" && cd "$RUNNER_TEMP/e2e"
+          "$RUNNER_TEMP/owlab" test \
+            --distro '${{ matrix.distro }}' \
+            --release '${{ matrix.release }}' \
+            --assert 'http 200 /cgi-bin/luci/admin/status/overview' \
+            --assert 'http 200 /cgi-bin/luci/admin/network/network' \
+            --assert 'http 200 /cgi-bin/luci/admin/network/firewall' \
+            --assert 'service uhttpd' \
+            --assert 'uci network.wan' \
+            --json > "$RUNNER_TEMP/report.json"
+
+      - name: Report
+        if: always()
+        run: |
+          [ -s "$RUNNER_TEMP/report.json" ] || exit 0
+          jq -r '.routers[] | "\(.id) \(if .ok then "pass" else "FAIL" end)"' "$RUNNER_TEMP/report.json"
+
+  # The action is shell, and shell that only runs in other people's
+  # repositories is shell nobody tests.
+  action:
+    runs-on: ubuntu-24.04
+    env:
+      # Recognised by the installer: use the owlab already on PATH instead of
+      # downloading a release, so this tests the working tree. At job level so
+      # the composite action's own steps see it.
+      OWLAB_SKIP_INSTALL: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build owlab from this commit
+        run: |
+          go build -o "$RUNNER_TEMP/bin/owlab" ./cmd/owlab
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - uses: ./action
+        with:
+          releases: "25.12.4"
+          fixtures: "none"
+          assert: |
+            http 200 /cgi-bin/luci/admin/status/overview
+            service uhttpd

@@ -1,0 +1,43 @@
+name: Set up owlab
+description: Install a verified owlab binary and put it on PATH.
+
+# Why this rather than `go install github.com/VizzleTF/owlab/cmd/owlab@sha`:
+# that compiles the tool on every job of a matrix, needs a Go toolchain the job
+# has no other use for, and verifies nothing — `go install` trusts whatever the
+# module proxy returns for that revision. This downloads one binary and checks
+# it against GitHub's own build attestation before running it.
+
+inputs:
+  version:
+    description: >-
+      Release tag to install, such as v0.2.0, or "latest". Pin a tag: "latest"
+      means the tool a CI result depends on can change under you between runs.
+    required: false
+    default: latest
+  verify:
+    description: >-
+      Verify the download against its build attestation. Turning this off runs
+      an unverified binary; it exists only so that a broken Sigstore does not
+      leave a repository with no way to run its tests.
+    required: false
+    default: "true"
+  token:
+    description: Token used to reach the release and the attestation API.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: The version that was installed.
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        OWLAB_VERSION: ${{ inputs.version }}
+        OWLAB_VERIFY: ${{ inputs.verify }}
+      run: bash "$GITHUB_ACTION_PATH/install.sh"

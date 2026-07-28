@@ -1,0 +1,59 @@
+# A LuCI package's CI, end to end: build the real .apk and .ipk with the
+# OpenWrt SDK, then install each on a router of the release it was built for and
+# assert that the app's page renders.
+#
+# Copy this into .github/workflows/ in your package repository. Nothing here is
+# specific to a package except the name and the assertions.
+#
+# Why a matrix of two releases rather than one: 25.12 ships apk and 24.10 ships
+# opkg, the artifacts are named differently, and the LuCI they carry is not the
+# same LuCI. A package that installs on one and not the other is the normal
+# failure, not an exotic one.
+
+name: package
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        release: ["25.12.4", "24.10.8"]
+    steps:
+      - uses: actions/checkout@v5
+
+      # Pin the tag. "latest" means a CI result can change without a commit
+      # anywhere in this repository.
+      - uses: VizzleTF/owlab/setup@v0.2.0
+
+      # The verification tier: luci.mk minifies JS and CSS by default, so a real
+      # package is not the source tree. Code that works unminified and breaks
+      # minified is invisible until someone builds one — which, without this, is
+      # a user.
+      - name: Build the package
+        run: owlab build --release '${{ matrix.release }}' --out dist
+
+      - uses: VizzleTF/owlab/action@v0.2.0
+        with:
+          releases: ${{ matrix.release }}
+          # A glob, because the version in the artifact's file name comes from
+          # the build and is not known here.
+          install: dist/luci-app-example-*
+          assert: |
+            package luci-app-example
+            http 200 /cgi-bin/luci/admin/services/example
+            file /usr/share/rpcd/acl.d/luci-app-example.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: package-${{ matrix.release }}
+          path: dist/

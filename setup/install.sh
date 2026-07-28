@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+# Download an owlab release, verify it, and put the binary on PATH.
+#
+# Shared by both actions in this repository rather than copied into each: the
+# verification below is the part that must not drift, and two copies of a
+# security check are one copy and one liability.
+#
+# Inputs, all from the environment:
+#   OWLAB_VERSION  a tag such as v0.2.0, or "latest"
+#   OWLAB_VERIFY   "true" to check the build attestation before running anything
+#   GH_TOKEN       token for the release download and the attestation API
+set -euo pipefail
+
+# owlab's own CI tests the action against the working tree rather than against a
+# published release, which is the only way a change to the action can be tested
+# before it ships. Nothing else should set this.
+if [ -n "${OWLAB_SKIP_INSTALL:-}" ] && command -v owlab >/dev/null 2>&1; then
+  echo "using the owlab already on PATH: $(command -v owlab)"
+  owlab version
+  exit 0
+fi
+
+case "$RUNNER_OS" in
+  Linux)  os=linux ;;
+  macOS)  os=darwin ;;
+  *) echo "::error::owlab has no release build for $RUNNER_OS"; exit 1 ;;
+esac
+case "$RUNNER_ARCH" in
+  X64)   arch=amd64 ;;
+  ARM64) arch=arm64 ;;
+  *) echo "::error::owlab has no release build for $RUNNER_ARCH"; exit 1 ;;
+esac
+
+dir="${RUNNER_TEMP}/owlab"
+mkdir -p "$dir"
+
+# The version is needed before the download, not after: the asset name carries
+# it, so "latest" has to be resolved to a tag rather than guessed at.
+if [ "${OWLAB_VERSION:-latest}" = "latest" ]; then
+  echo "::warning::owlab pinned to \"latest\"; pin a tag so a CI result cannot change without a commit"
+  tag="$(gh release view --repo VizzleTF/owlab --json tagName --jq .tagName)"
+else
+  tag="$OWLAB_VERSION"
+fi
+ver="${tag#v}"
+asset="owlab_${ver}_${os}_${arch}.tar.gz"
+
+gh release download "$tag" --repo VizzleTF/owlab --pattern "$asset" --dir "$dir"
+
+# Verify BEFORE the archive is unpacked or anything in it is executed. A check
+# that runs after the thing it checks is not a check.
+if [ "${OWLAB_VERIFY:-true}" = "true" ]; then
+  # --signer-workflow, not only --repo. Checking the repository alone accepts an
+  # attestation produced by ANY workflow in it holding attestations: write, so a
+  # single merged pull request adding a workflow would be enough to mint a valid
+  # attestation for arbitrary bytes.
+  #
+  # gh writes its result to stderr, which a composite step swallows, so it is
+  # captured and echoed either way: a check nobody can see ran is one nobody
+  # believes ran.
+  if out=$(gh attestation verify "$dir/$asset" \
+      --repo VizzleTF/owlab \
+      --signer-workflow VizzleTF/owlab/.github/workflows/release.yml 2>&1); then
+    echo "$out"
+    echo "verified $asset as built by VizzleTF/owlab .github/workflows/release.yml"
+  else
+    echo "$out"
+    echo "::error::$asset does not verify as built by VizzleTF/owlab's release workflow — refusing to install it"
+    echo "::error::releases before v0.2.0 carry no attestation; pin a later tag, or set verify: false to accept an unverified download"
+    rm -f "$dir/$asset"
+    exit 1
+  fi
+else
+  echo "::warning::owlab installed without verifying its build attestation"
+fi
+
+tar -C "$dir" -xzf "$dir/$asset"
+bin="$dir/owlab_${ver}_${os}_${arch}/owlab"
+[ -x "$bin" ] || { echo "::error::$asset does not hold owlab where the release layout says it does"; exit 1; }
+mv "$bin" "$dir/owlab"
+echo "$dir" >> "$GITHUB_PATH"
+export PATH="$dir:$PATH"
+
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  echo "version=${ver}" >> "$GITHUB_OUTPUT"
+fi
+"$dir/owlab" version
