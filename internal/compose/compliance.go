@@ -9,9 +9,6 @@ import (
 	"github.com/VizzleTF/owlab/internal/config"
 )
 
-// CompliancePath is where the bundle lands inside the image.
-const CompliancePath = "/usr/share/owlab/compliance"
-
 // fetchCompliance stages the GPL compliance material for each router.
 //
 // Publishing an image built from an OpenWrt rootfs redistributes GPL'd

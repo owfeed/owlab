@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -66,7 +67,7 @@ routers:
 	if len(a.Fixtures) == 0 {
 		t.Fatal("expected default fixtures")
 	}
-	if contains(a.Fixtures, FixtureWiFi) {
+	if slices.Contains(a.Fixtures, FixtureWiFi) {
 		t.Error("wifi claims /etc/config/wireless outright and must be opt-in")
 	}
 }

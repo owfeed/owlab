@@ -69,35 +69,30 @@ type Network struct {
 	Driver string `yaml:"driver"`
 }
 
-// Project bundles everything owlab needs to drive compose for one config.
+// Project is where the generated files landed.
 type Project struct {
-	Name        string
-	WorkDir     string
+	// ComposePath is the generated compose document.
 	ComposePath string
-	ContextDir  string
-	Config      *config.Config
+	// ContextDir is the build context every service's build stanza points at.
+	// Written by Materialize; the directory exists after Render, but is empty
+	// until then.
+	ContextDir string
 }
 
-// Prepare writes the build context and the compose file, and returns where
-// they landed.
-func Prepare(cfg *config.Config, eng engine.Info) (*Project, error) {
+// Render writes the compose file and returns where it landed.
+//
+// Deliberately cheap: it touches only the project's own .owlab directory and
+// never opens a socket. Stopping a router or reading its log needs the compose
+// file and nothing else, and paying for a build context — a wipe-and-rewrite
+// of a directory plus however many downloads — to run `owlab down` would be
+// both slow and, with no network, a reason for it to fail outright.
+func Render(cfg *config.Config, eng engine.Info) (*Project, error) {
 	work := filepath.Join(cfg.Dir, WorkDirName)
 	ctxDir := filepath.Join(work, "context")
 	if err := os.MkdirAll(ctxDir, 0o755); err != nil {
 		return nil, err
 	}
 	if err := writeGitignore(work); err != nil {
-		return nil, err
-	}
-	if err := extractContext(ctxDir); err != nil {
-		return nil, fmt.Errorf("writing build context: %w", err)
-	}
-	// Both after extractContext, which wipes the directory first.
-	cacheDir := filepath.Join(work, "cache")
-	if err := fetchExtraPackages(cfg, ctxDir, cacheDir); err != nil {
-		return nil, err
-	}
-	if err := fetchCompliance(cfg, ctxDir, cacheDir); err != nil {
 		return nil, err
 	}
 
@@ -122,11 +117,7 @@ func Prepare(cfg *config.Config, eng engine.Info) (*Project, error) {
 			// no /dev/kvm on macOS or Windows 10.
 			continue
 		}
-		svc, err := service(cfg, r, eng, name, ctxDir, keyFile)
-		if err != nil {
-			return nil, fmt.Errorf("router %q: %w", r.ID, err)
-		}
-		doc.Services[r.ID] = svc
+		doc.Services[r.ID] = service(cfg, r, eng, name, ctxDir, keyFile)
 	}
 
 	out, err := yaml.Marshal(doc)
@@ -139,13 +130,37 @@ func Prepare(cfg *config.Config, eng engine.Info) (*Project, error) {
 		return nil, err
 	}
 
-	return &Project{
-		Name:        name,
-		WorkDir:     work,
-		ComposePath: composePath,
-		ContextDir:  ctxDir,
-		Config:      cfg,
-	}, nil
+	return &Project{ComposePath: composePath, ContextDir: ctxDir}, nil
+}
+
+// Materialize fills in the build context the compose file points at.
+//
+// This is the expensive half — the embedded context is wiped and rewritten,
+// and the out-of-feed packages and compliance bundle are downloaded — so it is
+// called only by the commands that are about to build an image.
+func Materialize(cfg *config.Config, p *Project) error {
+	if err := extractContext(p.ContextDir); err != nil {
+		return fmt.Errorf("writing build context: %w", err)
+	}
+	// Both after extractContext, which wipes the directory first.
+	cacheDir := filepath.Join(cfg.Dir, WorkDirName, "cache")
+	if err := fetchExtraPackages(cfg, p.ContextDir, cacheDir); err != nil {
+		return err
+	}
+	return fetchCompliance(cfg, p.ContextDir, cacheDir)
+}
+
+// Prepare renders the compose file and materialises the context it refers to,
+// for the commands that are about to build.
+func Prepare(cfg *config.Config, eng engine.Info) (*Project, error) {
+	p, err := Render(cfg, eng)
+	if err != nil {
+		return nil, err
+	}
+	if err := Materialize(cfg, p); err != nil {
+		return nil, err
+	}
+	return p, nil
 }
 
 // BuildArgsFor is every ARG the Dockerfile needs for one router.
@@ -182,7 +197,7 @@ func BuildArgsFor(cfg *config.Config, r *config.Router) map[string]string {
 	return args
 }
 
-func service(cfg *config.Config, r *config.Router, eng engine.Info, project, ctxDir, keyFile string) (Service, error) {
+func service(cfg *config.Config, r *config.Router, eng engine.Info, project, ctxDir, keyFile string) Service {
 	args := BuildArgsFor(cfg, r)
 
 	svc := Service{
@@ -193,7 +208,7 @@ func service(cfg *config.Config, r *config.Router, eng engine.Info, project, ctx
 		},
 		Image:         fmt.Sprintf("%s-%s:latest", project, r.ID),
 		Platform:      r.Platform(),
-		ContainerName: fmt.Sprintf("%s-%s", project, r.ID),
+		ContainerName: ContainerName(cfg.Project.Name, r.ID),
 		Hostname:      r.Hostname,
 		// NET_ADMIN and NET_RAW rather than privileged: netifd has to bring
 		// interfaces up and add addresses, and fw4 has to load an nftables
@@ -236,7 +251,7 @@ func service(cfg *config.Config, r *config.Router, eng engine.Info, project, ctx
 		// root's.
 		svc.Volumes = append(svc.Volumes, keyFile+":/etc/owlab/authorized_keys.host:ro")
 	}
-	return svc, nil
+	return svc
 }
 
 // extractContext writes the embedded build context to disk.
@@ -301,6 +316,15 @@ func ProjectName(s string) string {
 	return "owlab-" + out
 }
 
+// ContainerName is the container one router runs in.
+//
+// projectName is the raw name from owlab.yaml, not an already-normalised one:
+// ProjectName is not idempotent (it prefixes "owlab-"), so feeding it its own
+// output would name a container nothing can find.
+func ContainerName(projectName, routerID string) string {
+	return ProjectName(projectName) + "-" + routerID
+}
+
 // PublicKeys lists the ssh public keys to install, and where they came from.
 //
 // ALL of the user's standard keys, not the first one found. Picking one by
@@ -338,15 +362,17 @@ func PublicKeys() (paths []string, source string) {
 	return paths, filepath.Join(home, ".ssh")
 }
 
-// writeAuthorizedKeys concatenates the public keys into one file for the
-// container to pick up, and returns its path — or "" when there are none.
-func writeAuthorizedKeys(workDir string) (string, error) {
-	keys, _ := PublicKeys()
-	if len(keys) == 0 {
-		return "", nil
-	}
+// AuthorizedKeys is the contents of the authorized_keys file to install: every
+// key PublicKeys found, one per line, unreadable and empty ones dropped.
+//
+// Exported because both tiers install the same keys by different means — the
+// container mounts a file the entrypoint copies into place, the VM has the
+// bytes pushed in with the rest of its overlay — and a developer whose ssh
+// works on one router and not the other would have no way to tell why.
+func AuthorizedKeys() []byte {
+	paths, _ := PublicKeys()
 	var b strings.Builder
-	for _, p := range keys {
+	for _, p := range paths {
 		body, err := os.ReadFile(p)
 		if err != nil {
 			continue
@@ -358,11 +384,18 @@ func writeAuthorizedKeys(workDir string) (string, error) {
 		b.WriteString(line)
 		b.WriteString("\n")
 	}
-	if b.Len() == 0 {
+	return []byte(b.String())
+}
+
+// writeAuthorizedKeys stages the keys in the work directory for the container
+// to pick up, and returns the path — or "" when there are none.
+func writeAuthorizedKeys(workDir string) (string, error) {
+	keys := AuthorizedKeys()
+	if len(keys) == 0 {
 		return "", nil
 	}
 	out := filepath.Join(workDir, "authorized_keys")
-	if err := os.WriteFile(out, []byte(b.String()), 0o644); err != nil {
+	if err := os.WriteFile(out, keys, 0o644); err != nil {
 		return "", err
 	}
 	return out, nil
@@ -384,20 +417,3 @@ func dns() string {
 }
 
 func boolPtr(b bool) *bool { return &b }
-
-// ServiceNames lists the compose services in a stable order.
-func (p *Project) ServiceNames() []string {
-	out := make([]string, 0, len(p.Config.Routers))
-	for i := range p.Config.Routers {
-		if p.Config.Routers[i].Fidelity != config.VM {
-			out = append(out, p.Config.Routers[i].ID)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-// ContainerName is the container name for a router.
-func (p *Project) ContainerName(id string) string {
-	return p.Name + "-" + id
-}

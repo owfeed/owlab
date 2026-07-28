@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -87,7 +88,7 @@ func KnownDistros() []string {
 	for k := range distros {
 		out = append(out, string(k))
 	}
-	sortStrings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -264,7 +265,7 @@ func KnownArches() []string {
 	for k := range targets {
 		out = append(out, k)
 	}
-	sortStrings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -276,7 +277,7 @@ func VMArches() []string {
 			out = append(out, k)
 		}
 	}
-	sortStrings(out)
+	slices.Sort(out)
 	return out
 }
 
@@ -399,14 +400,19 @@ func (r *Router) SumsURL() string { return r.ReleaseDir() + "/sha256sums" }
 // BaseImage is the upstream container image for this router, or "" when the
 // router must be built from a rootfs tarball instead.
 func (r *Router) BaseImage() string {
-	// An explicit image wins: it is the whole point of pointing at one.
+	// An explicit image wins: it is the whole point of pointing at one. This is
+	// checked BEFORE FromTarball, which deliberately ignores it — see the note
+	// there.
 	if r.Image != "" {
 		return r.Image
 	}
-	s := r.spec()
-	if s.ImageRepo == "" || !r.target.HasRootfsImage || r.noUpstreamImage {
+	// The same question FromTarball answers, asked through it rather than
+	// repeated: a router assembled from a tarball has no upstream image to
+	// name, and two copies of that condition could disagree.
+	if r.FromTarball() {
 		return ""
 	}
+	s := r.spec()
 	if isSnapshot(r.Release) {
 		return fmt.Sprintf("%s:%s-master", s.ImageRepo, r.target.Arch)
 	}
@@ -429,11 +435,3 @@ func (r *Router) FeedBase() string {
 
 // Title is how this router's distribution calls itself.
 func (r *Router) Title() string { return r.spec().Title }
-
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
-}

@@ -8,7 +8,6 @@
 package sync
 
 import (
-	"archive/tar"
 	"bytes"
 	"context"
 	"fmt"
@@ -18,11 +17,12 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/VizzleTF/owlab/internal/config"
+	"github.com/VizzleTF/owlab/internal/tarx"
 )
 
 // Result is what one router's sync did.
@@ -86,21 +86,15 @@ func Run(ctx context.Context, opts Options, routers []*config.Router) []Result {
 	}
 
 	archive, count, size, err := buildArchive(opts.Config, opts.Verbose)
-	results := make([]Result, 0, len(routers))
 	if err != nil {
-		for _, r := range routers {
-			results = append(results, Result{Router: r.ID, Err: err})
-		}
-		return results
+		return fail(err)
 	}
 	if count == 0 {
-		for _, r := range routers {
-			results = append(results, Result{Router: r.ID,
-				Err: fmt.Errorf("nothing to sync: none of the install: source directories exist in %s", opts.Config.Dir)})
-		}
-		return results
+		return fail(fmt.Errorf(
+			"nothing to sync: none of the install: source directories exist in %s", opts.Config.Dir))
 	}
 
+	results := make([]Result, 0, len(routers))
 	for _, r := range routers {
 		res := Result{Router: r.ID, Files: count, Bytes: size}
 		run, err := opts.Exec(r)
@@ -162,8 +156,7 @@ func runBuild(ctx context.Context, dir, command string, verbose bool) error {
 // buildArchive turns the project's install mapping into one tar stream rooted
 // at /, so a single `tar -x` in the container places everything at once.
 func buildArchive(cfg *config.Config, verbose bool) ([]byte, int, int64, error) {
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
+	w := tarx.New()
 	count := 0
 	var total int64
 
@@ -218,19 +211,7 @@ func buildArchive(cfg *config.Config, verbose bool) ([]byte, int, int64, error) 
 			if err != nil {
 				return err
 			}
-			hdr := &tar.Header{
-				Name:    strings.TrimPrefix(target, "/"),
-				Mode:    int64(info.Mode().Perm()),
-				Size:    int64(len(body)),
-				ModTime: info.ModTime(),
-				Format:  tar.FormatGNU,
-			}
-			if err := tw.WriteHeader(hdr); err != nil {
-				return err
-			}
-			if _, err := tw.Write(body); err != nil {
-				return err
-			}
+			w.AddTime(target, body, info.Mode(), info.ModTime())
 			count++
 			total += int64(len(body))
 			if verbose {
@@ -243,10 +224,11 @@ func buildArchive(cfg *config.Config, verbose bool) ([]byte, int, int64, error) 
 		}
 	}
 
-	if err := tw.Close(); err != nil {
+	archive, err := w.Bytes()
+	if err != nil {
 		return nil, 0, 0, err
 	}
-	return buf.Bytes(), count, total, nil
+	return archive, count, total, nil
 }
 
 // isConfigFile reports whether a destination path is router state rather than
@@ -295,12 +277,16 @@ func postSync(ctx context.Context, run Exec, command string, verbose bool) error
 	return nil
 }
 
-// reload drops the caches that make LuCI keep serving the old tree.
+// ReloadScript drops the caches that make LuCI keep serving the old tree.
 //
 // This is exactly luci.mk's own postinst. Without it, a new page does not
 // appear in the menu and an edited template keeps rendering its old text —
 // which reads like the sync silently failed.
-func reload(ctx context.Context, run Exec, theme string) error {
+//
+// Exported because `owlab install` needs the same thing for the same reason: a
+// newly installed app is invisible until both caches are dropped, whether the
+// files arrived through a package manager or through a sync.
+func ReloadScript(theme string) string {
 	script := "rm -f /tmp/luci-indexcache*; rm -rf /tmp/luci-modulecache"
 	if theme != "" {
 		// Re-assert the theme: installing or syncing can register a theme
@@ -310,10 +296,12 @@ func reload(ctx context.Context, run Exec, theme string) error {
 			"; [ -d /www/luci-static/%s ] && { uci -q set luci.main.mediaurlbase=/luci-static/%s; uci -q commit luci; }",
 			theme, theme)
 	}
-	script += "; /etc/init.d/rpcd reload >/dev/null 2>&1 || true"
+	return script + "; /etc/init.d/rpcd reload >/dev/null 2>&1 || true"
+}
 
+func reload(ctx context.Context, run Exec, theme string) error {
 	var out bytes.Buffer
-	if err := run(ctx, script, nil, &out); err != nil {
+	if err := run(ctx, ReloadScript(theme), nil, &out); err != nil {
 		return fmt.Errorf("reload: %s", strings.TrimSpace(out.String()))
 	}
 	return nil
@@ -406,6 +394,6 @@ func snapshot(cfg *config.Config) (string, error) {
 			return "", err
 		}
 	}
-	sort.Strings(parts)
+	slices.Sort(parts)
 	return strings.Join(parts, "\n"), nil
 }

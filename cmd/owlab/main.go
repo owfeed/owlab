@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/VizzleTF/owlab/internal/config"
@@ -18,28 +19,70 @@ type app struct {
 	docker dockercli.Runner
 	cfg    *config.Config
 	eng    engine.Info
+
+	// configPath is what --config or OWLAB_CONFIG said, before resolution.
+	// Commands that load a config never see it; doctor does, because it
+	// reports on the resolution itself.
+	configPath string
 }
 
-const usage = `owlab — dev routers for OpenWrt/ImmortalWrt package development
+// command is one owlab subcommand.
+//
+// A table rather than a switch, because the dispatcher and the help text are
+// then the same list. They were two before, and had already drifted: `context`
+// was dispatched and undocumented.
+type command struct {
+	// name is what the user types.
+	name string
+	// summary is the line in the help text. Empty keeps the command out of it
+	// — `context` exists for CI and is not something to offer a developer.
+	summary string
+	// bare runs without loading a config or looking for a container engine,
+	// because the times these commands are needed are the times those are what
+	// is broken.
+	bare bool
+	run  func(*app, context.Context, []string) error
+}
+
+var commands = []command{
+	{name: "up", summary: "build and start routers", run: (*app).up},
+	{name: "down", summary: "stop routers", run: (*app).down},
+	{name: "shell", summary: "open a shell on a router", run: (*app).shell},
+	{name: "exec", summary: "run a command on a router", run: (*app).exec},
+	{name: "sync", summary: "copy this package's source into the routers and reload LuCI", run: (*app).sync},
+	{name: "install", summary: "install packages (or a local .apk/.ipk) on a running router", run: (*app).install},
+	{name: "build", summary: "build a real .apk/.ipk with the OpenWrt SDK", run: (*app).build},
+	{name: "logs", summary: "show a router's boot and service log", run: (*app).logs},
+	{name: "releases", summary: "what the download servers publish, and how stale the pins are", run: (*app).releases},
+	{name: "status", summary: "list routers and where to reach them", run: (*app).status},
+	{name: "open", summary: "open a router's LuCI in a browser", run: (*app).open},
+	{name: "doctor", summary: "check this machine for problems", bare: true, run: (*app).doctor},
+	{name: "version", summary: "print the owlab version", bare: true, run: (*app).version},
+
+	// Undocumented: this prepares a build context and prints the arguments for
+	// `docker buildx build`, which is a thing the publish workflow needs and a
+	// developer does not.
+	{name: "context", run: (*app).buildContext},
+}
+
+func lookupCommand(name string) (command, bool) {
+	for _, c := range commands {
+		if c.name == name {
+			return c, true
+		}
+	}
+	return command{}, false
+}
+
+const usageHead = `owlab — dev routers for OpenWrt/ImmortalWrt package development
 
 Usage:
   owlab [--config <path>] <command> [routers...] [flags]
 
 Commands:
-  up          build and start routers
-  down        stop routers
-  shell       open a shell on a router
-  exec        run a command on a router
-  sync        copy this package's source into the routers and reload LuCI
-  install     install packages (or a local .apk/.ipk) on a running router
-  build       build a real .apk/.ipk with the OpenWrt SDK
-  logs        show a router's boot and service log
-  releases    what the download servers publish, and how stale the pins are
-  status      list routers and where to reach them
-  open        open a router's LuCI in a browser
-  doctor      check this machine for problems
-  version     print the owlab version
+`
 
+const usageTail = `
 Run 'owlab <command> -h' for the flags of one command.
 
 Routers are named by the ids in owlab.yaml. With no ids, commands that
@@ -50,9 +93,22 @@ somewhere else with --config (or -c), which takes the file or the directory
 holding it, or set OWLAB_CONFIG.
 `
 
+func usage() string {
+	var b strings.Builder
+	b.WriteString(usageHead)
+	for _, c := range commands {
+		if c.summary == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "  %-11s %s\n", c.name, c.summary)
+	}
+	b.WriteString(usageTail)
+	return b.String()
+}
+
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, usage)
+		fmt.Fprint(os.Stderr, usage())
 		os.Exit(2)
 	}
 
@@ -65,19 +121,19 @@ func main() {
 		os.Exit(2)
 	}
 	if len(argv) == 0 {
-		fmt.Fprint(os.Stderr, usage)
+		fmt.Fprint(os.Stderr, usage())
 		os.Exit(2)
 	}
 	cmd := argv[0]
 	args := argv[1:]
 
+	// The two spellings people reach for that are not subcommand names.
 	switch cmd {
 	case "-h", "--help", "help":
-		fmt.Print(usage)
+		fmt.Print(usage())
 		return
-	case "version", "--version", "-v":
-		fmt.Print(versionLine())
-		return
+	case "--version", "-v":
+		cmd = "version"
 	}
 
 	if err := run(ctx, cmd, args, configPath); err != nil {
@@ -93,12 +149,14 @@ func main() {
 }
 
 func run(ctx context.Context, cmd string, args []string, configPath string) error {
-	a := &app{}
+	c, ok := lookupCommand(cmd)
+	if !ok {
+		return fmt.Errorf("unknown command %q\n\n%s", cmd, usage())
+	}
 
-	// doctor is the one command that must work when everything else is
-	// broken, so it loads nothing up front.
-	if cmd == "doctor" {
-		return a.doctor(ctx, args, configPath)
+	a := &app{configPath: configPath}
+	if c.bare {
+		return c.run(a, ctx, args)
 	}
 
 	path, err := resolveConfig(configPath)
@@ -123,33 +181,5 @@ func run(ctx context.Context, cmd string, args []string, configPath string) erro
 			return a.eng.Err
 		}
 	}
-
-	switch cmd {
-	case "up":
-		return a.up(ctx, args)
-	case "down":
-		return a.down(ctx, args)
-	case "shell":
-		return a.shell(ctx, args)
-	case "exec":
-		return a.exec(ctx, args)
-	case "sync":
-		return a.sync(ctx, args)
-	case "context":
-		return a.buildContext(ctx, args)
-	case "install":
-		return a.install(ctx, args)
-	case "build":
-		return a.build(ctx, args)
-	case "logs":
-		return a.logs(ctx, args)
-	case "releases":
-		return a.releases(ctx, args)
-	case "status":
-		return a.status(ctx, args)
-	case "open":
-		return a.open(ctx, args)
-	default:
-		return fmt.Errorf("unknown command %q\n\n%s", cmd, usage)
-	}
+	return c.run(a, ctx, args)
 }

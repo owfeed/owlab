@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/VizzleTF/owlab/internal/compose"
@@ -124,8 +126,7 @@ func (a *app) printMatrix(ctx context.Context, keep int) error {
 			continue
 		}
 		for _, rel := range a.releasesFor(ctx, r, keep) {
-			build := *r
-			build.Release = rel
+			build := r.WithRelease(rel)
 			// Resolved here as well as at build time, because the platform
 			// depends on it: an image assembled from a tarball carries the
 			// honest linux/arm64, while one inherited from upstream must
@@ -209,14 +210,5 @@ func runnerFor(r *config.Router) string {
 }
 
 func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	for i := 1; i < len(keys); i++ {
-		for j := i; j > 0 && keys[j] < keys[j-1]; j-- {
-			keys[j], keys[j-1] = keys[j-1], keys[j]
-		}
-	}
-	return keys
+	return slices.Sorted(maps.Keys(m))
 }

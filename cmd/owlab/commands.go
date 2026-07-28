@@ -1,8 +1,6 @@
 package main
 
 import (
-	"archive/tar"
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -13,14 +11,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/VizzleTF/owlab/internal/compose"
 	"github.com/VizzleTF/owlab/internal/config"
+	"github.com/VizzleTF/owlab/internal/pkgmgr"
 	"github.com/VizzleTF/owlab/internal/qemu"
 	syncpkg "github.com/VizzleTF/owlab/internal/sync"
+	"github.com/VizzleTF/owlab/internal/tarx"
 	"github.com/VizzleTF/owlab/internal/upstream"
 )
 
@@ -71,10 +72,11 @@ func (a *app) up(ctx context.Context, args []string) error {
 		}
 		names := routerIDs(containers)
 
-		buildArgs := append([]string{"build"}, names...)
+		buildArgs := []string{"build"}
 		if *rebuild {
-			buildArgs = append([]string{"build", "--no-cache", "--pull"}, names...)
+			buildArgs = append(buildArgs, "--no-cache", "--pull")
 		}
+		buildArgs = append(buildArgs, names...)
 		if err := a.docker.Compose(ctx, proj.ComposePath, buildArgs...); err != nil {
 			return fmt.Errorf("build failed: %w", err)
 		}
@@ -195,7 +197,9 @@ func (a *app) down(ctx context.Context, args []string) error {
 	if len(containers) == 0 {
 		return nil
 	}
-	proj, err := compose.Prepare(a.cfg, a.eng)
+	// Render, not Prepare: stopping a router needs the compose file and
+	// nothing in the build context, and `owlab down` must work with no network.
+	proj, err := compose.Render(a.cfg, a.eng)
 	if err != nil {
 		return err
 	}
@@ -366,66 +370,74 @@ func (a *app) install(ctx context.Context, args []string) error {
 	}
 
 	// A path to a package file on the host is not a name the router can
-	// resolve, so those are copied in first. This is what makes the output of
+	// resolve, so those are pushed in first. This is what makes the output of
 	// `owlab build` directly installable.
-	var localFiles []string
+	//
+	// Read here, before any router is touched: an unreadable file is a mistake
+	// in what was typed, not a property of one router, and reporting it before
+	// half the lab has been changed is the useful order.
+	var locals []localPackage
 	var names []string
 	for _, p := range pkgs {
-		if st, err := os.Stat(p); err == nil && !st.IsDir() {
-			localFiles = append(localFiles, p)
+		st, err := os.Stat(p)
+		if err != nil || st.IsDir() {
+			names = append(names, p)
 			continue
 		}
-		names = append(names, p)
+		body, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		// Pushed as a tar on stdin rather than `docker cp`, because that is the
+		// one file-transfer both tiers share: a VM is reached over ssh, and
+		// dropbear ships no sftp-server for scp to use.
+		archive, err := tarx.OneFile("/tmp/"+filepath.Base(p), body, 0o644)
+		if err != nil {
+			return err
+		}
+		locals = append(locals, localPackage{dest: "/tmp/" + filepath.Base(p), archive: archive})
 	}
 
 	var failed []string
+	markFailed := func(id string) {
+		if !slices.Contains(failed, id) {
+			failed = append(failed, id)
+		}
+	}
 	for _, r := range routers {
 		run, err := a.execFor(r)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "! %s: %v\n", r.ID, err)
-			failed = append(failed, r.ID)
+			markFailed(r.ID)
 			continue
 		}
 
-		var installArgs []string
-		installArgs = append(installArgs, names...)
-		for _, f := range localFiles {
-			dest := "/tmp/" + filepath.Base(f)
-			body, err := os.ReadFile(f)
-			if err != nil {
-				return err
+		installArgs := append([]string(nil), names...)
+		pushErr := false
+		for _, l := range locals {
+			if err := run(ctx, "tar -C / -xf -", l.archive, os.Stderr); err != nil {
+				// The router never received the file, so there is nothing to
+				// install from it. Carrying on would run a package manager
+				// against a path that is not there and report its confusion
+				// instead of this one.
+				fmt.Fprintf(os.Stderr, "! %s: pushing %s: %v\n", r.ID, l.dest, err)
+				markFailed(r.ID)
+				pushErr = true
+				break
 			}
-			// Pushed as a tar on stdin rather than `docker cp`, because that
-			// is the one file-transfer both tiers share: a VM is reached over
-			// ssh, and dropbear ships no sftp-server for scp to use.
-			archive, err := tarFile(dest, body)
-			if err != nil {
-				return err
-			}
-			if err := run(ctx, "tar -C / -xf -", archive, os.Stderr); err != nil {
-				failed = append(failed, r.ID)
-				continue
-			}
-			installArgs = append(installArgs, dest)
+			installArgs = append(installArgs, l.dest)
 		}
-		if len(installArgs) == 0 {
+		if pushErr || len(installArgs) == 0 {
 			continue
 		}
 
-		// apk and opkg differ by release, and a router's own package manager
-		// is the only correct one to use. Local files need the untrusted flag
-		// on apk: they carry no signature the router's keyring knows.
-		cmd := "opkg update >/dev/null 2>&1; opkg install " + strings.Join(installArgs, " ")
-		if r.PackageManager() == config.APK {
-			flags := ""
-			if len(localFiles) > 0 {
-				flags = "--allow-untrusted "
-			}
-			cmd = "apk add " + flags + strings.Join(installArgs, " ")
-		}
+		cmd := pkgmgr.Install(r.PackageManager(), installArgs, pkgmgr.Options{
+			Update:    true,
+			Untrusted: len(locals) > 0,
+		})
 		fmt.Printf("== %s (%s)\n", r.ID, r.PackageManager())
 		if err := run(ctx, cmd, nil, os.Stdout); err != nil {
-			failed = append(failed, r.ID)
+			markFailed(r.ID)
 		}
 	}
 	if len(failed) > 0 {
@@ -435,38 +447,24 @@ func (a *app) install(ctx context.Context, args []string) error {
 	}
 
 	// LuCI caches its dispatch tree and module list; a new app is invisible
-	// until both are dropped. This is exactly luci.mk's own postinst.
+	// until both are dropped. The same script a sync runs, for the same
+	// reason — a package can register a theme without selecting it either way.
+	script := syncpkg.ReloadScript(a.cfg.Project.Theme)
 	for _, r := range routers {
 		run, err := a.execFor(r)
 		if err != nil {
 			continue
 		}
-		_ = run(ctx, "rm -f /tmp/luci-indexcache*; rm -rf /tmp/luci-modulecache; /etc/init.d/rpcd reload",
-			nil, io.Discard)
+		_ = run(ctx, script, nil, io.Discard)
 	}
 	return nil
 }
 
-// tarFile wraps one file in a tar stream rooted at /.
-func tarFile(dest string, body []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-	hdr := &tar.Header{
-		Name:   strings.TrimPrefix(dest, "/"),
-		Mode:   0o644,
-		Size:   int64(len(body)),
-		Format: tar.FormatGNU,
-	}
-	if err := tw.WriteHeader(hdr); err != nil {
-		return nil, err
-	}
-	if _, err := tw.Write(body); err != nil {
-		return nil, err
-	}
-	if err := tw.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+// localPackage is a package file taken from the host, already wrapped in the
+// tar stream that puts it on a router.
+type localPackage struct {
+	dest    string
+	archive []byte
 }
 
 func (a *app) logs(ctx context.Context, args []string) error {
@@ -500,7 +498,7 @@ func (a *app) logs(ctx context.Context, args []string) error {
 		return nil
 	}
 
-	proj, err := compose.Prepare(a.cfg, a.eng)
+	proj, err := compose.Render(a.cfg, a.eng)
 	if err != nil {
 		return err
 	}
@@ -590,19 +588,14 @@ func (a *app) status(ctx context.Context, args []string) error {
 	fmt.Printf("%-14s %-12s %-9s %-18s %-9s %-8s %s\n",
 		"ROUTER", "RELEASE", "PKGMGR", "ARCH", "FIDELITY", "STATE", "LUCI")
 	for _, r := range routers {
-		state := a.containerState(ctx, r.ID)
-		url := fmt.Sprintf("http://localhost:%d", r.Ports.HTTP)
-		if r.Fidelity == config.VM {
-			state = qemu.New(a.cfg, r).State()
-		}
 		fmt.Printf("%-14s %-12s %-9s %-18s %-9s %-8s %s\n",
 			r.ID,
 			string(r.Distro)[:3]+" "+r.Release,
 			string(r.PackageManager()),
 			r.Arch,
 			string(r.Fidelity),
-			state,
-			url,
+			a.tierFor(r).State(ctx),
+			r.LuCIURL(),
 		)
 	}
 	return nil
@@ -618,7 +611,7 @@ func (a *app) open(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	url := fmt.Sprintf("http://localhost:%d", r.Ports.HTTP)
+	url := r.LuCIURL()
 	fmt.Println(url)
 	return openBrowser(url)
 }
@@ -648,18 +641,6 @@ func (a *app) single(ids []string, cmd string) (*config.Router, error) {
 	}
 }
 
-func (a *app) containerName(id string) string {
-	return compose.ProjectName(a.cfg.Project.Name) + "-" + id
-}
-
-func (a *app) containerState(ctx context.Context, id string) string {
-	out, err := a.docker.Quiet(ctx, "inspect", "-f", "{{.State.Status}}", a.containerName(id))
-	if err != nil {
-		return "-"
-	}
-	return strings.TrimSpace(out)
-}
-
 // routerIDs lists router ids.
 func routerIDs(routers []*config.Router) []string {
 	out := make([]string, 0, len(routers))
@@ -673,15 +654,14 @@ func routerIDs(routers []*config.Router) []string {
 // starting something that will quietly be less than what was asked for.
 func (a *app) checkFidelity(ctx context.Context, routers []*config.Router) error {
 	for _, r := range routers {
-		switch r.Fidelity {
-		case config.VM:
-			// Probed, not assumed: the emulator and the firmware are the two
-			// things a machine can be missing, and finding out at boot time
-			// means a half-created VM directory and a confusing QEMU error.
-			d := qemu.Inspect(ctx, r.Target())
-			if d.Err != nil {
-				return fmt.Errorf("router %q asks for fidelity vm: %w", r.ID, d.Err)
-			}
+		if r.Fidelity != config.VM {
+			continue
+		}
+		// Probed, not assumed: the emulator and the firmware are the two things
+		// a machine can be missing, and finding out at boot time means a
+		// half-created VM directory and a confusing QEMU error.
+		if d := qemu.Inspect(ctx, r.Target()); d.Err != nil {
+			return fmt.Errorf("router %q asks for fidelity vm: %w", r.ID, d.Err)
 		}
 	}
 	return nil
@@ -737,7 +717,7 @@ func (a *app) waitForLuCI(ctx context.Context, routers []*config.Router) map[str
 func (a *app) printReady(routers []*config.Router, ready map[string]bool) error {
 	var stalled []string
 	for _, r := range routers {
-		url := fmt.Sprintf("http://localhost:%d", r.Ports.HTTP)
+		url := r.LuCIURL()
 		mark := " "
 		if ready != nil && !ready[r.ID] {
 			mark = "!"

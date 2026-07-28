@@ -34,14 +34,6 @@ func (r Runner) Run(ctx context.Context, args ...string) error {
 	return r.run(ctx, args...)
 }
 
-// Output runs a docker command and captures stdout.
-func (r Runner) Output(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "docker", args...)
-	cmd.Stderr = os.Stderr
-	out, err := cmd.Output()
-	return string(out), err
-}
-
 // Quiet runs a docker command and captures stdout, discarding stderr and
 // reporting failure only through the error.
 func (r Runner) Quiet(ctx context.Context, args ...string) (string, error) {

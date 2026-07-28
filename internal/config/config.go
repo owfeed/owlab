@@ -13,7 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -184,6 +184,26 @@ type VMSpec struct {
 // Target is the resolved build target for this router.
 func (r *Router) Target() Target { return r.target }
 
+// LuCIURL is where this router's web interface answers on the host.
+//
+// Always localhost and always the forwarded port, for both tiers: a container's
+// bridge IP is not routable from Docker Desktop on Mac or Windows, and a VM is
+// behind SLIRP where nothing but a hostfwd reaches it.
+func (r *Router) LuCIURL() string {
+	return fmt.Sprintf("http://localhost:%d", r.Ports.HTTP)
+}
+
+// WithRelease is this router pinned to a different release.
+//
+// A method rather than a bare struct copy at each call site, because Router
+// carries unexported state that a copy has to be correct about — and "it works
+// because the fields happen to be scalars" is not something a later field
+// should be able to break silently.
+func (r Router) WithRelease(release string) Router {
+	r.Release = release
+	return r
+}
+
 // PackageManager is apk or opkg for this router.
 //
 // Precedence: what the config says, then what the distribution pins, then the
@@ -345,7 +365,7 @@ func (c *Config) InstallPairs() [][2]string {
 	for k := range c.Project.Install {
 		keys = append(keys, k)
 	}
-	sort.Strings(keys)
+	slices.Sort(keys)
 	out := make([][2]string, 0, len(keys))
 	for _, k := range keys {
 		out = append(out, [2]string{k, c.Project.Install[k]})
@@ -471,7 +491,7 @@ func merge(def, r rawRouter, index int) (Router, error) {
 // outright, which is what someone writing an explicit list expects.
 func mergeList(def, override []string) []string {
 	if len(override) == 0 {
-		return append([]string(nil), def...)
+		return slices.Clone(def)
 	}
 	relative := false
 	for _, s := range override {
@@ -481,43 +501,24 @@ func mergeList(def, override []string) []string {
 		}
 	}
 	if !relative {
-		return append([]string(nil), override...)
+		return slices.Clone(override)
 	}
 
-	out := append([]string(nil), def...)
+	out := slices.Clone(def)
 	for _, s := range override {
 		switch {
 		case strings.HasPrefix(s, "+"):
 			name := strings.TrimPrefix(s, "+")
-			if !contains(out, name) {
+			if !slices.Contains(out, name) {
 				out = append(out, name)
 			}
 		case strings.HasPrefix(s, "-"):
 			name := strings.TrimPrefix(s, "-")
-			out = remove(out, name)
+			out = slices.DeleteFunc(out, func(v string) bool { return v == name })
 		default:
-			if !contains(out, s) {
+			if !slices.Contains(out, s) {
 				out = append(out, s)
 			}
-		}
-	}
-	return out
-}
-
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
-func remove(list []string, s string) []string {
-	out := list[:0]
-	for _, v := range list {
-		if v != s {
-			out = append(out, v)
 		}
 	}
 	return out

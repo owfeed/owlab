@@ -125,8 +125,7 @@ func Newest(releases []string, branch string, n int) []string {
 // target's build finishes. Building the matrix from the listing alone produces
 // a job that fails on a 404 twenty minutes in.
 func Published(ctx context.Context, r *config.Router, release string) bool {
-	probe := *r
-	probe.Release = release
+	probe := r.WithRelease(release)
 	return head(ctx, probe.RootfsTarballURL())
 }
 

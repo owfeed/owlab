@@ -49,7 +49,7 @@ type Info struct {
 
 // Detect asks the daemon what it is.
 func Detect(ctx context.Context) Info {
-	info := Info{Kind: Unknown, HostOS: runtime.GOOS, WSL: inWSL()}
+	info := Info{Kind: Unknown, HostOS: runtime.GOOS, WSL: InWSL()}
 
 	info.Context = strings.TrimSpace(output(ctx, "docker", "context", "show"))
 
@@ -124,7 +124,13 @@ func (i Info) Describe() string {
 	return s
 }
 
-func inWSL() bool {
+// InWSL reports whether owlab is running inside WSL.
+//
+// Exported and independent of Detect, because it is a property of the host and
+// not of the container engine: a project whose routers are all fidelity vm
+// never reaches a daemon, and the WSL caveats — inotify does not propagate from
+// a Windows drive, IO across /mnt is slow — apply to it just the same.
+func InWSL() bool {
 	if runtime.GOOS != "linux" {
 		return false
 	}

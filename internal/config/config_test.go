@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -413,13 +414,13 @@ routers:
 	// A project that says nothing should get a router, not a bare rootfs:
 	// OpenWrt's own DEFAULT_PACKAGES plus the router and LuCI selections.
 	for _, want := range []string{"dnsmasq", "firewall4", "ppp-mod-pppoe", "luci", "wpad-basic-mbedtls"} {
-		if !contains(got, want) {
+		if !slices.Contains(got, want) {
 			t.Errorf("default set is missing %q: %v", want, got)
 		}
 	}
 	// The TLS backend is a build-time choice, so naming a variant would break
 	// on any image built with a different one.
-	if contains(got, "libustream-mbedtls") {
+	if slices.Contains(got, "libustream-mbedtls") {
 		t.Error("default set names a TLS variant; ImmortalWrt 24.10 has no libustream-mbedtls")
 	}
 }
@@ -440,19 +441,19 @@ routers:
 		t.Fatal(err)
 	}
 	a, _ := cfg.Router("a")
-	if contains(a.Packages, "ppp") || contains(a.Packages, "ppp-mod-pppoe") {
+	if slices.Contains(a.Packages, "ppp") || slices.Contains(a.Packages, "ppp-mod-pppoe") {
 		t.Errorf("defaults could not subtract from the stock set: %v", a.Packages)
 	}
-	if !contains(a.Packages, "dnsmasq") {
+	if !slices.Contains(a.Packages, "dnsmasq") {
 		t.Errorf("subtraction removed more than it was asked to: %v", a.Packages)
 	}
 
 	b, _ := cfg.Router("b")
 	// Router arithmetic applies on top of the defaults', not instead of it.
-	if contains(b.Packages, "dnsmasq") || contains(b.Packages, "ppp") {
+	if slices.Contains(b.Packages, "dnsmasq") || slices.Contains(b.Packages, "ppp") {
 		t.Errorf("router subtraction did not compose with defaults: %v", b.Packages)
 	}
-	if !contains(b.Packages, "luci-app-sqm") {
+	if !slices.Contains(b.Packages, "luci-app-sqm") {
 		t.Errorf("router addition lost: %v", b.Packages)
 	}
 }

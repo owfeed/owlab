@@ -1,14 +1,11 @@
 package qemu
 
 import (
-	"archive/tar"
-	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -16,6 +13,8 @@ import (
 	owlab "github.com/VizzleTF/owlab"
 	"github.com/VizzleTF/owlab/internal/compose"
 	"github.com/VizzleTF/owlab/internal/config"
+	"github.com/VizzleTF/owlab/internal/pkgmgr"
+	"github.com/VizzleTF/owlab/internal/tarx"
 )
 
 // Provision turns a freshly booted stock router into this project's router.
@@ -127,7 +126,7 @@ func (v *VM) Provision(ctx context.Context, progress io.Writer) error {
 // the module's own parameter, so two radios here are two phys — a dual-band
 // router — rather than one phy pretending to be two bands.
 func (v *VM) setupRadios(ctx context.Context) error {
-	script := v.pkgInstallCmd([]string{"kmod-mac80211-hwsim"}) + `
+	script := v.install([]string{"kmod-mac80211-hwsim"}, pkgmgr.Options{Update: true}) + `
 printf 'mac80211_hwsim radios=%d\n' ` + fmt.Sprint(v.Router.VM.Radios) + ` > /etc/modules.d/mac80211-hwsim
 `
 	if out, err := v.SSH().Output(ctx, script); err != nil {
@@ -148,7 +147,7 @@ printf 'mac80211_hwsim radios=%d\n' ` + fmt.Sprint(v.Router.VM.Radios) + ` > /et
 // 900 MB partition yielded 122 MB. A separate disk has no such history.
 func (v *VM) setupExtroot(ctx context.Context) error {
 	script := `set -e
-` + v.pkgInstallCmd([]string{"block-mount", "e2fsprogs"}) + `
+` + v.install([]string{"block-mount", "e2fsprogs"}, pkgmgr.Options{Update: true}) + `
 mkfs.ext4 -q -F -L owlab-overlay /dev/vdb
 mount /dev/vdb /mnt
 tar -C /overlay -cf - . | tar -C /mnt -xf -
@@ -190,16 +189,10 @@ func (v *VM) reboot(ctx context.Context) error {
 	return v.SSH().Wait(ctx, 5*time.Minute)
 }
 
-// pkgInstallCmd is the shell to install a list of feed packages.
-func (v *VM) pkgInstallCmd(pkgs []string) string {
-	if len(pkgs) == 0 {
-		return "true"
-	}
-	list := strings.Join(pkgs, " ")
-	if v.Router.PackageManager() == config.APK {
-		return "apk update >/dev/null; apk add " + list
-	}
-	return "opkg update >/dev/null; opkg install " + list
+// install is the shell that installs packages with this router's own package
+// manager.
+func (v *VM) install(pkgs []string, opts pkgmgr.Options) string {
+	return pkgmgr.Install(v.Router.PackageManager(), pkgs, opts)
 }
 
 // installPackages installs the router's package list.
@@ -209,19 +202,8 @@ func (v *VM) pkgInstallCmd(pkgs []string) string {
 // between a fork and upstream, and one name missing on 24.10 should cost that
 // package, not the whole router.
 func (v *VM) installPackages(ctx context.Context, progress io.Writer) error {
-	var b strings.Builder
-	if v.Router.PackageManager() == config.APK {
-		b.WriteString("apk update >/dev/null 2>&1\n")
-		b.WriteString("for p in " + strings.Join(v.Router.Packages, " ") + "; do\n")
-		b.WriteString("  apk add \"$p\" >/dev/null 2>&1 || echo \"owlab: skip (not in this feed): $p\"\n")
-		b.WriteString("done\n")
-	} else {
-		b.WriteString("opkg update >/dev/null 2>&1\n")
-		b.WriteString("for p in " + strings.Join(v.Router.Packages, " ") + "; do\n")
-		b.WriteString("  opkg install \"$p\" >/dev/null 2>&1 || echo \"owlab: skip (not in this feed): $p\"\n")
-		b.WriteString("done\n")
-	}
-	out, err := v.SSH().Output(ctx, b.String())
+	script := v.install(v.Router.Packages, pkgmgr.Options{Update: true, Tolerant: true})
+	out, err := v.SSH().Output(ctx, script)
 	if progress != nil && strings.TrimSpace(out) != "" {
 		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 			fmt.Fprintf(progress, "  %s\n", line)
@@ -260,22 +242,19 @@ func (v *VM) installExtra(ctx context.Context, progress io.Writer) error {
 		// Streamed through a tar rather than scp: scp against dropbear needs
 		// an sftp-server the stock image does not ship, and tar over the same
 		// ssh channel that runs everything else has no such requirement.
-		archive, err := tarOneFile(remote, body)
+		archive, err := tarx.OneFile(remote, body, 0o644)
 		if err != nil {
 			return err
 		}
 		if err := v.SSH().Run(ctx, "tar -C / -xf -", archive, io.Discard, os.Stderr); err != nil {
 			return fmt.Errorf("%s: pushing to the router: %w", e.Name, err)
 		}
-		// --force-overwrite for the same reason the image build needs it:
-		// these packages pull dependencies that replace a file the stock
-		// image already owns (luci-app-openclash needs dnsmasq-full, which
-		// collides with dnsmasq over /etc/init.d/dnsmasq).
-		install := "opkg install --force-overwrite " + remote
-		if pm == config.APK {
-			install = "apk add --allow-untrusted --force-overwrite " + remote
-		}
-		out, err := v.SSH().Output(ctx, install+"; rm -f "+remote)
+		// No index refresh: the package is a file already on the router.
+		// Untrusted and Overwrite are both load-bearing — it carries no
+		// signature the keyring knows, and it pulls dependencies that replace
+		// files the stock image owns.
+		install := v.install([]string{remote}, pkgmgr.Options{Untrusted: true, Overwrite: true})
+		out, err := v.SSH().Output(ctx, install+"rm -f "+remote)
 		if err != nil {
 			// Fatal, unlike a feed package: this one was named by URL, so it
 			// exists and was asked for by name. Reporting success without it
@@ -333,8 +312,7 @@ true
 // overlayArchive is owlab's rootfs overlay, plus the per-router files the
 // Dockerfile would otherwise write as build args.
 func overlayArchive(cfg *config.Config, r *config.Router) ([]byte, error) {
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
+	w := tarx.New()
 
 	src, err := fs.Sub(owlab.BuildContext(), "rootfs-extra")
 	if err != nil {
@@ -357,71 +335,18 @@ func overlayArchive(cfg *config.Config, r *config.Router) ([]byte, error) {
 		if err != nil {
 			return err
 		}
-		return writeFile(tw, p, body, 0o755)
+		w.Add(p, body, 0o755)
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	// The three files the Dockerfile writes from build args.
-	if err := writeFile(tw, "etc/owlab/fixtures", []byte(strings.Join(r.Fixtures, " ")+"\n"), 0o644); err != nil {
-		return nil, err
+	w.Add("etc/owlab/fixtures", []byte(strings.Join(r.Fixtures, " ")+"\n"), 0o644)
+	w.Add("etc/owlab/theme", []byte(cfg.Project.Theme), 0o644)
+	if keys := compose.AuthorizedKeys(); len(keys) > 0 {
+		w.Add("etc/dropbear/authorized_keys", keys, 0o600)
 	}
-	if err := writeFile(tw, "etc/owlab/theme", []byte(cfg.Project.Theme), 0o644); err != nil {
-		return nil, err
-	}
-	if keys := authorizedKeys(); len(keys) > 0 {
-		if err := writeFile(tw, "etc/dropbear/authorized_keys", keys, 0o600); err != nil {
-			return nil, err
-		}
-	}
-	if err := tw.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-// authorizedKeys is the developer's public keys, concatenated.
-func authorizedKeys() []byte {
-	paths, _ := compose.PublicKeys()
-	var b bytes.Buffer
-	for _, p := range paths {
-		body, err := os.ReadFile(p)
-		if err != nil {
-			continue
-		}
-		line := strings.TrimSpace(string(body))
-		if line == "" {
-			continue
-		}
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-	return b.Bytes()
-}
-
-func tarOneFile(dest string, body []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	tw := tar.NewWriter(&buf)
-	if err := writeFile(tw, strings.TrimPrefix(dest, "/"), body, 0o644); err != nil {
-		return nil, err
-	}
-	if err := tw.Close(); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
-}
-
-func writeFile(tw *tar.Writer, name string, body []byte, mode int64) error {
-	hdr := &tar.Header{
-		Name:   path.Clean(name),
-		Mode:   mode,
-		Size:   int64(len(body)),
-		Format: tar.FormatGNU,
-	}
-	if err := tw.WriteHeader(hdr); err != nil {
-		return err
-	}
-	_, err := tw.Write(body)
-	return err
+	return w.Bytes()
 }

@@ -1,11 +1,24 @@
 package main
 
 import (
+	"context"
+	"flag"
 	"fmt"
 	"runtime"
 	"runtime/debug"
 	"strings"
 )
+
+// version prints what this binary calls itself. It loads nothing: the answer
+// is a property of the binary, not of any project.
+func (a *app) version(_ context.Context, args []string) error {
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	fmt.Print(versionLine())
+	return nil
+}
 
 // Stamped by the release build with -ldflags -X. A build from source leaves
 // them empty and the values below come from the Go module system instead, so

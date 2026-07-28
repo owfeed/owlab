@@ -50,7 +50,7 @@ type check struct {
 // doctor reports what this machine can and cannot do, before anything is
 // built. It deliberately loads no config and requires no daemon, because the
 // times it is most needed are the times nothing else works.
-func (a *app) doctor(ctx context.Context, args []string, configPath string) error {
+func (a *app) doctor(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -112,21 +112,22 @@ func (a *app) doctor(ctx context.Context, args []string, configPath string) erro
 				"Run `ssh-keygen -t ed25519`, or set OWLAB_PUBKEY to an existing key.")
 	}
 
-	// Sources on a Windows drive under WSL: inotify does not propagate and
-	// filesystem access is slow enough to notice.
 	if cwd, err := os.Getwd(); err == nil {
-		if eng.WSL && strings.HasPrefix(filepath.ToSlash(cwd), "/mnt/") {
+		// Sources on a Windows drive under WSL: inotify does not propagate and
+		// filesystem access is slow enough to notice. Asked of the host
+		// directly rather than of the engine, because a project running
+		// entirely on QEMU never detects one and would otherwise be told
+		// nothing.
+		if engine.InWSL() && strings.HasPrefix(filepath.ToSlash(cwd), "/mnt/") {
 			add("workspace", warn,
 				"%s is on a Windows drive; file watching will not see changes and IO is slow. "+
 					"Move the project into the WSL filesystem (e.g. ~/src).", cwd)
 		} else {
 			add("workspace", pass, "%s", cwd)
 		}
-	}
 
-	// CRLF line endings break every shell script the image runs, with an
-	// error ("bad interpreter: /bin/sh^M") that does not name the cause.
-	if cwd, err := os.Getwd(); err == nil {
+		// CRLF line endings break every shell script the image runs, with an
+		// error ("bad interpreter: /bin/sh^M") that does not name the cause.
 		if bad := findCRLF(cwd); bad != "" {
 			add("line endings", fail,
 				"%s has CRLF line endings; scripts with CRLF fail in the container with "+
@@ -141,7 +142,7 @@ func (a *app) doctor(ctx context.Context, args []string, configPath string) erro
 	// other commands use, so `owlab --config x doctor` checks x rather than
 	// whatever happens to be above the working directory.
 	{
-		if path, err := resolveConfig(configPath); err == nil {
+		if path, err := resolveConfig(a.configPath); err == nil {
 			cfg, err := config.Load(path)
 			if err != nil {
 				add("config", fail, "%v", err)
@@ -160,7 +161,7 @@ func (a *app) doctor(ctx context.Context, args []string, configPath string) erro
 						add("build", fail, "project.build runs %q, which is neither a file in %s nor on PATH", script, cfg.Dir)
 					}
 				}
-				checks = append(checks, configChecks(cfg)...)
+				checks = append(checks, configChecks(ctx, cfg)...)
 				checks = append(checks, dnsEgressChecks(ctx, cfg)...)
 			}
 		} else {
@@ -196,7 +197,7 @@ func dnsEgressChecks(ctx context.Context, cfg *config.Config) []check {
 		if r.Fidelity == config.VM {
 			continue
 		}
-		name := compose.ProjectName(cfg.Project.Name) + "-" + r.ID
+		name := compose.ContainerName(cfg.Project.Name, r.ID)
 		out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}}", name).Output()
 		if err == nil && strings.TrimSpace(string(out)) == "true" {
 			container = name
@@ -277,7 +278,7 @@ func vmChecks(ctx context.Context, hostArch string) []check {
 	return out
 }
 
-func configChecks(cfg *config.Config) []check {
+func configChecks(ctx context.Context, cfg *config.Config) []check {
 	var out []check
 	for i := range cfg.Routers {
 		r := &cfg.Routers[i]
@@ -325,13 +326,13 @@ func configChecks(cfg *config.Config) []check {
 			kind string
 			port int
 		}{{"http", r.Ports.HTTP}, {"ssh", r.Ports.SSH}} {
-			busy, by := portInUse(p.port)
+			busy, by := portInUse(ctx, p.port)
 			if !busy {
 				continue
 			}
 			// This router's own container holding its own port is the normal
 			// state of a running lab, not a problem to report.
-			if strings.Contains(by, compose.ProjectName(cfg.Project.Name)+"-"+r.ID) {
+			if strings.Contains(by, compose.ContainerName(cfg.Project.Name, r.ID)) {
 				continue
 			}
 			out = append(out, check{name, warn,
@@ -344,7 +345,7 @@ func configChecks(cfg *config.Config) []check {
 
 // portInUse reports whether something already listens on a host port, and
 // names the container when it is one of ours.
-func portInUse(port int) (bool, string) {
+func portInUse(ctx context.Context, port int) (bool, string) {
 	// 0.0.0.0, not 127.0.0.1. Docker publishes to all interfaces, and on
 	// macOS binding a specific address does NOT conflict with an existing
 	// wildcard bind — so probing the loopback address reports every port as
@@ -356,7 +357,7 @@ func portInUse(port int) (bool, string) {
 	}
 	// Best effort at naming the holder; a container from another owlab
 	// project is the overwhelmingly common case.
-	out, cerr := exec.Command("docker", "ps", "--filter", "publish="+strconv.Itoa(port),
+	out, cerr := exec.CommandContext(ctx, "docker", "ps", "--filter", "publish="+strconv.Itoa(port),
 		"--format", "{{.Names}}").Output()
 	if cerr == nil {
 		if name := strings.TrimSpace(string(out)); name != "" {
