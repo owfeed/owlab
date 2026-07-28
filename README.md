@@ -2,8 +2,13 @@
 
 [Русская версия](README.ru.md)
 
-Dev routers for OpenWrt and ImmortalWrt package development. One file, one
-command, working routers — on Linux, WSL2, Docker Desktop for Windows, or macOS.
+Throwaway OpenWrt and ImmortalWrt routers. One file, one command, working
+routers — on Linux, WSL2, Docker Desktop for Windows, or macOS.
+
+For developing a LuCI package against several releases at once, for trying a
+config before it touches the router the house depends on, for screenshots, for
+learning what a setting does — and for answering "does my package still install
+on 24.10?" in CI, which is [one step](#check-it-in-ci).
 
 ```console
 $ go install github.com/VizzleTF/owlab/cmd/owlab@latest
@@ -204,6 +209,44 @@ Uses OpenWrt's SDK. Worth doing before a release: a real build minifies JS and
 CSS, which a sync does not, and that difference has broken packages that worked
 fine on the dev box.
 
+### Check it in CI
+
+```yaml
+- uses: VizzleTF/owlab/action@v0.2.0
+  with:
+    releases: "25.12.5 24.10.8"
+    install: dist/luci-app-mine-*.apk
+    assert: |
+      http 200 /cgi-bin/luci/admin/services/mine
+      service mined
+      uci mine.@mine[0].enabled
+```
+
+No `owlab.yaml` needed — the release numbers are the configuration. The job
+fails if the package does not install, the page does not render or the service
+is not running, and the summary says which router and which check.
+
+The same thing locally, and what the action runs:
+
+```console
+$ owlab test --release 25.12.5 --release 24.10.8 \
+    --install dist/luci-app-mine-*.apk \
+    --assert 'http 200 /cgi-bin/luci/admin/services/mine'
+```
+
+Start, install, assert, tear down, exit 0 or 1. `--keep` leaves the routers up,
+`--json` writes a report to stdout, and the log of any router that failed is
+printed while the container still exists.
+
+Two things it does that a hand-written `curl` does not. It **logs into LuCI as
+root** first — every page an app exists to serve is under `/cgi-bin/luci/admin`,
+and an unauthenticated request there is a redirect to the login form, which is
+why the obvious check reports 403 on a perfectly healthy page. And it **fails a
+200 whose body is an error page**: when LuCI's dispatcher catches an exception
+it still answers 200, with the trace in the body.
+
+Full assertion list and the JSON shapes: [docs/reference.md](docs/reference.md#owlab-test).
+
 ### Get onto the router
 
 ```console
@@ -269,6 +312,7 @@ owlab shell       open a shell
 owlab exec        run a command
 owlab install     install packages on a running router
 owlab build       build a real .apk/.ipk with the SDK
+owlab test        start, install, assert, tear down — one exit code
 owlab logs        boot and service log
 owlab releases    check the pins against the download servers
 owlab status      what is running and where
@@ -279,6 +323,7 @@ owlab version     print the owlab version
 
 Every command takes router ids. With none, it acts on all of them.
 `--config <path>` (or `-c`) works on any of them, before or after the command.
+`test`, `status` and `releases` take `--json`.
 
 ## When something breaks
 
@@ -292,6 +337,22 @@ exist but never come up. They are all in there, sorted by symptom.
 
 [docs/runbook.md](docs/runbook.md) has the procedures — each one a goal, the
 commands, and how to tell it worked.
+
+## What this sits next to
+
+[containerlab](https://containerlab.dev/) builds network topologies — many
+nodes, links between them — and supports OpenWrt as a node kind. owlab builds
+one router you develop against: no topology, but `sync` with hot reload,
+fixtures, the SDK build and `test`. Two routers running BGP at each other is
+containerlab; the same LuCI page open on 24.10 and 25.12 while you edit it is
+this.
+
+[owfeed](https://github.com/VizzleTF/owfeed) publishes packages — it builds,
+signs and indexes an apk feed, and `owfeed smoke` installs the result on a real
+OpenWrt image before you ship it. That last step also starts a container, and
+the resemblance is deliberate: owlab is the development cycle, `owfeed smoke` is
+one gate before a publish. They are independent on purpose, so that "will this
+feed install" never depends on whether owlab is installed correctly.
 
 ## Notes
 
@@ -307,11 +368,17 @@ daily and independently, so installs start failing within a day.
 
 [docs/](docs/) has the rest, in English and Russian: the runbook, the
 troubleshooting log, the config reference, how it all works, and how releases
-are cut.
+are cut. [CONTRIBUTING.md](CONTRIBUTING.md) is what to know before changing
+something; [SECURITY.md](SECURITY.md) is what these routers are and are not.
 
 ## Licence
 
-GPL-2.0-only.
+GPL-2.0-only, deliberately — [owfeed](https://github.com/VizzleTF/owfeed), by
+the same author, is Apache-2.0. owlab embeds a `/etc/uci-defaults` and
+`rc.local` overlay written against OpenWrt's own shell libraries and ships it
+inside every image it builds, and that is derived work. Calling owlab from your
+CI, your Makefile or your own tool imposes nothing on your code; the obligation
+attaches to distributing a modified owlab.
 
 OpenWrt is a registered trademark of the Software Freedom Conservancy. owlab is
 not affiliated with or endorsed by the OpenWrt project or the SFC.

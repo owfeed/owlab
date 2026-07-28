@@ -5,7 +5,9 @@
 ## Cutting a release
 
 Move the `## [Unreleased]` heading in `CHANGELOG.md` down to a version and a
-date, add the comparison link at the bottom, then:
+date, add the comparison link at the bottom, move the `owlab/action@vX.Y.Z` and
+`owlab/setup@vX.Y.Z` references in both READMEs, `docs/` and
+`examples/workflow/` to the tag about to exist, then:
 
 ```console
 $ git tag -a v0.2.0 -m 'owlab 0.2.0'
@@ -36,6 +38,19 @@ everything already in place.
 The last step then downloads `releases/latest/download/SHA256SUMS` and compares
 it to what was just built. A 404 there means every download would have failed,
 and that is the last moment it is a red build rather than a bug report.
+
+Each archive is attested before it is uploaded. `owlab/setup` verifies that
+attestation with `--signer-workflow` — not merely `--repo` — before the binary
+is executed or put on `PATH`, and refuses to install one that does not verify.
+`SHA256SUMS` is published too and is not a substitute: it is served by the same
+host, from the same release, so whoever can replace one can replace the other.
+
+The action references are moved *before* the tag rather than after, so the tag
+contains a README and an example pointing at itself. They are exact tags rather
+than a floating `v1` because the action decides whether somebody's package is
+broken: a repository pinning `owlab/action@vX.Y.Z` should get the assertion
+behaviour that was reviewed with it, not one that can change with no commit in
+their repository at all.
 
 `softprops/action-gh-release` is pinned by commit, not by its `v3` tag. It is
 the only third-party action in the repository and it runs in the only job that

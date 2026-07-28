@@ -172,6 +172,46 @@ sync — нет, и на этой разнице ломались пакеты, 
 
 ---
 
+## Проверять пакет в CI
+
+В репозитории пакета, без всякого `owlab.yaml`:
+
+```yaml
+- uses: VizzleTF/owlab/setup@v0.2.0
+- run: owlab build --release 25.12.5 --out dist
+- uses: VizzleTF/owlab/action@v0.2.0
+  with:
+    releases: "25.12.5 24.10.8"
+    install: dist/luci-app-mine-*
+    assert: |
+      package luci-app-mine
+      http 200 /cgi-bin/luci/admin/services/mine
+```
+
+Проверка: в summary джоба по строке на роутер, и сломанный пакет красит одну из
+них в красный, называя упавшую проверку.
+
+То же самое запускается локально перед пушем — это та же команда, и ей не нужно
+ничего, кроме Docker:
+
+```console
+$ owlab test --release 25.12.5 --install dist/luci-app-mine-*.apk \
+    --assert 'http 200 /cgi-bin/luci/admin/services/mine'
+```
+
+Два релиза, а не один, потому что ломается именно эта ось: в 25.12 apk, в 24.10
+opkg, артефакты называются по-разному, и LuCI внутри — не один и тот же LuCI.
+
+`--keep` оставляет роутеры поднятыми, когда проверка упала и хочется посмотреть
+на страницу глазами. В CI его не ставьте: снос — это то, что не даёт упавшему
+прогону держать порты, нужные следующему.
+
+Готовый workflow для копирования — в
+[examples/workflow/package-ci.yml](../examples/workflow/package-ci.yml), все
+флаги — в [справочнике](reference.ru.md#owlab-test).
+
+---
+
 ## Работать с модулями ядра
 
 Контейнер их не грузит. Нужен VM-роутер:

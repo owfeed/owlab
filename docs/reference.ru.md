@@ -197,6 +197,123 @@ routers:
 `x86_64` на amd64. Явное значение из списка поддерживаемых тоже можно, но
 `owlab doctor` предупредит, что не родная хосту архитектура идёт под эмуляцией.
 
+## owlab test
+
+Одна команда для CI: поднять роутеры, поставить пакет, проверить его на живом
+роутере, всё снести, вернуть 0 или 1.
+
+```console
+$ owlab test --release 25.12.5 --release 24.10.8 \
+    --install dist/luci-app-mine-*.apk \
+    --assert 'http 200 /cgi-bin/luci/admin/services/mine'
+```
+
+| флаг | что делает |
+|---|---|
+| `--release` | по роутеру на релиз, вообще без `owlab.yaml`. Повторяемый, либо одно значение с несколькими: `--release "25.12.5 24.10.8"` |
+| `--distro` | `openwrt` или `immortalwrt` для роутеров, созданных `--release` |
+| `--arch` | архитектура для них; по умолчанию хостовая |
+| `--packages` | пакеты для них; `+имя` добавляет к штатному набору |
+| `--fixtures` | профили fixtures для них, например `none` или `all` |
+| `--install` | путь (глобы раскрываются) заливается на роутер и ставится оттуда; всё остальное ищется в фидах. Повторяемый |
+| `--assert` | один ассершен, повторяемый. Каждый выполняется на каждом роутере |
+| `--sync` | сначала синхронизировать исходники, как `owlab sync`, вместо собранного пакета или вместе с ним |
+| `--keep` | оставить роутеры поднятыми |
+| `--rebuild` | собрать образы с нуля |
+| `--json` | отчёт в stdout, всё остальное в stderr |
+| `--timeout` | бюджет на весь прогон; по умолчанию 20m |
+
+Без `--release` роутеры берутся из `owlab.yaml`, и их id выбирают нужные — так
+же, как везде.
+
+Снос происходит и при успехе, и при падении, на собственном контексте: упавший
+прогон, оставивший контейнеры на портах 8080 и 2222, роняет *следующий* прогон
+по постороннему поводу. Лог упавшего роутера печатается до этого, пока контейнер
+ещё существует.
+
+### Ассершены
+
+| ассершен | проходит, когда |
+|---|---|
+| `http 200 /cgi-bin/luci/admin/services/mine` | страница отвечает этим статусом и не является страницей ошибки. `2xx` задаёт класс |
+| `service mined` | так говорит `/etc/init.d/<имя> running` или ubus |
+| `package luci-app-mine` | пакетный менеджер роутера считает его установленным |
+| `uci mine.@mine[0].enabled` | значение задано — так проверяется, что `uci-defaults` пакета действительно отработали |
+| `file /usr/share/rpcd/acl.d/luci-app-mine.json` | путь на роутере существует |
+| `exec pgrep mined \| grep -q .` | команда завершилась с кодом 0 |
+
+Всё, кроме `http`, идёт через тот же транспорт, что `sync` и `exec`, поэтому
+ассершены одинаково работают на контейнере и на роутере с `fidelity: vm`.
+
+`http` перед запросом логинится под root: без сессии любая страница под
+`/cgi-bin/luci/admin` — редирект на форму логина, из-за чего написанный руками
+`curl -o /dev/null -w '%{http_code}'` показывает 403 на здоровой странице. Ещё
+он валит 2xx, в теле которого ошибка диспетчера («A runtime exception was
+caught», lua-шный `stack traceback:`): поймав исключение, LuCI отвечает 200, и
+проверка одного статуса считает сломанную страницу здоровой.
+
+### JSON-отчёт
+
+`--json` кладёт отчёт в stdout и уводит в stderr всё остальное, включая вывод
+сборки docker, — так что `owlab test --json | jq` это конвейер.
+
+```json
+{
+  "schema": "owlab.test/v1",
+  "owlab": "0.2.0",
+  "project": "luci-app-mine",
+  "ok": false,
+  "routers": [
+    {
+      "id": "openwrt-24.10.8",
+      "distro": "openwrt",
+      "release": "24.10.8",
+      "arch": "x86_64",
+      "fidelity": "basic",
+      "package_manager": "opkg",
+      "luci": "http://localhost:8081",
+      "ok": false,
+      "steps": [
+        { "check": "boot", "kind": "up", "ok": true, "seconds": 11.2 },
+        { "check": "install luci-app-mine_1.0_all.ipk", "kind": "install", "ok": false,
+          "detail": "* satisfy_dependencies_for: Cannot satisfy the following dependencies", "seconds": 3.1 }
+      ]
+    }
+  ]
+}
+```
+
+У `owlab status --json` и `owlab releases --json` тоже есть поле `schema`
+(`owlab.status/v1`, `owlab.releases/v1`, и `owlab.releases.all/v1` для `--all`).
+`status` добавляет имя контейнера и оба порта отдельно от URL; `releases` —
+число `behind`, так что `jq '[.routers[].behind] | add'` и есть весь ответ на
+«не устарело ли что-нибудь».
+
+### В GitHub Actions
+
+```yaml
+- uses: VizzleTF/owlab/action@v0.2.0
+  with:
+    releases: "25.12.5 24.10.8"
+    install: dist/luci-app-mine-*.apk
+    assert: |
+      http 200 /cgi-bin/luci/admin/services/mine
+      service mined
+```
+
+У каждого флага выше есть одноимённый input; `assert` и `install` принимают по
+одному значению на строку. Экшен пишет таблицу в summary джоба и отдаёт outputs
+`report` (путь к JSON), `passed` и `failed`. `VizzleTF/owlab/setup@v0.2.0`
+ставит только бинарь — для джоба, который сам вызывает `owlab`. Оба проверяют
+скачанное по build attestation этого репозитория до того, как бинарь будет
+запущен или попадёт в `PATH`.
+
+`ubuntu-latest` работает как есть. У macOS-раннеров GitHub нет никакого движка
+контейнеров, и экшен говорит об этом прямо, а не падает позже чем-то про сокет.
+
+Готовый workflow лежит в
+[examples/workflow/package-ci.yml](../examples/workflow/package-ci.yml).
+
 ## Лицензия и товарные знаки
 
 owlab распространяется под GPL-2.0-only.

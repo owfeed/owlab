@@ -9,7 +9,42 @@ one waits for a major.
 
 ## [Unreleased]
 
+### Added
+
+- `owlab test`: start the routers, install the package, assert against the
+  running router, tear everything down, exit 0 or 1. It works with no
+  `owlab.yaml` — `--release 25.12.5 --release 24.10.8` is the configuration —
+  so a package repository can adopt it without adding a file that says nothing
+  its flags do not. Teardown happens whether the run passed or failed, because
+  a failed run holding 8080 and 2222 makes the *next* run fail for an unrelated
+  reason.
+- Assertions, one line each: `http <status> <path>`, `service`, `file`,
+  `package`, `uci`, `exec`. The HTTP one logs into LuCI as root first — every
+  page an app exists to serve is under `/cgi-bin/luci/admin`, and an
+  unauthenticated request there is a redirect to the login form, which is why a
+  hand-written `curl` reports 403 on a healthy page. It also fails a 200 whose
+  body is a dispatcher error page, which a status check cannot see. Everything
+  else runs over the transport `sync` uses, so assertions work the same on a
+  container and on a `fidelity: vm` router.
+- `VizzleTF/owlab/action`, which is all of the above as one GitHub Actions
+  step, with a table in the job summary naming the router and the check that
+  failed. `VizzleTF/owlab/setup` installs the binary alone.
+- Release archives now carry build provenance attestations, and both actions
+  verify one — with `--signer-workflow`, not merely `--repo` — before the binary
+  is executed or put on `PATH`.
+- `--json` on `test`, `status` and `releases`, each document carrying a `schema`
+  field. `test --json` moves its progress output, and docker's, to stderr, so
+  the stdout side is a clean pipe.
+- `owlab build` no longer needs an `owlab.yaml`: `--release` and the package
+  Makefile are everything it reads. This is what makes a build step in a package
+  repository a single line.
+
 ### Fixed
+
+- `owlab logs` was empty on a healthy container router. procd logs through
+  syslogd, which writes to a ring buffer rather than to the console, so the
+  container's stream holds nothing worth reading. It now asks the router for its
+  own log and falls back to the container stream.
 
 - `owlab down` and `owlab logs` no longer download anything. Both went through
   the same preparation `owlab up` does, so stopping a router or reading its log

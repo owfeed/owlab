@@ -254,6 +254,124 @@ Silicon, `x86_64` on Intel and AMD. Anything else runs under emulation, which
 works but is slow enough to notice; `owlab doctor` warns when you have asked
 for it.
 
+## owlab test
+
+One command for CI: start the routers, install the package, assert against the
+running router, tear everything down, exit 0 or 1.
+
+```console
+$ owlab test --release 25.12.5 --release 24.10.8 \
+    --install dist/luci-app-mine-*.apk \
+    --assert 'http 200 /cgi-bin/luci/admin/services/mine'
+```
+
+| flag | what it does |
+|---|---|
+| `--release` | a router per release, with no `owlab.yaml` at all. Repeatable, or one value holding several: `--release "25.12.5 24.10.8"` |
+| `--distro` | `openwrt` or `immortalwrt`, for the routers `--release` creates |
+| `--arch` | architecture for those routers; the host's by default |
+| `--packages` | packages for those routers; `+name` adds to the stock set |
+| `--fixtures` | fixture profiles for those routers, e.g. `none` or `all` |
+| `--install` | a path (globs expanded) is pushed to the router and installed from there; anything else is looked up in the feeds. Repeatable |
+| `--assert` | one assertion, repeatable. Every one runs on every router |
+| `--sync` | sync the project sources in first, as `owlab sync` does, instead of (or as well as) installing a built package |
+| `--keep` | leave the routers running afterwards |
+| `--rebuild` | build the images from scratch |
+| `--json` | write the report to stdout and everything else to stderr |
+| `--timeout` | budget for the whole run; default 20m |
+
+With no `--release` the routers come from `owlab.yaml`, and router ids select
+among them the way they do everywhere else.
+
+Teardown happens whether the run passed or failed, and on its own context — a
+failed run that leaves containers holding 8080 and 2222 makes the *next* run
+fail for an unrelated reason. The log of any router that failed is printed
+first, while the container still exists.
+
+### Assertions
+
+| assertion | passes when |
+|---|---|
+| `http 200 /cgi-bin/luci/admin/services/mine` | the page answers with that status and is not an error page. `2xx` matches a class |
+| `service mined` | `/etc/init.d/<name> running` says so, or ubus does |
+| `package luci-app-mine` | the router's own package manager reports it installed |
+| `uci mine.@mine[0].enabled` | the value is set — which is how you check that a package's `uci-defaults` really ran |
+| `file /usr/share/rpcd/acl.d/luci-app-mine.json` | the path exists on the router |
+| `exec pgrep mined \| grep -q .` | the command exits 0 |
+
+Everything but `http` runs over the same transport `sync` and `exec` use, so
+assertions work identically on a container and on a `fidelity: vm` router.
+
+`http` logs in as root before fetching, because every page under
+`/cgi-bin/luci/admin` is a redirect to the login form without a session — the
+reason a hand-written `curl -o /dev/null -w '%{http_code}'` reports 403 for a
+healthy page. It also fails a 2xx whose body carries a dispatcher error
+("A runtime exception was caught", a lua `stack traceback:`): LuCI answers 200
+when it catches an exception, so status alone calls a broken page healthy.
+
+### The JSON report
+
+`--json` puts the report on stdout and moves progress — including docker's own
+build output — to stderr, so `owlab test --json | jq` is a pipe.
+
+```json
+{
+  "schema": "owlab.test/v1",
+  "owlab": "0.2.0",
+  "project": "luci-app-mine",
+  "ok": false,
+  "routers": [
+    {
+      "id": "openwrt-24.10.8",
+      "distro": "openwrt",
+      "release": "24.10.8",
+      "arch": "x86_64",
+      "fidelity": "basic",
+      "package_manager": "opkg",
+      "luci": "http://localhost:8081",
+      "ok": false,
+      "steps": [
+        { "check": "boot", "kind": "up", "ok": true, "seconds": 11.2 },
+        { "check": "install luci-app-mine_1.0_all.ipk", "kind": "install", "ok": false,
+          "detail": "* satisfy_dependencies_for: Cannot satisfy the following dependencies", "seconds": 3.1 }
+      ]
+    }
+  ]
+}
+```
+
+`owlab status --json` and `owlab releases --json` carry a `schema` field too
+(`owlab.status/v1`, `owlab.releases/v1`, and `owlab.releases.all/v1` for
+`--all`). `status` adds the container name and the two ports separately from
+the URL; `releases` adds `behind` as a number, so `jq '[.routers[].behind] |
+add'` is the whole of "is anything stale".
+
+### In GitHub Actions
+
+```yaml
+- uses: VizzleTF/owlab/action@v0.2.0
+  with:
+    releases: "25.12.5 24.10.8"
+    install: dist/luci-app-mine-*.apk
+    assert: |
+      http 200 /cgi-bin/luci/admin/services/mine
+      service mined
+```
+
+Every flag above has an input with the same name; `assert` and `install` take
+one per line. The action writes a table to the job summary and exposes
+`report` (the JSON path), `passed` and `failed` as outputs.
+`VizzleTF/owlab/setup@v0.2.0` installs the binary alone, for a job that drives
+`owlab` itself. Both verify the download against this repository's build
+attestation before the binary is executed or put on `PATH`.
+
+`ubuntu-latest` works as it is. GitHub's macOS runners have no container engine
+at all, and the action says so rather than failing later with something about a
+socket.
+
+A ready-made workflow is in
+[examples/workflow/package-ci.yml](../examples/workflow/package-ci.yml).
+
 ## Licence and trademarks
 
 owlab is GPL-2.0-only.

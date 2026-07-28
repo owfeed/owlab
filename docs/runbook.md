@@ -173,6 +173,47 @@ On Apple Silicon this runs under emulation — every `openwrt/sdk` tag is
 
 ---
 
+## Check a package in CI
+
+In a package repository, with no `owlab.yaml`:
+
+```yaml
+- uses: VizzleTF/owlab/setup@v0.2.0
+- run: owlab build --release 25.12.5 --out dist
+- uses: VizzleTF/owlab/action@v0.2.0
+  with:
+    releases: "25.12.5 24.10.8"
+    install: dist/luci-app-mine-*
+    assert: |
+      package luci-app-mine
+      http 200 /cgi-bin/luci/admin/services/mine
+```
+
+Verify: the job summary lists a row per router, and a broken package turns one
+of them red with the check that failed named in it.
+
+Run the same thing locally before pushing it — it is the same command, and it
+needs nothing but Docker:
+
+```console
+$ owlab test --release 25.12.5 --install dist/luci-app-mine-*.apk \
+    --assert 'http 200 /cgi-bin/luci/admin/services/mine'
+```
+
+Two releases rather than one because that is the axis that breaks: 25.12 ships
+apk and 24.10 ships opkg, the artifacts are named differently, and the LuCI they
+carry is not the same LuCI.
+
+`--keep` leaves the routers up when a check fails and you want to look at the
+page yourself. In CI leave it off: the teardown is what stops a failed run from
+holding the ports the next one needs.
+
+A whole workflow to copy is in
+[examples/workflow/package-ci.yml](../examples/workflow/package-ci.yml); every
+flag is in the [reference](reference.md#owlab-test).
+
+---
+
 ## Work with kernel modules
 
 Containers cannot load them. Use a VM router:
