@@ -117,8 +117,14 @@ func staleJSON(updates []upstream.Update) error {
 // branch" stops being a list somebody has to remember to edit.
 func (a *app) allReleasesJSON(ctx context.Context, keep int) error {
 	type branch struct {
-		Branch   string   `json:"branch"`
-		Latest   string   `json:"latest"`
+		Branch string `json:"branch"`
+		Latest string `json:"latest"`
+		// Manager is "apk" or "opkg". Reported because it is the one fact owlab
+		// and a feed publisher both have to get right and neither reads from the
+		// other: index a 24.10 line with the apk tooling and every router on it
+		// gets a feed it cannot read. Emitting it here is what lets a nightly job
+		// diff the two answers instead of waiting for a subscriber to notice.
+		Manager  string   `json:"manager"`
 		Releases []string `json:"releases"`
 	}
 	type distroDoc struct {
@@ -158,7 +164,11 @@ func (a *app) allReleasesJSON(ctx context.Context, keep int) error {
 		for _, r := range rel {
 			b := upstream.Branch(r)
 			if _, ok := byBranch[b]; !ok {
-				doc.Branches = append(doc.Branches, branch{Branch: b, Latest: r})
+				doc.Branches = append(doc.Branches, branch{
+					Branch:  b,
+					Latest:  r,
+					Manager: string(config.PackageManagerFor(r)),
+				})
 			}
 			byBranch[b] = append(byBranch[b], r)
 		}
