@@ -35,30 +35,60 @@ func (a *app) build(ctx context.Context, args []string) error {
 
 	// Default to whatever the project's first non-VM router targets, so
 	// `owlab build` with no flags builds for what is being developed against.
+	//
+	// A config is not required. A package repository wiring this into CI has a
+	// Makefile and a release number, and demanding an owlab.yaml that says
+	// nothing the flags do not would be asking for a file to keep in step.
 	var ref *config.Router
-	for i := range a.cfg.Routers {
-		if a.cfg.Routers[i].Fidelity != config.VM {
-			ref = &a.cfg.Routers[i]
-			break
+	title := "OpenWrt"
+	dir, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if a.cfg != nil {
+		dir = a.cfg.Dir
+		for i := range a.cfg.Routers {
+			if a.cfg.Routers[i].Fidelity != config.VM {
+				ref = &a.cfg.Routers[i]
+				break
+			}
 		}
+		if ref == nil {
+			return fmt.Errorf("no routers in %s to take a target from", config.FileName)
+		}
+		title = ref.Title()
 	}
-	if ref == nil {
-		return fmt.Errorf("no routers in %s to take a target from", config.FileName)
-	}
+
 	rel := *release
 	if rel == "" {
+		if ref == nil {
+			return fmt.Errorf("--release is required when there is no %s to take one from\n\n"+
+				"  owlab build --release 25.12.5", config.FileName)
+		}
 		rel = ref.Release
 	}
-	target := ref.Target()
-	if *arch != "" {
+
+	var target config.Target
+	switch {
+	case *arch != "":
 		t, err := config.LookupTarget(*arch)
+		if err != nil {
+			return err
+		}
+		target = t
+	case ref != nil:
+		target = ref.Target()
+	default:
+		// The host's own architecture: the SDK for it is the one that will not
+		// run under emulation.
+		t, err := config.LookupTarget("auto")
 		if err != nil {
 			return err
 		}
 		target = t
 	}
 
-	pkgDir, pkgName, err := findPackage(a.cfg.Dir)
+	pkgDir, pkgName, err := findPackage(dir)
 	if err != nil {
 		return err
 	}
@@ -80,7 +110,7 @@ func (a *app) build(ctx context.Context, args []string) error {
 
 	outDir := *out
 	if !filepath.IsAbs(outDir) {
-		outDir = filepath.Join(a.cfg.Dir, outDir)
+		outDir = filepath.Join(dir, outDir)
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
@@ -91,7 +121,7 @@ func (a *app) build(ctx context.Context, args []string) error {
 	// path as well.
 	volume := "owlab-sdk-" + strings.ReplaceAll(target.TagPrefix+"-"+rel, ".", "-")
 
-	fmt.Printf("building %s for %s %s (%s)\n", pkgName, ref.Title(), rel, target.Arch)
+	fmt.Printf("building %s for %s %s (%s)\n", pkgName, title, rel, target.Arch)
 	fmt.Printf("  sdk    %s\n", sdk)
 	fmt.Printf("  source %s\n", pkgDir)
 	fmt.Printf("  out    %s\n\n", outDir)

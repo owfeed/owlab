@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -21,6 +22,19 @@ import (
 type Runner struct {
 	// Verbose echoes each command before running it.
 	Verbose bool
+	// Out receives what docker writes to stdout; nil means os.Stdout.
+	//
+	// This exists so that `owlab test --json` can put a build log where it
+	// belongs. BuildKit writes its progress to stdout, and a JSON report with
+	// twenty lines of layer output in front of it is not JSON.
+	Out io.Writer
+}
+
+func (r Runner) stdout() io.Writer {
+	if r.Out != nil {
+		return r.Out
+	}
+	return os.Stdout
 }
 
 // Compose runs `docker compose -f <file> <args...>` with stdio attached.
@@ -48,7 +62,7 @@ func (r Runner) run(ctx context.Context, args ...string) error {
 	}
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
+	cmd.Stdout = r.stdout()
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }

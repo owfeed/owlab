@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -502,12 +503,91 @@ func (a *app) logs(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	logArgs := []string{"logs", "--tail", *tail}
 	if *follow {
-		logArgs = append(logArgs, "-f")
+		logArgs := append([]string{"logs", "--tail", *tail, "-f"}, routerIDs(containers)...)
+		return a.docker.Compose(ctx, proj.ComposePath, logArgs...)
 	}
-	logArgs = append(logArgs, routerIDs(containers)...)
-	return a.docker.Compose(ctx, proj.ComposePath, logArgs...)
+
+	logArgs := append([]string{"logs", "--tail", *tail}, routerIDs(containers)...)
+	console, err := a.docker.Quiet(ctx, append([]string{"compose", "-f", proj.ComposePath}, logArgs...)...)
+	if err == nil && strings.TrimSpace(console) != "" {
+		fmt.Print(console)
+		return nil
+	}
+
+	// Nothing on the container's stream is the normal case, not a broken one:
+	// procd logs through syslogd, which writes to a ring buffer rather than to
+	// the console, so a perfectly healthy router prints nothing there. Ask the
+	// router itself instead — which is also the log with the useful content.
+	n := 0
+	if *tail != "all" {
+		n, _ = strconv.Atoi(*tail)
+	}
+	for _, r := range containers {
+		body := a.routerLog(ctx, r, n)
+		if body == "" {
+			continue
+		}
+		if len(routers) > 1 {
+			fmt.Printf("== %s\n", r.ID)
+		}
+		fmt.Println(body)
+	}
+	return nil
+}
+
+// routerLog is a router's own syslog, falling back to whatever its tier
+// captured when there is no router left to ask. Zero lines means all of them.
+func (a *app) routerLog(ctx context.Context, r *config.Router, lines int) string {
+	trim := func(s string) string {
+		s = strings.TrimRight(s, "\n")
+		if strings.TrimSpace(s) == "" {
+			return ""
+		}
+		return s
+	}
+
+	if run, err := a.execFor(r); err == nil {
+		cmd := "logread"
+		if lines > 0 {
+			cmd = fmt.Sprintf("logread | tail -n %d", lines)
+		}
+		var buf strings.Builder
+		if err := run(ctx, cmd, nil, &buf); err == nil {
+			if s := trim(buf.String()); s != "" {
+				return s
+			}
+		}
+	}
+
+	if r.Fidelity == config.VM {
+		body, err := os.ReadFile(qemu.New(a.cfg, r).ConsolePath())
+		if err != nil {
+			return ""
+		}
+		return trim(lastLines(string(body), lines))
+	}
+	args := []string{"logs", compose.ContainerName(a.cfg.Project.Name, r.ID)}
+	if lines > 0 {
+		args = []string{"logs", "--tail", strconv.Itoa(lines), compose.ContainerName(a.cfg.Project.Name, r.ID)}
+	}
+	out, err := a.docker.Quiet(ctx, args...)
+	if err != nil {
+		return ""
+	}
+	return trim(out)
+}
+
+// lastLines keeps the end of a body. Zero keeps all of it.
+func lastLines(body string, n int) string {
+	if n <= 0 {
+		return body
+	}
+	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
 }
 
 // tailFile prints the end of a file, optionally following it.
@@ -562,6 +642,7 @@ func tailFile(ctx context.Context, path, tail string, follow bool) error {
 
 func (a *app) status(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	asJSON := fs.Bool("json", false, "write the status as JSON")
 	ids, err := parseMixed(fs, args)
 	if err != nil {
 		return err
@@ -569,6 +650,10 @@ func (a *app) status(ctx context.Context, args []string) error {
 	routers, err := a.cfg.Select(ids)
 	if err != nil {
 		return err
+	}
+
+	if *asJSON {
+		return a.statusJSON(ctx, routers)
 	}
 
 	fmt.Printf("project  %s\n", a.cfg.Project.Name)
@@ -599,6 +684,64 @@ func (a *app) status(ctx context.Context, args []string) error {
 		)
 	}
 	return nil
+}
+
+// statusJSON is the same table, for a script.
+//
+// Everything a script would otherwise scrape out of the human output, plus the
+// two things it cannot see there: the port numbers separately from the URL, and
+// the container name, which is what any `docker` command it wants to run next
+// needs.
+func (a *app) statusJSON(ctx context.Context, routers []*config.Router) error {
+	type routerStatus struct {
+		ID         string `json:"id"`
+		Distro     string `json:"distro"`
+		Release    string `json:"release"`
+		Arch       string `json:"arch"`
+		PkgManager string `json:"package_manager"`
+		Fidelity   string `json:"fidelity"`
+		State      string `json:"state"`
+		Container  string `json:"container,omitempty"`
+		LuCI       string `json:"luci"`
+		HTTPPort   int    `json:"http_port"`
+		SSHPort    int    `json:"ssh_port"`
+	}
+	out := make([]routerStatus, 0, len(routers))
+	for _, r := range routers {
+		s := routerStatus{
+			ID:         r.ID,
+			Distro:     string(r.Distro),
+			Release:    r.Release,
+			Arch:       r.Arch,
+			PkgManager: string(r.PackageManager()),
+			Fidelity:   string(r.Fidelity),
+			State:      a.tierFor(r).State(ctx),
+			LuCI:       r.LuCIURL(),
+			HTTPPort:   r.Ports.HTTP,
+			SSHPort:    r.Ports.SSH,
+		}
+		// A VM has no container, and an empty string there would read like one
+		// that could not be named.
+		if r.Fidelity != config.VM {
+			s.Container = compose.ContainerName(a.cfg.Project.Name, r.ID)
+		}
+		out = append(out, s)
+	}
+
+	engine := "qemu only (no container routers)"
+	if a.cfg.HasContainers() {
+		engine = a.eng.Describe()
+	}
+	doc := struct {
+		Schema  string         `json:"schema"`
+		Owlab   string         `json:"owlab"`
+		Project string         `json:"project"`
+		Engine  string         `json:"engine"`
+		Routers []routerStatus `json:"routers"`
+	}{"owlab.status/v1", Version(), a.cfg.Project.Name, engine, out}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(doc)
 }
 
 func (a *app) open(ctx context.Context, args []string) error {

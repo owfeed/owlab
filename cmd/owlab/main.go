@@ -24,6 +24,10 @@ type app struct {
 	// Commands that load a config never see it; doctor does, because it
 	// reports on the resolution itself.
 	configPath string
+
+	// cfgErr is why there is no config, for the commands that can do without
+	// one and have to explain themselves when they cannot.
+	cfgErr error
 }
 
 // command is one owlab subcommand.
@@ -41,7 +45,12 @@ type command struct {
 	// because the times these commands are needed are the times those are what
 	// is broken.
 	bare bool
-	run  func(*app, context.Context, []string) error
+	// optionalConfig runs with a config if there is one and without if there is
+	// not. This is what CI looks like: a package repository has a Makefile and
+	// a release number, and asking it for an owlab.yaml saying nothing the
+	// flags do not say is asking for a file to keep in step.
+	optionalConfig bool
+	run            func(*app, context.Context, []string) error
 }
 
 var commands = []command{
@@ -51,7 +60,8 @@ var commands = []command{
 	{name: "exec", summary: "run a command on a router", run: (*app).exec},
 	{name: "sync", summary: "copy this package's source into the routers and reload LuCI", run: (*app).sync},
 	{name: "install", summary: "install packages (or a local .apk/.ipk) on a running router", run: (*app).install},
-	{name: "build", summary: "build a real .apk/.ipk with the OpenWrt SDK", run: (*app).build},
+	{name: "build", summary: "build a real .apk/.ipk with the OpenWrt SDK", optionalConfig: true, run: (*app).build},
+	{name: "test", summary: "start, install, assert, tear down — one command, one exit code", optionalConfig: true, run: (*app).test},
 	{name: "logs", summary: "show a router's boot and service log", run: (*app).logs},
 	{name: "releases", summary: "what the download servers publish, and how stale the pins are", run: (*app).releases},
 	{name: "status", summary: "list routers and where to reach them", run: (*app).status},
@@ -140,6 +150,12 @@ func main() {
 		if errors.Is(err, context.Canceled) {
 			os.Exit(130)
 		}
+		// A failed assertion has already been printed, one line per failure.
+		// Repeating it as "owlab: test failed" would bury the reason under a
+		// summary of it.
+		if errors.Is(err, errTestFailed) {
+			os.Exit(1)
+		}
 		fmt.Fprintln(os.Stderr, "owlab: "+err.Error())
 		if code := dockercli.ExitCode(err); code > 0 {
 			os.Exit(code)
@@ -161,18 +177,26 @@ func run(ctx context.Context, cmd string, args []string, configPath string) erro
 
 	path, err := resolveConfig(configPath)
 	if err != nil {
-		return err
-	}
-	a.cfg, err = config.Load(path)
-	if err != nil {
+		if !c.optionalConfig {
+			return err
+		}
+		// Kept rather than reported: the command decides. `owlab test
+		// --release 25.12.4` needs no file, and `owlab test` with neither is
+		// the case where this error is exactly the right thing to print.
+		a.cfgErr = err
+	} else if a.cfg, err = config.Load(path); err != nil {
+		// A file that exists and does not parse is fatal even for these two: it
+		// is a mistake in front of us, and carrying on would test something
+		// other than what it describes.
 		return err
 	}
 
 	// The config decides whether a container engine is needed at all. A
 	// project whose routers are all fidelity vm runs entirely on QEMU, and
 	// refusing to start because Docker Desktop is not running would be a
-	// requirement owlab invented.
-	if a.cfg.HasContainers() {
+	// requirement owlab invented. With no config at all there is nothing to ask,
+	// and the routers a flag can synthesize are containers.
+	if a.cfg == nil || a.cfg.HasContainers() {
 		if err := dockercli.Check(ctx); err != nil {
 			return err
 		}
