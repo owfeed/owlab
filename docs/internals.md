@@ -21,10 +21,19 @@ internal/compose/    generate the Compose file and the build context
 internal/qemu/       the VM tier: images, accelerators, lifecycle, provisioning
 internal/sync/       copy the project's source into routers, reload LuCI
 internal/sshx/       run commands on a router over ssh
+internal/upstream/   ask the download servers what they publish
 internal/engine/     identify the container engine and what it can do
 internal/dockercli/  invoke docker / docker compose
+internal/pkgmgr/     build the apk/opkg command line
+internal/tarx/       build the tar streams pushed into routers
 images/              the build context, embedded into the binary
 ```
+
+The last two exist because both tiers do the same thing by different means, and
+a difference between them would be a bug nobody could see. `pkgmgr` knows that
+`--allow-untrusted` is apk's alone and that a missing feed package should cost
+that package rather than the router; `tarx` knows the header rules — GNU format,
+because a LuCI tree reaches paths past the 100 bytes USTAR allows.
 
 `images/` is embedded with `//go:embed all:images`. A developer who runs
 `owlab up` inside their own LuCI package has no copy of this repository and
@@ -51,26 +60,50 @@ once.
    A project whose routers are all `fidelity: vm` never touches Docker, and
    demanding it would be a requirement owlab invented.
 4. Routers split by tier. Containers go through `compose.Prepare` — which
-   extracts the build context, downloads out-of-feed packages and the
-   compliance bundle, writes `authorized_keys`, and emits a Compose file — and
-   then `docker compose build` and `up`. VMs go through `qemu.New(...).Start`
-   and, if the disk is new, `Provision`.
+   writes `authorized_keys` and a Compose file, extracts the build context, and
+   downloads the out-of-feed packages and the compliance bundle — and then
+   `docker compose build` and `up`. VMs go through `qemu.New(...).Start` and,
+   if the disk is new, `Provision`.
 5. Both tiers are then polled on their forwarded HTTP port until LuCI answers.
    A router is "up" when uhttpd serves, not when the process starts: procd has
    to run the whole boot sequence and apply the uci-defaults first.
 
+`Prepare` is two halves, and which one a command needs matters:
+
+- `compose.Render` writes the Compose file and touches nothing else. No
+  network, no wipe.
+- `compose.Materialize` wipes and rewrites the build context, then downloads
+  what goes in it.
+
+`up` and `context` need both. `down` and `logs` need only the first, and that
+is not a micro-optimisation: stopping a router or reading its log would
+otherwise fail on a machine with no network, over files it is not about to
+build with.
+
 ### The seam between the tiers
 
-Everything above the transport is written once. `internal/sync` defines:
+Everything above the transport is written once. `cmd/owlab/transport.go`
+defines what differs per router:
 
 ```go
-type Exec func(ctx context.Context, script string, stdin []byte, out io.Writer) error
+type tier interface {
+	Exec() (sync.Exec, error)                                 // run a script, maybe with a tar on stdin
+	Interactive(ctx context.Context, command ...string) error // hand over the terminal
+	State(ctx context.Context) string                         // one word, for `owlab status`
+}
 ```
 
-and `cmd/owlab/transport.go` returns either a `docker exec` closure or an ssh
-one. Sync, `post_sync`, `install`, the LuCI cache drop and the interactive
-shell are all written against "run this script, maybe with a tar on stdin", and
-only that one function knows which kind of router it is talking to.
+with a `containerTier` over `docker exec` and a `vmTier` over ssh. Sync,
+`post_sync`, `install`, the LuCI cache drop, `shell` and the status table are
+written against that interface, and only the two implementations know which
+kind of router is on the other end.
+
+The batch operations are deliberately **not** on it. Compose acts on a whole
+project at once and gets its network teardown from doing so, while the VM tier
+spawns one host process per router; folding `build`, `up`, `down` and `logs`
+into a per-router shape would turn one build into N and cost `down` the thing
+that makes it a teardown. Those four use `splitTiers` and handle each tier on
+its own terms.
 
 That is also why file transfer is a tar on stdin rather than `docker cp` or
 `scp`: it is the single operation both transports have. dropbear ships no

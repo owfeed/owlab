@@ -9,8 +9,26 @@ one waits for a major.
 
 ## [Unreleased]
 
+### Fixed
+
+- `owlab down` and `owlab logs` no longer download anything. Both went through
+  the same preparation `owlab up` does, so stopping a router or reading its log
+  rebuilt the whole build context and fetched the compliance bundle — which
+  made them fail outright on a machine with no network.
+- `owlab doctor` warns about a project on a Windows drive under WSL even when
+  Docker is absent. The check read a field that was only filled in once a
+  daemon had been found, so a project whose routers are all `fidelity: vm` —
+  the one that needs the warning most — never got it.
+- `owlab install` no longer reports a router as failed and then installs on it
+  anyway. When pushing a local `.apk`/`.ipk` failed, the package manager still
+  ran against a path that was not there and reported its own confusion instead
+  of the real error. A router is also listed at most once in the failure line.
+
 ### Changed
 
+- `owlab install` re-asserts `project.theme` the way `owlab sync` does. A
+  package can register a theme without selecting it, and a half-installed theme
+  is the one case where LuCI crashes rather than falling back.
 - The documentation is a runbook now. `docs/runbook.md` is procedures — a goal,
   the commands, and how to tell it worked; `docs/troubleshooting.md` is sorted
   by symptom; the reference, the internals and the release process each have a
