@@ -50,6 +50,23 @@ inputs:
       matches nothing.
     required: false
     default: ""
+  feed:
+    description: >-
+      A package feed to add before installing, so a package can be installed BY
+      NAME out of a signed index instead of from a file. The index URL for apk,
+      the directory URL for opkg. Needs feed-key.
+    required: false
+    default: ""
+  feed-key:
+    description: >-
+      The feed's public key file. For opkg the FILENAME must be the key id,
+      because that is what opkg looks it up by.
+    required: false
+    default: ""
+  feed-name:
+    description: Name the feed is registered under on the router.
+    required: false
+    default: owlab-feed
   assert:
     description: |
       Assertions, one per line. A failure fails the job.
@@ -138,6 +155,9 @@ runs:
         PACKAGES: ${{ inputs.packages }}
         FIXTURES: ${{ inputs.fixtures }}
         INSTALL: ${{ inputs.install }}
+        FEED: ${{ inputs.feed }}
+        FEED_KEY: ${{ inputs.feed-key }}
+        FEED_NAME: ${{ inputs.feed-name }}
         ASSERT: ${{ inputs.assert }}
         ROUTERS: ${{ inputs.routers }}
         SYNC: ${{ inputs.sync }}
@@ -155,6 +175,7 @@ runs:
         [ -n "$RELEASES" ] && [ -n "$PACKAGES" ] && args+=(--packages "$PACKAGES")
         [ -n "$RELEASES" ] && [ -n "$FIXTURES" ] && args+=(--fixtures "$FIXTURES")
         [ "$SYNC" = "true" ] && args+=(--sync)
+        [ -n "$FEED" ] && args+=(--feed "$FEED" --feed-key "$FEED_KEY" --feed-name "$FEED_NAME")
 
         # One flag per line, so a path with a space in it survives and an empty
         # input adds nothing.

@@ -43,6 +43,38 @@ type Options struct {
 	Tolerant bool
 }
 
+// AddFeed is the shell that points a router at a package feed: the public key
+// into the manager's keyring, the repository line into its config.
+//
+// This is what makes a feed testable end to end. Installing a built file proves
+// the package works; installing it by name, out of a signed index, proves the
+// thing a subscriber will actually do — and it is the only way to find out that
+// an index is unreadable, a URL redirects, or a key does not match before a
+// subscriber does.
+//
+// keyFile is the name the key is written under, and for opkg that name is
+// load-bearing: opkg looks a key up by its id, so the file has to be called what
+// the feed published it as. apk does not care and matches on the key itself.
+//
+// The two managers disagree about everything here — apk takes the URL of the
+// index FILE, opkg the URL of the DIRECTORY containing it — which is exactly the
+// sort of difference that belongs in this package rather than at a call site.
+func AddFeed(pm config.PackageManager, name, url, keyFile string) string {
+	var b strings.Builder
+	if pm == config.APK {
+		b.WriteString("mkdir -p /etc/apk/keys /etc/apk/repositories.d\n")
+		b.WriteString("cp " + keyFile + " /etc/apk/keys/\n")
+		b.WriteString("printf '%s\\n' " + url + " > /etc/apk/repositories.d/" + name + ".list\n")
+		return b.String()
+	}
+	b.WriteString("mkdir -p /etc/opkg/keys\n")
+	b.WriteString("cp " + keyFile + " /etc/opkg/keys/\n")
+	// Appended, not written: customfeeds.conf is where a router's own extra
+	// feeds live, and replacing it would take them with it.
+	b.WriteString("printf 'src/gz %s %s\\n' " + name + " " + url + " >> /etc/opkg/customfeeds.conf\n")
+	return b.String()
+}
+
 // Install is the shell that installs pkgs, or "true" when there is nothing to
 // install — a script fragment that is always safe to concatenate.
 //

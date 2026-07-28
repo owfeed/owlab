@@ -33,6 +33,9 @@ func (a *app) test(ctx context.Context, args []string) error {
 	var releases, installs, asserts, packages stringList
 	fs.Var(&releases, "release", "release to test against, repeatable or space/comma separated (synthesizes routers; no owlab.yaml needed)")
 	fs.Var(&installs, "install", "package file or feed name to install, repeatable; globs are expanded")
+	feedURL := fs.String("feed", "", "package feed to add before installing: the index URL for apk, the directory URL for opkg")
+	feedKey := fs.String("feed-key", "", "the feed's public key file (for opkg the filename must be the key id)")
+	feedName := fs.String("feed-name", "owlab-feed", "name the feed is registered under")
 	fs.Var(&asserts, "assert", "assertion to run on every router, repeatable")
 	fs.Var(&packages, "packages", "packages for synthesized routers (+name adds to the stock set)")
 	distro := fs.String("distro", "", "distribution for synthesized routers: openwrt or immortalwrt")
@@ -74,6 +77,16 @@ func (a *app) test(ctx context.Context, args []string) error {
 	}
 	if err := a.checkFidelity(ctx, routers); err != nil {
 		return err
+	}
+
+	// A feed needs both halves: a URL with no key installs nothing, a key with
+	// no URL points at nothing.
+	if (*feedURL == "") != (*feedKey == "") {
+		return fmt.Errorf("--feed and --feed-key go together")
+	}
+	var feedSpec *feedSource
+	if *feedURL != "" {
+		feedSpec = &feedSource{Name: *feedName, URL: *feedURL, Key: *feedKey}
 	}
 
 	files, err := resolveInstalls(a.cfg.Dir, installs)
@@ -188,7 +201,7 @@ func (a *app) test(ctx context.Context, args []string) error {
 				record(checkpkg.Result{Check: "reach", Kind: "up", Detail: err.Error()})
 			} else {
 				if len(files) > 0 || len(installs) > 0 {
-					record(a.testInstall(ctx, r, run, files, installs))
+					record(a.testInstall(ctx, r, run, files, installs, feedSpec))
 				}
 				if *syncSrc && rr.OK {
 					record(a.testSync(ctx, r))
@@ -320,7 +333,20 @@ func (a *app) resolveTestConfig(releases []string, distro, arch, fixtures string
 //
 // Unlike `owlab install`, a failure here is fatal. Interactively, "missing on
 // 24.10" is information; in CI it is the answer to the question being asked.
-func (a *app) testInstall(ctx context.Context, r *config.Router, run syncpkg.Exec, files, named []string) checkpkg.Result {
+// feedSource is a package feed a test adds before installing, so that a package
+// can be installed BY NAME out of a signed index rather than from a file.
+//
+// That difference is the whole point of testing against a feed: installing a
+// file proves the package works, and installing it by name proves the channel
+// does -- the index parses, the URL does not redirect, and the key on the router
+// matches the one that signed it. A file install cannot fail those ways.
+type feedSource struct {
+	Name string
+	URL  string
+	Key  string
+}
+
+func (a *app) testInstall(ctx context.Context, r *config.Router, run syncpkg.Exec, files, named []string, feedSrc *feedSource) checkpkg.Result {
 	start := time.Now()
 	feed := feedNames(named, files)
 	res := checkpkg.Result{
@@ -330,6 +356,28 @@ func (a *app) testInstall(ctx context.Context, r *config.Router, run syncpkg.Exe
 	defer func() { res.Seconds = time.Since(start).Round(time.Millisecond).Seconds() }()
 
 	installArgs := append([]string{}, feed...)
+
+	var pre string
+	if feedSrc != nil {
+		body, err := os.ReadFile(feedSrc.Key)
+		if err != nil {
+			res.Detail = err.Error()
+			return res
+		}
+		dest := "/tmp/" + filepath.Base(feedSrc.Key)
+		archive, err := tarx.OneFile(dest, body, 0o644)
+		if err != nil {
+			res.Detail = err.Error()
+			return res
+		}
+		var log strings.Builder
+		if err := run(ctx, "tar -C / -xf -", archive, &log); err != nil {
+			res.Detail = fmt.Sprintf("pushing the feed key: %v %s", err, strings.TrimSpace(log.String()))
+			return res
+		}
+		pre = pkgmgr.AddFeed(r.PackageManager(), feedSrc.Name, shQuote(feedSrc.URL), dest)
+	}
+
 	for _, f := range files {
 		body, err := os.ReadFile(f)
 		if err != nil {
@@ -353,8 +401,8 @@ func (a *app) testInstall(ctx context.Context, r *config.Router, run syncpkg.Exe
 		installArgs = append(installArgs, dest)
 	}
 
-	cmd := pkgmgr.Install(r.PackageManager(), installArgs, pkgmgr.Options{
-		Update: len(feed) > 0,
+	cmd := pre + pkgmgr.Install(r.PackageManager(), installArgs, pkgmgr.Options{
+		Update: len(feed) > 0 || feedSrc != nil,
 		// A locally built package carries no signature the router's keyring
 		// knows, and there is no key it could carry that would.
 		Untrusted: len(files) > 0,

@@ -336,11 +336,19 @@ func (a *app) install(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	all := fs.Bool("all", false, "install on every router instead of one")
 	verbose := fs.Bool("v", false, "echo the docker commands being run")
+	feed := fs.String("feed", "", "package feed to add first: the index URL for apk, the directory URL for opkg")
+	feedKey := fs.String("feed-key", "", "the feed's public key file (for opkg the filename must be the key id)")
+	feedName := fs.String("feed-name", "owlab-feed", "name the feed is registered under")
 	rest, err := parseMixed(fs, args)
 	if err != nil {
 		return err
 	}
 	a.docker.Verbose = *verbose
+
+	if (*feed == "") != (*feedKey == "") {
+		return fmt.Errorf("--feed and --feed-key go together: a feed with no key installs nothing, " +
+			"and a key with no feed points at nothing")
+	}
 
 	var routers []*config.Router
 	var pkgs []string
@@ -399,6 +407,21 @@ func (a *app) install(ctx context.Context, args []string) error {
 		locals = append(locals, localPackage{dest: "/tmp/" + filepath.Base(p), archive: archive})
 	}
 
+	// The feed's key, read once. Same transport as a package file, for the same
+	// reason: a VM has no scp to fall back on.
+	var feedKeyArchive []byte
+	var feedKeyDest string
+	if *feedKey != "" {
+		body, err := os.ReadFile(*feedKey)
+		if err != nil {
+			return err
+		}
+		feedKeyDest = "/tmp/" + filepath.Base(*feedKey)
+		if feedKeyArchive, err = tarx.OneFile(feedKeyDest, body, 0o644); err != nil {
+			return err
+		}
+	}
+
 	var failed []string
 	markFailed := func(id string) {
 		if !slices.Contains(failed, id) {
@@ -432,7 +455,25 @@ func (a *app) install(ctx context.Context, args []string) error {
 			continue
 		}
 
-		cmd := pkgmgr.Install(r.PackageManager(), installArgs, pkgmgr.Options{
+		// A feed is added before anything is installed, so a name given on the
+		// command line resolves out of it.
+		//
+		// Untrusted stays keyed to whether a local FILE is being installed. A
+		// package that came from a feed must be installed without that flag or
+		// the test proves nothing: the whole point of installing by name is that
+		// the index's signature is what makes it acceptable, and
+		// --allow-untrusted would accept it whether or not that held.
+		var cmd string
+		if feedKeyArchive != nil {
+			if err := run(ctx, "tar -C / -xf -", feedKeyArchive, os.Stderr); err != nil {
+				fmt.Fprintf(os.Stderr, "! %s: pushing the feed key: %v\n", r.ID, err)
+				markFailed(r.ID)
+				continue
+			}
+			cmd = pkgmgr.AddFeed(r.PackageManager(), *feedName, shQuote(*feed), feedKeyDest)
+		}
+
+		cmd += pkgmgr.Install(r.PackageManager(), installArgs, pkgmgr.Options{
 			Update:    true,
 			Untrusted: len(locals) > 0,
 		})
@@ -909,4 +950,13 @@ func openBrowser(url string) error {
 	default:
 		return exec.Command("xdg-open", url).Start()
 	}
+}
+
+// shQuote wraps a value in single quotes for POSIX sh.
+//
+// Feed URLs come from a flag and land inside a generated script, so a value
+// containing a quote must not be able to end the string and continue as
+// commands.
+func shQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

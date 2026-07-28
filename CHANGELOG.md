@@ -7,6 +7,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+### Added
+
+- `owlab install --feed` and `owlab test --feed` add a package feed to a router
+  before installing, so a package can be installed BY NAME out of a signed index
+  instead of from a file. That difference is the point: installing a file proves
+  the package works, installing it by name proves the channel does — the index
+  parses, the URL does not redirect, and the key on the router matches the one
+  that signed it. A file install cannot fail in any of those ways. `--feed-key`
+  carries the public half; for opkg its FILENAME must be the key id, because
+  that is what opkg looks a key up by. Verified against a live feed on both
+  branches, including the negative: with the key removed the router reports the
+  package as not existing at all, which is what makes the positive result mean
+  something. `owlab/action` takes the same three inputs.
+
 ## [0.2.0] - 2026-07-28
 
 ### Added
@@ -124,5 +140,6 @@ First release.
   to be re-run still leaves the immutable tags behind.
 
 [artifact-contract]: https://github.com/VizzleTF/owfeed/blob/main/docs/artifact-contract.md
+[Unreleased]: https://github.com/VizzleTF/owlab/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/VizzleTF/owlab/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/VizzleTF/owlab/releases/tag/v0.1.0

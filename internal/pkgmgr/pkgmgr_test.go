@@ -78,3 +78,30 @@ func TestTolerantInstallsOneAtATimeAndReportsSkips(t *testing.T) {
 		t.Errorf("a failed package would abort the loop:\n%s", got)
 	}
 }
+
+// The two managers disagree about the shape of a feed, and the difference is not
+// cosmetic: apk is pointed at the index FILE, opkg at the DIRECTORY holding it.
+// Swap them and the router fetches something that is not an index.
+func TestAddFeedSpeaksEachManagersDialect(t *testing.T) {
+	apk := AddFeed(config.APK, "demo", "'https://example.org/releases/25.12/x86_64/packages.adb'", "/tmp/demo.pem")
+	if !strings.Contains(apk, "/etc/apk/keys/") {
+		t.Errorf("apk feed does not install the key:\n%s", apk)
+	}
+	if !strings.Contains(apk, "/etc/apk/repositories.d/demo.list") {
+		t.Errorf("apk feed does not write a repository line:\n%s", apk)
+	}
+	if strings.Contains(apk, "src/gz") {
+		t.Errorf("apk feed uses opkg syntax:\n%s", apk)
+	}
+
+	opkg := AddFeed(config.OPKG, "demo", "'https://example.org/releases/24.10/x86_64'", "/tmp/9040356b214084da")
+	if !strings.Contains(opkg, "src/gz") {
+		t.Errorf("opkg feed does not write a src/gz line:\n%s", opkg)
+	}
+	if !strings.Contains(opkg, ">> /etc/opkg/customfeeds.conf") {
+		t.Errorf("opkg feed replaces customfeeds.conf instead of appending:\n%s", opkg)
+	}
+	if !strings.Contains(opkg, "/etc/opkg/keys/") {
+		t.Errorf("opkg feed does not install the key:\n%s", opkg)
+	}
+}
