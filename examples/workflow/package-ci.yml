@@ -46,7 +46,7 @@ jobs:
           releases: ${{ matrix.release }}
           # A glob, because the version in the artifact's file name comes from
           # the build and is not known here.
-          install: dist/luci-app-example-*
+          install: dist/*/luci-app-example-*
           assert: |
             package luci-app-example
             http 200 /cgi-bin/luci/admin/services/example

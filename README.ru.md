@@ -204,12 +204,30 @@ defaults:
 
 ```console
 $ owlab build
-$ owlab install owrt2512 dist/luci-app-mine-1.0-r1.apk
+$ owlab install owrt2512 dist/noarch/luci-app-mine-1.0-r1.apk
 ```
 
 Через SDK от OpenWrt. Стоит делать перед релизом: настоящая сборка минифицирует
 JS и CSS, а sync — нет, и на этой разнице ломались пакеты, прекрасно работавшие
 на дев-боксе.
+
+Артефакты кладутся в каталог, названный по архитектуре: в имени apk-файла
+архитектуры нет вообще, и всё, что идёт дальше, читает каталог. Архитектурно
+независимый пакет даёт оба написания — apk требует `noarch` и отвергает `all`,
+opkg знает только `all`, — поэтому одна сборка пишет два каталога:
+
+```
+dist/
+├── noarch/luci-app-mine-1.0-r1.apk
+└── all/luci-app-mine_1.0-r1_all.ipk
+```
+
+Эта раскладка — [контракт артефакта owfeed][artifact-contract]; именно она
+позволяет отдать вывод `owlab build` инструменту публикации напрямую, без того
+чтобы они знали друг о друге. `--layout flat` возвращает прежний плоский вывод
+на один релиз.
+
+[artifact-contract]: https://github.com/VizzleTF/owfeed/blob/main/docs/artifact-contract.md
 
 ### Проверять в CI
 
@@ -217,7 +235,7 @@ JS и CSS, а sync — нет, и на этой разнице ломались 
 - uses: VizzleTF/owlab/action@v0.2.0
   with:
     releases: "25.12.5 24.10.8"
-    install: dist/luci-app-mine-*.apk
+    install: dist/*/luci-app-mine-*.apk
     assert: |
       http 200 /cgi-bin/luci/admin/services/mine
       service mined
@@ -232,7 +250,7 @@ summary написано, какой роутер и какая проверка
 
 ```console
 $ owlab test --release 25.12.5 --release 24.10.8 \
-    --install dist/luci-app-mine-*.apk \
+    --install 'dist/*/luci-app-mine-*.apk' \
     --assert 'http 200 /cgi-bin/luci/admin/services/mine'
 ```
 

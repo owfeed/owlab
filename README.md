@@ -202,12 +202,31 @@ Individual profiles: `networks`, `clients`, `wireguard`, `portforwards`,
 
 ```console
 $ owlab build
-$ owlab install owrt2512 dist/luci-app-mine-1.0-r1.apk
+$ owlab install owrt2512 dist/noarch/luci-app-mine-1.0-r1.apk
 ```
 
 Uses OpenWrt's SDK. Worth doing before a release: a real build minifies JS and
 CSS, which a sync does not, and that difference has broken packages that worked
 fine on the dev box.
+
+Artifacts go in a directory named for their architecture, because an apk's
+filename does not carry one and everything downstream reads the directory. An
+architecture-independent package produces both spellings — apk requires
+`noarch` and rejects `all`, opkg has only ever known `all` — so one build writes
+two directories:
+
+```
+dist/
+├── noarch/luci-app-mine-1.0-r1.apk
+└── all/luci-app-mine_1.0-r1_all.ipk
+```
+
+That layout is [owfeed's artifact contract][artifact-contract], which is what
+lets `owlab build` hand its output straight to a publishing tool without either
+one knowing about the other. `--layout flat` restores the old single-directory
+output for one release.
+
+[artifact-contract]: https://github.com/VizzleTF/owfeed/blob/main/docs/artifact-contract.md
 
 ### Check it in CI
 
@@ -215,7 +234,7 @@ fine on the dev box.
 - uses: VizzleTF/owlab/action@v0.2.0
   with:
     releases: "25.12.5 24.10.8"
-    install: dist/luci-app-mine-*.apk
+    install: dist/*/luci-app-mine-*.apk
     assert: |
       http 200 /cgi-bin/luci/admin/services/mine
       service mined
@@ -230,7 +249,7 @@ The same thing locally, and what the action runs:
 
 ```console
 $ owlab test --release 25.12.5 --release 24.10.8 \
-    --install dist/luci-app-mine-*.apk \
+    --install 'dist/*/luci-app-mine-*.apk' \
     --assert 'http 200 /cgi-bin/luci/admin/services/mine'
 ```
 
@@ -353,6 +372,13 @@ OpenWrt image before you ship it. That last step also starts a container, and
 the resemblance is deliberate: owlab is the development cycle, `owfeed smoke` is
 one gate before a publish. They are independent on purpose, so that "will this
 feed install" never depends on whether owlab is installed correctly.
+
+They compose anyway, through a file format rather than a dependency: `owlab
+build` writes `dist/<arch>/` and every owfeed stage reads it. owlab holds no
+keys at any point, which is the whole of its side of the boundary — it asserts
+that a package works, and never that anyone should trust it.
+[ECOSYSTEM.md](https://github.com/VizzleTF/owfeed/blob/main/docs/ECOSYSTEM.md)
+is where that boundary is written down, along with the contracts across it.
 
 ## Notes
 

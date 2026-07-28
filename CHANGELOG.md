@@ -61,6 +61,16 @@ one waits for a major.
 
 ### Changed
 
+- `owlab build` writes into `dist/<arch>/` rather than a flat directory, which
+  is [owfeed's artifact contract][artifact-contract] — so its output can be
+  handed to a publishing tool directly, with a file format as the interface
+  rather than either tool depending on the other. An architecture-independent
+  package writes both spellings, `dist/noarch/` for the apk and `dist/all/` for
+  the ipk, because apk rejects `all` as uninstallable and opkg has never heard
+  of `noarch`. The architecture comes from `PKG_ARCH` or `LUCI_PKGARCH` in the
+  Makefile, falling back to the target's. `--layout flat` restores the previous
+  output for one release; a pattern that used to read `dist/*.apk` now needs the
+  architecture component, `dist/*/*.apk`.
 - `owlab install` re-asserts `project.theme` the way `owlab sync` does. A
   package can register a theme without selecting it, and a half-installed theme
   is the one case where LuCI crashes rather than falling back.
@@ -113,5 +123,6 @@ First release.
 - `images.yml` can stamp a release tag on a manual run, so a publish that has
   to be re-run still leaves the immutable tags behind.
 
+[artifact-contract]: https://github.com/VizzleTF/owfeed/blob/main/docs/artifact-contract.md
 [Unreleased]: https://github.com/VizzleTF/owlab/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/VizzleTF/owlab/releases/tag/v0.1.0

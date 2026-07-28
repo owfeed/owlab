@@ -159,7 +159,7 @@ signatures.
 
 ```console
 $ owlab build
-$ owlab install owrt2512 dist/luci-app-mine-1.0-r1.apk
+$ owlab install owrt2512 dist/noarch/luci-app-mine-1.0-r1.apk
 ```
 
 Verify: the file exists under `dist/`, and the router serves the same thing it
@@ -183,7 +183,7 @@ In a package repository, with no `owlab.yaml`:
 - uses: VizzleTF/owlab/action@v0.2.0
   with:
     releases: "25.12.5 24.10.8"
-    install: dist/luci-app-mine-*
+    install: dist/*/luci-app-mine-*
     assert: |
       package luci-app-mine
       http 200 /cgi-bin/luci/admin/services/mine
@@ -196,7 +196,7 @@ Run the same thing locally before pushing it — it is the same command, and it
 needs nothing but Docker:
 
 ```console
-$ owlab test --release 25.12.5 --install dist/luci-app-mine-*.apk \
+$ owlab test --release 25.12.5 --install 'dist/*/luci-app-mine-*.apk' \
     --assert 'http 200 /cgi-bin/luci/admin/services/mine'
 ```
 

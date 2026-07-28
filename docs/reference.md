@@ -261,7 +261,7 @@ running router, tear everything down, exit 0 or 1.
 
 ```console
 $ owlab test --release 25.12.5 --release 24.10.8 \
-    --install dist/luci-app-mine-*.apk \
+    --install 'dist/*/luci-app-mine-*.apk' \
     --assert 'http 200 /cgi-bin/luci/admin/services/mine'
 ```
 
@@ -352,7 +352,7 @@ add'` is the whole of "is anything stale".
 - uses: VizzleTF/owlab/action@v0.2.0
   with:
     releases: "25.12.5 24.10.8"
-    install: dist/luci-app-mine-*.apk
+    install: dist/*/luci-app-mine-*.apk
     assert: |
       http 200 /cgi-bin/luci/admin/services/mine
       service mined

@@ -43,8 +43,11 @@ inputs:
   install:
     description: >-
       Packages to install, one per line. A path (globs allowed, e.g.
-      dist/luci-app-mine-*.apk) is copied to the router and installed from
-      there; anything else is looked up in the router's feeds.
+      dist/*/luci-app-mine-*.apk) is copied to the router and installed from
+      there; anything else is looked up in the router's feeds. `owlab build`
+      writes into a directory named for the architecture, so a pattern needs
+      that component -- one `*`, not two: these are Go path globs, and `**`
+      matches nothing.
     required: false
     default: ""
   assert:

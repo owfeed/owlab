@@ -158,7 +158,7 @@ $ owlab up --rebuild
 
 ```console
 $ owlab build
-$ owlab install owrt2512 dist/luci-app-mine-1.0-r1.apk
+$ owlab install owrt2512 dist/noarch/luci-app-mine-1.0-r1.apk
 ```
 
 Проверка: файл лежит в `dist/`, и роутер отдаёт то же самое, что отдавал после
@@ -182,7 +182,7 @@ sync — нет, и на этой разнице ломались пакеты, 
 - uses: VizzleTF/owlab/action@v0.2.0
   with:
     releases: "25.12.5 24.10.8"
-    install: dist/luci-app-mine-*
+    install: dist/*/luci-app-mine-*
     assert: |
       package luci-app-mine
       http 200 /cgi-bin/luci/admin/services/mine
@@ -195,7 +195,7 @@ sync — нет, и на этой разнице ломались пакеты, 
 ничего, кроме Docker:
 
 ```console
-$ owlab test --release 25.12.5 --install dist/luci-app-mine-*.apk \
+$ owlab test --release 25.12.5 --install 'dist/*/luci-app-mine-*.apk' \
     --assert 'http 200 /cgi-bin/luci/admin/services/mine'
 ```
 
