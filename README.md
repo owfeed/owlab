@@ -401,7 +401,8 @@ build` writes `dist/<arch>/` and every owfeed stage reads it. owlab holds no
 keys at any point, which is the whole of its side of the boundary — it asserts
 that a package works, and never that anyone should trust it.
 [ECOSYSTEM.md](https://github.com/VizzleTF/owfeed/blob/main/docs/ECOSYSTEM.md)
-is where that boundary is written down, along with the contracts across it.
+is where that boundary is written down, along with the contracts across it, and
+[docs/STATUS.md](docs/STATUS.md) says how much of owlab's side of it exists.
 
 ## Notes
 

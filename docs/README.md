@@ -12,8 +12,9 @@ are for when you have.
 | [Reference](reference.md) | Every key of `owlab.yaml` |
 | [Internals](internals.md) | How it is put together and why it behaves that way |
 | [Releasing](releasing.md) | Cutting a release, and how the images track upstream |
+| [Status](STATUS.md) | What is built, what is not, and why — a snapshot, unlike the rest |
 
-Every page has a `.ru.md` beside it.
+Every page has a `.ru.md` beside it, except the status snapshot.
 
 ## What is written here
 
