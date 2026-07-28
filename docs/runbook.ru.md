@@ -177,9 +177,9 @@ sync — нет, и на этой разнице ломались пакеты, 
 В репозитории пакета, без всякого `owlab.yaml`:
 
 ```yaml
-- uses: VizzleTF/owlab/setup@v0.2.0
+- uses: VizzleTF/owlab/setup@v0.3.0
 - run: owlab build --release 25.12.5 --out dist
-- uses: VizzleTF/owlab/action@v0.2.0
+- uses: VizzleTF/owlab/action@v0.3.0
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*
