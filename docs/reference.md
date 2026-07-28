@@ -274,6 +274,9 @@ $ owlab test --release 25.12.5 --release 24.10.8 \
 | `--fixtures` | fixture profiles for those routers, e.g. `none` or `all` |
 | `--install` | a path (globs expanded) is pushed to the router and installed from there; anything else is looked up in the feeds. Repeatable |
 | `--assert` | one assertion, repeatable. Every one runs on every router |
+| `--feed` | add a package feed before installing, so a name is resolved out of a signed index instead of a file. The index URL for apk, the directory URL for opkg. Goes with `--feed-key` |
+| `--feed-key` | the feed's public key file. For opkg the *filename* must be the key id, because that is what opkg looks it up by |
+| `--feed-name` | what the feed is registered as on the router; `owlab-feed` by default |
 | `--sync` | sync the project sources in first, as `owlab sync` does, instead of (or as well as) installing a built package |
 | `--keep` | leave the routers running afterwards |
 | `--rebuild` | build the images from scratch |
@@ -287,6 +290,35 @@ Teardown happens whether the run passed or failed, and on its own context — a
 failed run that leaves containers holding 8080 and 2222 makes the *next* run
 fail for an unrelated reason. The log of any router that failed is printed
 first, while the container still exists.
+
+### Testing against a feed you are serving yourself
+
+Installing a built file proves the package works. Installing it *by name* proves
+the channel works — that the index parses, the URL does not redirect, and the key
+on the router matches the one that signed it. A file install cannot fail those
+ways, which is why a feed's own CI wants the second.
+
+That means serving the freshly built tree over HTTP from the machine running
+owlab, and then telling the router where that machine is. There is no address
+that answers everywhere: a container on a Linux CI runner reaches the host at the
+bridge gateway, a container under Docker Desktop has no such gateway, and a
+`fidelity: vm` router sees neither because QEMU's user-mode stack puts the host
+somewhere else again. Hardcoding `172.17.0.1` is the usual answer and it breaks
+on the first developer machine.
+
+Write `{host}` instead and owlab substitutes whatever is correct for the tier:
+
+```sh
+python3 -m http.server 8080 --directory out &
+owlab test --release 25.12.5 \
+  --feed 'http://{host}:8080/releases/25.12/noarch/packages.adb' \
+  --feed-key out/keys/feed.pem \
+  --install luci-app-mine \
+  --assert 'http 200 /cgi-bin/luci/admin/services/mine'
+```
+
+A URL without the token is passed through untouched, so the same flag points at a
+published feed with nothing else changed.
 
 ### Assertions
 

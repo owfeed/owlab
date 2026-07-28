@@ -55,6 +55,13 @@ inputs:
       A package feed to add before installing, so a package can be installed BY
       NAME out of a signed index instead of from a file. The index URL for apk,
       the directory URL for opkg. Needs feed-key.
+
+      Write {host} for the machine this action runs on, and owlab substitutes the
+      address the router actually reaches it at -- which differs between a
+      container on a CI runner, a container under Docker Desktop, and a VM. That
+      is what lets a feed serve its freshly built tree over a local HTTP server
+      and prove a subscriber can install from it:
+      http://{host}:8080/releases/25.12/noarch/packages.adb
     required: false
     default: ""
   feed-key:
