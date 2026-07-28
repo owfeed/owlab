@@ -9,6 +9,16 @@ one waits for a major.
 
 ## [Unreleased]
 
+### Fixed
+
+- The CI matrix emitted the wrong platform for a router that falls back to the
+  rootfs tarball, so buildx asked for a base alpine does not publish
+  (`alpine:3.22: no match for platform in manifest`). Caught by the first
+  tagged run, on the one release upstream has not mirrored a container image
+  for yet.
+- `images.yml` can stamp a release tag on a manual run, so a publish that has
+  to be re-run still leaves the immutable tags behind.
+
 ## [0.1.0] - 2026-07-28
 
 First release.
