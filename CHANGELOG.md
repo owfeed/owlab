@@ -7,6 +7,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [0.5.1] - 2026-07-29
+
+No code changes. Cut so that the tag every consumer pins is an immutable release.
+
+v0.5.0 was tagged before immutable releases were enabled on this repository, and
+the setting does not apply retroactively -- so the tag that `owlab/action@v0.5.0`
+resolves to could still be moved. That is the assumption the ecosystem's pinning
+convention rests on: internal `owfeed/*` references are pinned by tag rather than
+by commit SHA, and the argument for that is a tag under our own control plus a
+binary verified against its build attestation. Immutability is what makes the
+first half true rather than merely intended.
+
 ## [0.5.0] - 2026-07-29
 
 ### Changed

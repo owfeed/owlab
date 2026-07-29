@@ -235,7 +235,7 @@ output for one release.
 ### Check it in CI
 
 ```yaml
-- uses: owfeed/owlab/action@v0.5.0
+- uses: owfeed/owlab/action@v0.5.1
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*.apk
