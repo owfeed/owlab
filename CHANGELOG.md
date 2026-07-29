@@ -7,6 +7,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [0.5.0] - 2026-07-29
+
+### Changed
+
+- **owlab lives at `github.com/owfeed/owlab`, and its module path is
+  `owfeed.org/owlab`.** `go install github.com/VizzleTF/owlab/...` stops working;
+  `go install owfeed.org/owlab/cmd/owlab@latest` replaces it. The path names a
+  host rather than a forge so that this is the last move that breaks anyone's
+  install: Go module paths have no redirect, and neither does `uses:` in Actions.
+- **Release attestations now name `owfeed/owlab`.** An attestation records the
+  repository that produced it, so binaries released before this one no longer
+  verify against the new name and `owlab/setup` at v0.5.0 refuses them. Pin the
+  action and the `version:` input to the same release, which is what the docs
+  have always said and now matters.
+- **Router images publish to `ghcr.io/owfeed/owlab-rootfs`.** A GHCR package
+  belongs to the account that pushed it and does not travel with a repository
+  transfer, so `ghcr.io/vizzletf/owlab-rootfs` still exists and still serves the
+  releases up to v0.4.1 that pull from it. It must not be deleted.
+
 ## [0.4.1] - 2026-07-29
 
 ### Fixed
