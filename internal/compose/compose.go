@@ -17,9 +17,9 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	owlab "github.com/VizzleTF/owlab"
-	"github.com/VizzleTF/owlab/internal/config"
-	"github.com/VizzleTF/owlab/internal/engine"
+	owlab "owfeed.org/owlab"
+	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/engine"
 )
 
 // WorkDirName is the per-project scratch directory owlab writes into.

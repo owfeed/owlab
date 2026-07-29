@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/VizzleTF/owlab/internal/config"
-	"github.com/VizzleTF/owlab/internal/engine"
+	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/engine"
 )
 
 // engineInfoForTest is a detected-nothing engine. Render reads it only for

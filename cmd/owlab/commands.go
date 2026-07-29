@@ -17,13 +17,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/VizzleTF/owlab/internal/compose"
-	"github.com/VizzleTF/owlab/internal/config"
-	"github.com/VizzleTF/owlab/internal/pkgmgr"
-	"github.com/VizzleTF/owlab/internal/qemu"
-	syncpkg "github.com/VizzleTF/owlab/internal/sync"
-	"github.com/VizzleTF/owlab/internal/tarx"
-	"github.com/VizzleTF/owlab/internal/upstream"
+	"owfeed.org/owlab/internal/compose"
+	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/pkgmgr"
+	"owfeed.org/owlab/internal/qemu"
+	syncpkg "owfeed.org/owlab/internal/sync"
+	"owfeed.org/owlab/internal/tarx"
+	"owfeed.org/owlab/internal/upstream"
 )
 
 // parseMixed lets flags appear before or after router ids, because

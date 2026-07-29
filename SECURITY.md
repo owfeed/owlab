@@ -2,7 +2,7 @@
 
 ## Reporting
 
-Open a [private advisory](https://github.com/VizzleTF/owlab/security/advisories/new).
+Open a [private advisory](https://github.com/owfeed/owlab/security/advisories/new).
 Please do not open a public issue for anything that would let someone reach a
 developer's machine through a router owlab started.
 
@@ -53,7 +53,7 @@ secrets in that job.
 
 Release binaries carry [build provenance
 attestations](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations).
-`VizzleTF/owlab/setup` and `VizzleTF/owlab/action` verify one against this
+`owfeed/owlab/setup` and `owfeed/owlab/action` verify one against this
 repository's release workflow **before the archive is unpacked or anything in it
 is executed**, and refuse to install it otherwise. Releases before v0.2.0 carry
 no attestation.
@@ -70,9 +70,9 @@ used.
 ## Verifying a download by hand
 
 ```sh
-gh release download v0.2.0 -R VizzleTF/owlab -p 'owlab_0.2.0_linux_amd64.tar.gz'
-gh attestation verify owlab_0.2.0_linux_amd64.tar.gz -R VizzleTF/owlab \
-  --signer-workflow VizzleTF/owlab/.github/workflows/release.yml
+gh release download v0.2.0 -R owfeed/owlab -p 'owlab_0.2.0_linux_amd64.tar.gz'
+gh attestation verify owlab_0.2.0_linux_amd64.tar.gz -R owfeed/owlab \
+  --signer-workflow owfeed/owlab/.github/workflows/release.yml
 ```
 
 A `SHA256SUMS` file is published too, and on its own it is not a check: it is
@@ -81,7 +81,7 @@ Whoever can replace one can replace the other.
 
 ## Published images
 
-`ghcr.io/vizzletf/owlab-rootfs` images are built by this repository's `images`
+`ghcr.io/owfeed/owlab-rootfs` images are built by this repository's `images`
 workflow from upstream rootfs tarballs, and each carries its own provenance at
 `/usr/share/owlab/compliance/`: the package manifest, a CycloneDX SBOM with
 per-package licences, and the buildinfo files pinning the tree and every feed to

@@ -1,4 +1,4 @@
-module github.com/VizzleTF/owlab
+module owfeed.org/owlab
 
 go 1.25.3
 

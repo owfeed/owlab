@@ -10,9 +10,9 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/VizzleTF/owlab/internal/config"
-	"github.com/VizzleTF/owlab/internal/dockercli"
-	"github.com/VizzleTF/owlab/internal/engine"
+	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/dockercli"
+	"owfeed.org/owlab/internal/engine"
 )
 
 type app struct {

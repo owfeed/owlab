@@ -11,7 +11,7 @@ learning what a setting does — and for answering "does my package still instal
 on 24.10?" in CI, which is [one step](#check-it-in-ci).
 
 ```console
-$ go install github.com/VizzleTF/owlab/cmd/owlab@latest
+$ go install owfeed.org/owlab/cmd/owlab@latest
 $ owlab doctor
 ```
 
@@ -230,12 +230,12 @@ lets `owlab build` hand its output straight to a publishing tool without either
 one knowing about the other. `--layout flat` restores the old single-directory
 output for one release.
 
-[artifact-contract]: https://github.com/VizzleTF/owfeed/blob/main/docs/artifact-contract.md
+[artifact-contract]: https://github.com/owfeed/owfeed/blob/main/docs/artifact-contract.md
 
 ### Check it in CI
 
 ```yaml
-- uses: VizzleTF/owlab/action@v0.4.1
+- uses: owfeed/owlab/action@v0.4.1
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*.apk
@@ -389,7 +389,7 @@ fixtures, the SDK build and `test`. Two routers running BGP at each other is
 containerlab; the same LuCI page open on 24.10 and 25.12 while you edit it is
 this.
 
-[owfeed](https://github.com/VizzleTF/owfeed) publishes packages — it builds,
+[owfeed](https://github.com/owfeed/owfeed) publishes packages — it builds,
 signs and indexes an apk feed, and `owfeed smoke` installs the result on a real
 OpenWrt image before you ship it. That last step also starts a container, and
 the resemblance is deliberate: owlab is the development cycle, `owfeed smoke` is
@@ -400,7 +400,7 @@ They compose anyway, through a file format rather than a dependency: `owlab
 build` writes `dist/<arch>/` and every owfeed stage reads it. owlab holds no
 keys at any point, which is the whole of its side of the boundary — it asserts
 that a package works, and never that anyone should trust it.
-[ECOSYSTEM.md](https://github.com/VizzleTF/owfeed/blob/main/docs/ECOSYSTEM.md)
+[ECOSYSTEM.md](https://github.com/owfeed/owfeed/blob/main/docs/ECOSYSTEM.md)
 is where that boundary is written down, along with the contracts across it, and
 [docs/STATUS.md](docs/STATUS.md) says how much of owlab's side of it exists.
 
@@ -423,7 +423,7 @@ something; [SECURITY.md](SECURITY.md) is what these routers are and are not.
 
 ## Licence
 
-GPL-2.0-only, deliberately — [owfeed](https://github.com/VizzleTF/owfeed), by
+GPL-2.0-only, deliberately — [owfeed](https://github.com/owfeed/owfeed), by
 the same author, is Apache-2.0. owlab embeds a `/etc/uci-defaults` and
 `rc.local` overlay written against OpenWrt's own shell libraries and ships it
 inside every image it builds, and that is derived work. Calling owlab from your

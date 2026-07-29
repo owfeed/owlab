@@ -11,9 +11,9 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/VizzleTF/owlab/internal/compose"
-	"github.com/VizzleTF/owlab/internal/config"
-	"github.com/VizzleTF/owlab/internal/upstream"
+	"owfeed.org/owlab/internal/compose"
+	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/upstream"
 )
 
 // buildContext prepares a docker build context for one router and prints the

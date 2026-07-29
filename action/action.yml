@@ -132,7 +132,7 @@ outputs:
 runs:
   using: composite
   steps:
-    # Not `uses: VizzleTF/owlab/setup@...`: a composite action cannot compute
+    # Not `uses: owfeed/owlab/setup@...`: a composite action cannot compute
     # the ref it was itself called at, so pinning one here would silently run a
     # different version of the installer than the action being used. Calling the
     # shared script directly keeps both on the same commit by construction.

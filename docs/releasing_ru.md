@@ -78,7 +78,7 @@ Semver, где поверхностью совместимости служит 
 
 ## Образы роутеров
 
-`images.yml` публикует в `ghcr.io/vizzletf/owlab-rootfs`. Один тег — один
+`images.yml` публикует в `ghcr.io/owfeed/owlab-rootfs`. Один тег — один
 таргет: дистрибутив, точный релиз, архитектура. В OCI image index нет поля под
 «версию дистрибутива», а у большинства имён архитектур OpenWrt нет валидного
 GOARCH-соответствия. Manifest list такую матрицу не выражает, и апстрим тоже не
@@ -122,8 +122,8 @@ $ cd images && owlab releases
 Релиз добавляет второй тег рядом с плавающим:
 
 ```
-ghcr.io/vizzletf/owlab-rootfs:openwrt-25.12.5-x86_64          двигается
-ghcr.io/vizzletf/owlab-rootfs:openwrt-25.12.5-x86_64-v0.2.0   нет
+ghcr.io/owfeed/owlab-rootfs:openwrt-25.12.5-x86_64          двигается
+ghcr.io/owfeed/owlab-rootfs:openwrt-25.12.5-x86_64-v0.2.0   нет
 ```
 
 Плавающий тег пересобирается еженедельно и подхватывает изменения фида внутри

@@ -1,7 +1,7 @@
 # What is built in owlab, and what is not
 
 *owlab is the bottom of a three-tool stack —
-[ECOSYSTEM.md](https://github.com/VizzleTF/owfeed/blob/main/docs/ECOSYSTEM.md) in
+[ECOSYSTEM.md](https://github.com/owfeed/owfeed/blob/main/docs/ECOSYSTEM.md) in
 owfeed says where the boundaries run and why. This file says how much of owlab's
 side of that exists, as of 2026-07-28.*
 
@@ -47,4 +47,4 @@ policy are edited by different people with different amounts of review.
 - [reference.md](reference.md) — every `owlab.yaml` key and every flag *([по-русски](reference_ru.md))*
 - [runbook.md](runbook.md) — how to do a particular thing *([по-русски](runbook_ru.md))*
 - [internals.md](internals.md) — why the defaults are what they are *([по-русски](internals_ru.md))*
-- [ECOSYSTEM.md](https://github.com/VizzleTF/owfeed/blob/main/docs/ECOSYSTEM.md) — the boundary with owfeed
+- [ECOSYSTEM.md](https://github.com/owfeed/owfeed/blob/main/docs/ECOSYSTEM.md) — the boundary with owfeed

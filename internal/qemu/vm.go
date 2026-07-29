@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/VizzleTF/owlab/internal/config"
-	"github.com/VizzleTF/owlab/internal/sshx"
+	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/sshx"
 )
 
 // LANIP is the address the router serves LuCI and ssh on.

@@ -20,7 +20,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/VizzleTF/owlab/internal/config"
+	"owfeed.org/owlab/internal/config"
 )
 
 // pointRelease matches the href of a release directory: `href="25.12.4/"`.

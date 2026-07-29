@@ -9,11 +9,11 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/VizzleTF/owlab/internal/compose"
-	"github.com/VizzleTF/owlab/internal/config"
-	"github.com/VizzleTF/owlab/internal/dockercli"
-	"github.com/VizzleTF/owlab/internal/qemu"
-	syncpkg "github.com/VizzleTF/owlab/internal/sync"
+	"owfeed.org/owlab/internal/compose"
+	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/dockercli"
+	"owfeed.org/owlab/internal/qemu"
+	syncpkg "owfeed.org/owlab/internal/sync"
 )
 
 // tier is how one router runs.

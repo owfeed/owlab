@@ -1,7 +1,7 @@
 name: Set up owlab
 description: Install a verified owlab binary and put it on PATH.
 
-# Why this rather than `go install github.com/VizzleTF/owlab/cmd/owlab@sha`:
+# Why this rather than `go install owfeed.org/owlab/cmd/owlab@sha`:
 # that compiles the tool on every job of a matrix, needs a Go toolchain the job
 # has no other use for, and verifies nothing — `go install` trusts whatever the
 # module proxy returns for that revision. This downloads one binary and checks

@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/VizzleTF/owlab/internal/config"
+	"owfeed.org/owlab/internal/config"
 )
 
 // fetchExtraPackages downloads every router's out-of-feed packages into the

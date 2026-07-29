@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/VizzleTF/owlab/internal/config"
+	"owfeed.org/owlab/internal/config"
 )
 
 // fetchCompliance stages the GPL compliance material for each router.
@@ -120,7 +120,7 @@ root filesystem is upstream's own, unpacked or pulled as published.
 Where it came from
   rootfs   %s
   feeds    %s
-  built by owlab (https://github.com/VizzleTF/owlab)
+  built by owlab (https://github.com/owfeed/owlab)
 
 Files in this directory
 `, r.Title(), r.Release, r.Arch, r.Title(), r.RootfsTarballURL(), r.FeedBase())

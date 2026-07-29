@@ -12,13 +12,13 @@ import (
 	"strings"
 	"time"
 
-	checkpkg "github.com/VizzleTF/owlab/internal/check"
-	"github.com/VizzleTF/owlab/internal/compose"
-	"github.com/VizzleTF/owlab/internal/config"
-	"github.com/VizzleTF/owlab/internal/pkgmgr"
-	"github.com/VizzleTF/owlab/internal/qemu"
-	syncpkg "github.com/VizzleTF/owlab/internal/sync"
-	"github.com/VizzleTF/owlab/internal/tarx"
+	checkpkg "owfeed.org/owlab/internal/check"
+	"owfeed.org/owlab/internal/compose"
+	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/pkgmgr"
+	"owfeed.org/owlab/internal/qemu"
+	syncpkg "owfeed.org/owlab/internal/sync"
+	"owfeed.org/owlab/internal/tarx"
 )
 
 // test is a whole CI run as one command: start the routers, install the

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/VizzleTF/owlab/internal/config"
+	"owfeed.org/owlab/internal/config"
 )
 
 func TestInstallPicksTheRoutersOwnManager(t *testing.T) {
@@ -130,7 +130,7 @@ func TestResolveHostAnswersPerTier(t *testing.T) {
 // A real feed URL must come out byte-identical. Substitution that rewrites URLs
 // it was not asked about is how a published feed silently becomes a local one.
 func TestResolveHostLeavesARealURLAlone(t *testing.T) {
-	const in = "https://vizzletf.github.io/owfeed-packages/releases/25.12/noarch/packages.adb"
+	const in = "https://repo.owfeed.org/releases/25.12/noarch/packages.adb"
 	for _, vm := range []bool{false, true} {
 		if got := ResolveHost(in, vm); got != in {
 			t.Errorf("vm=%v: rewrote a real URL: %s", vm, got)

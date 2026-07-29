@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/VizzleTF/owlab/internal/config"
+	"owfeed.org/owlab/internal/config"
 )
 
 // foreignTarget is a VM-capable target whose CPU is not this host's, whatever

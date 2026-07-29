@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	owlab "github.com/VizzleTF/owlab"
-	"github.com/VizzleTF/owlab/internal/compose"
-	"github.com/VizzleTF/owlab/internal/config"
-	"github.com/VizzleTF/owlab/internal/pkgmgr"
-	"github.com/VizzleTF/owlab/internal/tarx"
+	owlab "owfeed.org/owlab"
+	"owfeed.org/owlab/internal/compose"
+	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/pkgmgr"
+	"owfeed.org/owlab/internal/tarx"
 )
 
 // Provision turns a freshly booted stock router into this project's router.

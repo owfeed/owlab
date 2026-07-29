@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/VizzleTF/owlab/internal/config"
-	"github.com/VizzleTF/owlab/internal/upstream"
+	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/upstream"
 )
 
 // releases reports what the download servers publish, and how far this

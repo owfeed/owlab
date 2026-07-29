@@ -180,7 +180,7 @@ Rootfs и его фид обязаны называть один и тот же 
 ```yaml
 routers:
   - id: fast
-    image: ghcr.io/vizzletf/owlab-rootfs:openwrt-25.12.5-x86_64
+    image: ghcr.io/owfeed/owlab-rootfs:openwrt-25.12.5-x86_64
 ```
 
 Всё остальное применяется поверх: пакеты ставятся (менеджер сообщает об уже
@@ -323,7 +323,7 @@ caught», lua-шный `stack traceback:`): поймав исключение, L
 ### В GitHub Actions
 
 ```yaml
-- uses: VizzleTF/owlab/action@v0.4.1
+- uses: owfeed/owlab/action@v0.4.1
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*.apk
@@ -334,7 +334,7 @@ caught», lua-шный `stack traceback:`): поймав исключение, L
 
 У каждого флага выше есть одноимённый input; `assert` и `install` принимают по
 одному значению на строку. Экшен пишет таблицу в summary джоба и отдаёт outputs
-`report` (путь к JSON), `passed` и `failed`. `VizzleTF/owlab/setup@v0.4.1`
+`report` (путь к JSON), `passed` и `failed`. `owfeed/owlab/setup@v0.4.1`
 ставит только бинарь — для джоба, который сам вызывает `owlab`. Оба проверяют
 скачанное по build attestation этого репозитория до того, как бинарь будет
 запущен или попадёт в `PATH`.

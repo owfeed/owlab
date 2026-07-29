@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/VizzleTF/owlab/internal/config"
+	"owfeed.org/owlab/internal/config"
 )
 
 func vmFor(t *testing.T) *VM {

@@ -21,8 +21,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/VizzleTF/owlab/internal/config"
-	"github.com/VizzleTF/owlab/internal/tarx"
+	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/tarx"
 )
 
 // Result is what one router's sync did.

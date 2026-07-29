@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/VizzleTF/owlab/internal/config"
+	"owfeed.org/owlab/internal/config"
 )
 
 // members lists what an archive would unpack, by destination path.

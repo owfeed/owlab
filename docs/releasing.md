@@ -81,7 +81,7 @@ should produce the same file.
 
 ## Router images
 
-`images.yml` publishes to `ghcr.io/vizzletf/owlab-rootfs`. One tag is one
+`images.yml` publishes to `ghcr.io/owfeed/owlab-rootfs`. One tag is one
 target — distro, exact release, architecture — because an OCI image index has
 no field for "distro version" and most OpenWrt architecture names have no valid
 GOARCH mapping. A manifest list cannot express this matrix, and upstream does
@@ -126,8 +126,8 @@ $ cd images && owlab releases
 A release adds a second tag beside the moving one:
 
 ```
-ghcr.io/vizzletf/owlab-rootfs:openwrt-25.12.5-x86_64          # moves
-ghcr.io/vizzletf/owlab-rootfs:openwrt-25.12.5-x86_64-v0.2.0   # does not
+ghcr.io/owfeed/owlab-rootfs:openwrt-25.12.5-x86_64          # moves
+ghcr.io/owfeed/owlab-rootfs:openwrt-25.12.5-x86_64-v0.2.0   # does not
 ```
 
 The moving tag is rebuilt weekly and picks up feed changes within the same

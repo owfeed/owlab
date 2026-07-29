@@ -296,11 +296,11 @@ defaults: { arch: aarch64_generic }
 routers:
   - id: owrt
     release: "25.12.4"
-    image: ghcr.io/vizzletf/owlab-rootfs:openwrt-25.12.4-aarch64_generic
+    image: ghcr.io/owfeed/owlab-rootfs:openwrt-25.12.4-aarch64_generic
   - id: imm
     distro: immortalwrt
     release: "25.12.1"
-    image: ghcr.io/vizzletf/owlab-rootfs:immortalwrt-25.12.1-aarch64_generic
+    image: ghcr.io/owfeed/owlab-rootfs:immortalwrt-25.12.1-aarch64_generic
 `)
 	cfg, err := Load(p)
 	if err != nil {
@@ -310,14 +310,14 @@ routers:
 	if owrt.Platform() != "linux/aarch64_generic" {
 		t.Errorf("openwrt prebuilt platform: %q", owrt.Platform())
 	}
-	if owrt.BaseImage() != "ghcr.io/vizzletf/owlab-rootfs:openwrt-25.12.4-aarch64_generic" {
+	if owrt.BaseImage() != "ghcr.io/owfeed/owlab-rootfs:openwrt-25.12.4-aarch64_generic" {
 		t.Errorf("openwrt base image: %q", owrt.BaseImage())
 	}
 	imm, _ := cfg.Router("imm")
 	if imm.Platform() != "linux/arm64" {
 		t.Errorf("immortalwrt prebuilt platform: %q", imm.Platform())
 	}
-	if imm.BaseImage() != "ghcr.io/vizzletf/owlab-rootfs:immortalwrt-25.12.1-aarch64_generic" {
+	if imm.BaseImage() != "ghcr.io/owfeed/owlab-rootfs:immortalwrt-25.12.1-aarch64_generic" {
 		t.Errorf("immortalwrt base image: %q", imm.BaseImage())
 	}
 }

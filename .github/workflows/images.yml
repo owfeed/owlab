@@ -48,7 +48,7 @@ env:
   REGISTRY: ghcr.io
   # Lowercase: registries reject uppercase in a repository name, and the
   # GitHub owner here is mixed case.
-  IMAGE: ghcr.io/vizzletf/owlab-rootfs
+  IMAGE: ghcr.io/owfeed/owlab-rootfs
 
 jobs:
   matrix:

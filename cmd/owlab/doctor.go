@@ -12,11 +12,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/VizzleTF/owlab/internal/compose"
-	"github.com/VizzleTF/owlab/internal/config"
-	"github.com/VizzleTF/owlab/internal/dockercli"
-	"github.com/VizzleTF/owlab/internal/engine"
-	"github.com/VizzleTF/owlab/internal/qemu"
+	"owfeed.org/owlab/internal/compose"
+	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/dockercli"
+	"owfeed.org/owlab/internal/engine"
+	"owfeed.org/owlab/internal/qemu"
 )
 
 type checkResult int

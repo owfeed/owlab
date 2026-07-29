@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/VizzleTF/owlab/internal/config"
+	"owfeed.org/owlab/internal/config"
 )
 
 // build compiles the project into a real .apk or .ipk using OpenWrt's SDK.

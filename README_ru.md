@@ -12,7 +12,7 @@
 шаг](#проверять-в-ci).
 
 ```console
-$ go install github.com/VizzleTF/owlab/cmd/owlab@latest
+$ go install owfeed.org/owlab/cmd/owlab@latest
 $ owlab doctor
 ```
 
@@ -231,12 +231,12 @@ dist/
 чтобы они знали друг о друге. `--layout flat` возвращает прежний плоский вывод
 на один релиз.
 
-[artifact-contract]: https://github.com/VizzleTF/owfeed/blob/main/docs/artifact-contract.md
+[artifact-contract]: https://github.com/owfeed/owfeed/blob/main/docs/artifact-contract.md
 
 ### Проверять в CI
 
 ```yaml
-- uses: VizzleTF/owlab/action@v0.4.1
+- uses: owfeed/owlab/action@v0.4.1
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*.apk
@@ -389,7 +389,7 @@ fixtures, сборка через SDK и `test`. Два роутера, гоня
 это containerlab; одна и та же страница LuCI, открытая на 24.10 и 25.12, пока вы
 её правите, — это сюда.
 
-[owfeed](https://github.com/VizzleTF/owfeed) публикует пакеты: собирает,
+[owfeed](https://github.com/owfeed/owfeed) публикует пакеты: собирает,
 подписывает и индексирует apk-фид, а `owfeed smoke` ставит результат на живой
 образ OpenWrt перед публикацией. Последний шаг тоже поднимает контейнер, и
 сходство намеренное: owlab — это цикл разработки, `owfeed smoke` — одна проверка
@@ -415,7 +415,7 @@ fixtures, сборка через SDK и `test`. Два роутера, гоня
 
 ## Лицензия
 
-GPL-2.0-only, и это осознанный выбор — [owfeed](https://github.com/VizzleTF/owfeed)
+GPL-2.0-only, и это осознанный выбор — [owfeed](https://github.com/owfeed/owfeed)
 того же автора под Apache-2.0. owlab встраивает оверлей из `/etc/uci-defaults` и
 `rc.local`, написанный поверх шелл-библиотек самого OpenWrt, и кладёт его внутрь
 каждого собираемого образа; это производная работа. Вызов owlab из вашего CI,

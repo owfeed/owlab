@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/VizzleTF/owlab/internal/config"
+	"owfeed.org/owlab/internal/config"
 )
 
 // CacheDir is where downloaded disk images live.

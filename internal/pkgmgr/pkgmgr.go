@@ -12,7 +12,7 @@ package pkgmgr
 import (
 	"strings"
 
-	"github.com/VizzleTF/owlab/internal/config"
+	"owfeed.org/owlab/internal/config"
 )
 
 // HostToken is what a feed URL carries in place of an address when the feed is

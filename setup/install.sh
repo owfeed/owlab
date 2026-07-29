@@ -38,7 +38,7 @@ mkdir -p "$dir"
 # it, so "latest" has to be resolved to a tag rather than guessed at.
 if [ "${OWLAB_VERSION:-latest}" = "latest" ]; then
   echo "::warning::owlab pinned to \"latest\"; pin a tag so a CI result cannot change without a commit"
-  tag="$(gh release view --repo VizzleTF/owlab --json tagName --jq .tagName)"
+  tag="$(gh release view --repo owfeed/owlab --json tagName --jq .tagName)"
 else
   tag="$OWLAB_VERSION"
 fi
@@ -64,7 +64,7 @@ fi
 # --clobber, because a job may have downloaded a DIFFERENT version into the same
 # directory: the short-circuit above returns only on an exact match, so reaching
 # here with the file present means it is the wrong one and has to be replaced.
-gh release download "$tag" --repo VizzleTF/owlab --pattern "$asset" --dir "$dir" --clobber
+gh release download "$tag" --repo owfeed/owlab --pattern "$asset" --dir "$dir" --clobber
 
 # Verify BEFORE the archive is unpacked or anything in it is executed. A check
 # that runs after the thing it checks is not a check.
@@ -78,13 +78,13 @@ if [ "${OWLAB_VERIFY:-true}" = "true" ]; then
   # captured and echoed either way: a check nobody can see ran is one nobody
   # believes ran.
   if out=$(gh attestation verify "$dir/$asset" \
-      --repo VizzleTF/owlab \
-      --signer-workflow VizzleTF/owlab/.github/workflows/release.yml 2>&1); then
+      --repo owfeed/owlab \
+      --signer-workflow owfeed/owlab/.github/workflows/release.yml 2>&1); then
     echo "$out"
-    echo "verified $asset as built by VizzleTF/owlab .github/workflows/release.yml"
+    echo "verified $asset as built by owfeed/owlab .github/workflows/release.yml"
   else
     echo "$out"
-    echo "::error::$asset does not verify as built by VizzleTF/owlab's release workflow — refusing to install it"
+    echo "::error::$asset does not verify as built by owfeed/owlab's release workflow — refusing to install it"
     echo "::error::releases before v0.2.0 carry no attestation; pin a later tag, or set verify: false to accept an unverified download"
     rm -f "$dir/$asset"
     exit 1
