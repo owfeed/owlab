@@ -178,8 +178,8 @@ func (a *app) doctor(ctx context.Context, args []string) error {
 // Worth a check of its own because the failure is silent and the error it
 // eventually produces names the wrong thing. Some engines — OrbStack, measured
 // — do not forward outbound UDP port 53 at all, while TCP leaves normally. A
-// package that ships its own resolver then cannot look anything up: podkop's
-// sing-box exits with
+// package that ships its own resolver then cannot look anything up. One such
+// daemon exits with
 //
 //	initial rule-set: ... lookup github.com: context deadline exceeded
 //
@@ -230,7 +230,7 @@ awk '$1 == "nameserver" { print "engine " $2; exit }' /etc/resolv.conf`
 			"containers can query any resolver over UDP; a package that brings its own works unconfigured"}}
 	}
 	detail := "this engine does not forward outbound UDP port 53 — a package with its own resolver " +
-		"(podkop, https-dns-proxy, AdGuard Home) resolves nothing and reports it as the destination being " +
+		"resolves nothing and reports it as the destination being " +
 		"unreachable. Point its bootstrap resolver at the engine's"
 	if engineNS != "" {
 		detail += " (" + engineNS + ")"

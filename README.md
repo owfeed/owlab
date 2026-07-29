@@ -93,9 +93,9 @@ name their files differently:
 ```yaml
 defaults:
   extra_packages:
-    - name: luci-app-podkop
-      apk: https://github.com/itdoginfo/podkop/releases/download/0.7.21/luci-app-podkop-0.7.21-r1.apk
-      ipk: https://github.com/itdoginfo/podkop/releases/download/0.7.21/luci-app-podkop-v0.7.21-r1-all.ipk
+    - name: luci-app-example
+      apk: https://github.com/someone/example/releases/download/1.4.0/luci-app-example-1.4.0-r1.apk
+      ipk: https://github.com/someone/example/releases/download/1.4.0/luci-app-example-v1.4.0-r1-all.ipk
 ```
 
 Pin an exact release. These are installed without checking signatures.

@@ -13,7 +13,7 @@ when you hit them, because almost none of them presents as its cause.
 ### procd jails services, and a container cannot build a jail
 
 **Symptom.** A router with no DNS server. Any package that configures dnsmasq
-to forward somewhere — podkop pointing it at sing-box — is configuring a daemon
+to forward somewhere — pointing it at a helper daemon — is configuring a daemon
 that is not running. `service dnsmasq status` says `not running` and starting it
 appears to succeed.
 
@@ -82,7 +82,7 @@ whole class of real behaviour.
 
 ### `br-lan` did not exist
 
-**Symptom.** podkop installs, starts, reports success, and proxies no traffic.
+**Symptom.** A package installs, starts, reports success, and moves no traffic.
 Its nft rules are present but match nothing.
 
 **Cause.** `source_network_interfaces` defaults to `br-lan`, and the container's
@@ -98,7 +98,7 @@ See [internals](internals.md#br-lan).
 all present.
 
 **Cause.** They were staged under their own names and installed by a glob,
-which is alphabetical. `luci-app-podkop` sorts before `podkop` and requires it.
+which is alphabetical. `luci-app-example` sorts before `example-daemon` and requires it.
 
 **Fix.** Staged numbered, and handed to the package manager as one set so it
 resolves among them.
@@ -121,15 +121,15 @@ produced a different router on one of them.
 
 ### The engine does not forward outbound UDP port 53
 
-**Symptom.** sing-box exits with
+**Symptom.** A daemon with its own DNS resolver exits with
 `initial rule-set: ... lookup github.com: context deadline exceeded` on a
 router where `https://github.com` answers 200. Switching to DoH does not help —
 `lookup dns.google` fails the same way.
 
 **Cause.** Some engines (OrbStack, measured) do not forward outbound UDP/53 at
 all. A plain `alpine` container there behaves identically, so it is the engine
-and not OpenWrt. DoH fails too because podkop uses `bootstrap_dns_server` as a
-plain UDP server on port 53 to resolve the DoH host in the first place.
+and not OpenWrt. DoH fails too, because such a daemon resolves its DoH host
+through a plain UDP server on port 53 before it can use DoH at all.
 
 **Fix.** Not fixable in owlab. `owlab doctor` probes for it and names the
 engine's own resolver, which does answer; a package with its own resolver

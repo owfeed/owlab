@@ -78,7 +78,7 @@ dns="$(printf '%s %s\n' "$engine_ns" "$fallback_ns" | tr ' ' '\n' | awk 'NF && !
 #
 # Not decoration. br-lan is what every OpenWrt target with more than one
 # ethernet port actually builds, so packages and scripts refer to it by name:
-# podkop's source_network_interfaces defaults to br-lan, and so do plenty of
+# an interface list in a package's own config defaults to br-lan, and so do plenty of
 # firewall snippets, hotplug scripts and forum recipes. On a router whose lan
 # is a bare eth0 all of those silently apply to nothing — no error, just a
 # feature that does not work.

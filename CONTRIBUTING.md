@@ -94,6 +94,14 @@ fails every install.
 
 ## Things that need care
 
+**Documentation describes routers and packaging, not what packages are for.** owlab starts
+test routers and runs assertions; it has no opinion about the software under test, and the
+documentation keeps it that way. Examples and troubleshooting entries name a generic package
+— `luci-app-example`, `example-daemon` — and describe the mechanism: procd jails a service,
+a glob installs in alphabetical order, an engine drops outbound UDP/53. The symptom and the
+cause are what make an entry useful; which third-party package it was first observed with is
+not, and naming one reads as endorsement.
+
 **`owlab.yaml` is the compatibility surface.** Unknown keys are an error by
 design, so a renamed field breaks every existing config at load time. A change
 that would break a `version: 1` file waits for a major release.

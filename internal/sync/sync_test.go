@@ -96,7 +96,7 @@ func TestBuildArchiveUsesTheDefaultInstallMapping(t *testing.T) {
 // sync would throw away whatever the developer just configured.
 func TestBuildArchiveSkipsRouterState(t *testing.T) {
 	cfg := project(t, map[string]string{
-		"root/etc/config/podkop":         "config podkop",
+		"root/etc/config/example":        "config example",
 		"root/etc/uci-defaults/50-thing": "#!/bin/sh",
 		"root/etc/init.d/thing":          "#!/bin/sh",
 	})
@@ -112,7 +112,7 @@ func TestBuildArchiveSkipsRouterState(t *testing.T) {
 	if _, ok := got["/etc/init.d/thing"]; !ok {
 		t.Errorf("the init script should have been synced; archive holds %v", keys(got))
 	}
-	for _, skipped := range []string{"/etc/config/podkop", "/etc/uci-defaults/50-thing"} {
+	for _, skipped := range []string{"/etc/config/example", "/etc/uci-defaults/50-thing"} {
 		if _, ok := got[skipped]; ok {
 			t.Errorf("%s is router state and must not be synced", skipped)
 		}

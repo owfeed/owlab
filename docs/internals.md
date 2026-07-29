@@ -239,8 +239,8 @@ order of the two NICs is the whole design there; see
 The container's lan is a bridge named `br-lan`, with `eth0` as its only port.
 
 Not decoration. Every OpenWrt target with more than one ethernet port builds
-`br-lan`, so packages and scripts refer to it by name: podkop's
-`source_network_interfaces` defaults to it, and so do a great many firewall
+`br-lan`, so packages and scripts refer to it by name: an interface list in a
+package's own config usually defaults to it, and so do a great many firewall
 snippets, hotplug scripts and forum recipes. On a router whose lan was a bare
 `eth0` all of those applied to nothing — no error, just a feature that did not
 work.
@@ -314,7 +314,7 @@ the engine and not OpenWrt, and owlab cannot fix it. TCP is unaffected —
 `https://github.com` answers 200.
 
 It matters because a package that ships its own resolver then resolves nothing
-and blames the destination. podkop's sing-box exits with
+and blames the destination. One such daemon exits with
 
 ```
 initial rule-set: ... lookup github.com: context deadline exceeded
@@ -445,7 +445,7 @@ package-manager error three layers into a build.
 
 **Order is preserved.** Files are staged numbered (`00-`, `01-`) because the
 image installs whatever the glob returns and a glob is alphabetical. These
-packages depend on each other — `luci-app-podkop` requires `podkop`, and sorts
+packages depend on each other — `luci-app-example` requires `example-daemon`, and sorts
 before it — which apk refuses outright with `unable to select packages`.
 
 **All of them in one command.** Handed the whole set, the package manager

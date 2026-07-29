@@ -57,7 +57,7 @@ func fetchExtraPackages(cfg *config.Config, ctxDir, cacheDir string) error {
 			}
 			// Numbered, because the image installs whatever the glob returns
 			// and a glob is alphabetical. These packages depend on each other
-			// — luci-app-podkop needs podkop — and alphabetical order put the
+			// — a luci-app-* needs the daemon it drives — and alphabetical order put the
 			// dependent first, which apk rejects outright with "unable to
 			// select packages". The prefix makes glob order the order the
 			// developer wrote them in.
