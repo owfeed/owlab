@@ -456,7 +456,7 @@ add'` is the whole of "is anything stale".
 ### In GitHub Actions
 
 ```yaml
-- uses: owfeed/owlab/action@v0.5.2
+- uses: owfeed/owlab/action@v0.5.3
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*.apk
@@ -468,7 +468,7 @@ add'` is the whole of "is anything stale".
 Every flag above has an input with the same name; `assert` and `install` take
 one per line. The action writes a table to the job summary and exposes
 `report` (the JSON path), `passed` and `failed` as outputs.
-`owfeed/owlab/setup@v0.5.2` installs the binary alone, for a job that drives
+`owfeed/owlab/setup@v0.5.3` installs the binary alone, for a job that drives
 `owlab` itself. Both verify the download against this repository's build
 attestation before the binary is executed or put on `PATH`.
 
