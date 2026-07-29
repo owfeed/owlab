@@ -178,9 +178,9 @@ On Apple Silicon this runs under emulation — every `openwrt/sdk` tag is
 In a package repository, with no `owlab.yaml`:
 
 ```yaml
-- uses: VizzleTF/owlab/setup@v0.4.0
+- uses: VizzleTF/owlab/setup@v0.4.1
 - run: owlab build --release 25.12.5 --out dist
-- uses: VizzleTF/owlab/action@v0.4.0
+- uses: VizzleTF/owlab/action@v0.4.1
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*

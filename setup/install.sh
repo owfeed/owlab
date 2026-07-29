@@ -45,7 +45,26 @@ fi
 ver="${tag#v}"
 asset="owlab_${ver}_${os}_${arch}.tar.gz"
 
-gh release download "$tag" --repo VizzleTF/owlab --pattern "$asset" --dir "$dir"
+# Already installed at this exact version, in this job. Using the action twice in
+# one job is an ordinary thing to want -- 25.12 takes an apk and 24.10 takes an
+# ipk, so proving a package works on both releases is two steps -- and without
+# this the second one dies in `gh release download`, which refuses to overwrite a
+# file it downloaded a minute earlier.
+#
+# Matched on the version rather than on the file's existence: two steps asking for
+# different versions have to get different binaries, and silently reusing the
+# first would make the second step's `version:` a lie.
+if [ -x "$dir/owlab" ] && [ "$("$dir/owlab" version 2>/dev/null | head -1 | awk '{print $2}')" = "$ver" ]; then
+  echo "owlab $ver is already installed in this job"
+  echo "$dir" >> "$GITHUB_PATH"
+  export PATH="$dir:$PATH"
+  exit 0
+fi
+
+# --clobber, because a job may have downloaded a DIFFERENT version into the same
+# directory: the short-circuit above returns only on an exact match, so reaching
+# here with the file present means it is the wrong one and has to be replaced.
+gh release download "$tag" --repo VizzleTF/owlab --pattern "$asset" --dir "$dir" --clobber
 
 # Verify BEFORE the archive is unpacked or anything in it is executed. A check
 # that runs after the thing it checks is not a check.

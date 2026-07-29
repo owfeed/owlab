@@ -7,6 +7,18 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [0.4.1] - 2026-07-29
+
+### Fixed
+
+- `owlab/action` and `owlab/setup` used twice in one job failed the second time.
+  `gh release download` refuses to overwrite a file it downloaded a minute
+  earlier, and there was no reason to download it again. Two uses in a job is an
+  ordinary thing to want: 25.12 installs an apk and 24.10 an ipk, so proving a
+  package works on both releases is two steps. The install now returns early when
+  the requested version is already there, and clobbers when a different version
+  is, so a second step asking for a different `version:` still gets it.
+
 ## [0.4.0] - 2026-07-28
 
 ### Added
@@ -171,7 +183,8 @@ First release.
   to be re-run still leaves the immutable tags behind.
 
 [artifact-contract]: https://github.com/VizzleTF/owfeed/blob/main/docs/artifact-contract.md
-[Unreleased]: https://github.com/VizzleTF/owlab/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/VizzleTF/owlab/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/VizzleTF/owlab/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/VizzleTF/owlab/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/VizzleTF/owlab/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/VizzleTF/owlab/compare/v0.1.0...v0.2.0
