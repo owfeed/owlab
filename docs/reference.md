@@ -301,6 +301,34 @@ Silicon, `x86_64` on Intel and AMD. Anything else runs under emulation, which
 works but is slow enough to notice; `owlab doctor` warns when you have asked
 for it.
 
+## Environment
+
+Nothing here is needed on a working machine. Each one exists for a case owlab
+cannot detect: an install somewhere unusual, or a host whose accelerator
+misbehaves.
+
+| | |
+|---|---|
+| `OWLAB_CONFIG` | the project to act on, instead of searching the working directory and its parents |
+| `OWLAB_PUBKEY` | the ssh public key(s) to install, instead of every `~/.ssh/id_*.pub` |
+| `OWLAB_ROOT_PASSWORD` | set a root password at build time; the default is none |
+| `OWLAB_CACHE` | where downloaded VM images live, instead of the user cache directory |
+| `OWLAB_QEMU` | the `qemu-system-*` binary to boot with |
+| `OWLAB_QEMU_IMG` | the `qemu-img` to create disks with; the default is the one beside the emulator |
+| `OWLAB_FIRMWARE` | the UEFI firmware for an aarch64 or armv7 VM |
+| `OWLAB_ACCEL` | force an accelerator, e.g. `tcg`, instead of the fastest one this host has |
+
+`OWLAB_QEMU` is rarely needed now that owlab searches the directories the
+installers use — `C:\Program Files\qemu` and the scoop and chocolatey
+locations on Windows, `/opt/homebrew/bin` on macOS — rather than PATH alone.
+`owlab doctor` prints the binary it settled on.
+
+`OWLAB_ACCEL=tcg` is the escape hatch for a host whose hardware acceleration
+does not work. That is not hypothetical on Windows: WHPX sits on top of
+Hyper-V, and it is reported to hang some machines on an SMP boot while working
+on the next one over. Translation is slower by roughly an order of magnitude
+and always works.
+
 ## owlab test
 
 One command for CI: start the routers, install the package, assert against the

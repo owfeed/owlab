@@ -176,6 +176,73 @@ func TestFirmwareOverrideMustExist(t *testing.T) {
 	}
 }
 
+// qemu-img has to come from the same install as the emulator: a qemu-img from
+// a different QEMU can write a qcow2 the emulator then refuses. On Windows it
+// is also the only way it is found at all, since neither binary is on PATH.
+func TestQEMUImgComesFromBesideTheEmulator(t *testing.T) {
+	t.Setenv("OWLAB_QEMU_IMG", "")
+	dir := t.TempDir()
+	name := "qemu-img"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	want := filepath.Join(dir, name)
+	if err := os.WriteFile(want, []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := FindQEMUImg(filepath.Join(dir, "qemu-system-x86_64"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("FindQEMUImg = %q, want the one beside the emulator (%q)", got, want)
+	}
+}
+
+func TestQEMUImgHonoursTheOverride(t *testing.T) {
+	t.Setenv("OWLAB_QEMU_IMG", "/opt/weird/qemu-img")
+	got, err := FindQEMUImg("/usr/bin/qemu-system-x86_64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "/opt/weird/qemu-img" {
+		t.Errorf("FindQEMUImg = %q, want the override", got)
+	}
+}
+
+// The message a developer gets when QEMU is missing has to be actionable on
+// the machine reading it: the command to run, the places already searched, and
+// the override for an install somewhere unusual. "not found on PATH" was none
+// of those on Windows, where being off PATH is the normal state of a correct
+// install.
+func TestMissingQEMUSaysWhereItLookedAndWhatToRun(t *testing.T) {
+	t.Setenv("OWLAB_QEMU", "")
+	t.Setenv("PATH", t.TempDir())
+	tgt, err := config.LookupTarget("x86_64")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = FindQEMU(tgt)
+	if err == nil {
+		t.Fatal("expected an error with no qemu on PATH")
+	}
+	msg := err.Error()
+	for _, want := range []string{"qemu-system-x86_64", "OWLAB_QEMU", "Install QEMU"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the error does not mention %q:\n%s", want, msg)
+		}
+	}
+	// It also has to name at least one directory it searched, or "not found"
+	// is unfalsifiable from the user's side.
+	if len(installDirs()) == 0 {
+		t.Fatal("no install directories are searched on this platform")
+	}
+	if !strings.Contains(msg, installDirs()[0]) {
+		t.Errorf("the error does not say where it looked:\n%s", msg)
+	}
+}
+
 func TestCacheDirHonoursTheOverride(t *testing.T) {
 	t.Setenv("OWLAB_CACHE", "/tmp/owlab-cache-test")
 	if got := CacheDir(); got != "/tmp/owlab-cache-test" {

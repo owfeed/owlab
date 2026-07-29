@@ -101,9 +101,26 @@ For `fidelity: vm`:
 winget install SoftwareFreedomConservancy.QEMU
 ```
 
-and enable **Windows Hypervisor Platform** in Windows Features. Without it QEMU
-has no `whpx` and falls back to translation — minutes rather than seconds, and
-doctor names it rather than leaving you to guess.
+Nothing needs to go on `PATH` afterwards. The installer does not add QEMU to
+it, and owlab looks in `C:\Program Files\qemu` and the scoop and chocolatey
+locations itself; `owlab doctor` prints the binary it settled on. If yours is
+somewhere else entirely, `OWLAB_QEMU=C:\path\to\qemu-system-x86_64.exe`.
+
+Then enable **Windows Hypervisor Platform**, which is off by default. In an
+elevated PowerShell:
+
+```powershell
+dism.exe /Online /Enable-Feature /All /FeatureName:HypervisorPlatform
+```
+
+and reboot. Without it QEMU has no `whpx` and falls back to translation —
+minutes per boot rather than seconds. Doctor names which of the two you have
+rather than leaving you to time it.
+
+If a VM will not boot at all, or hangs partway with acceleration on, try
+`$env:OWLAB_ACCEL="tcg"`. WHPX sits on top of Hyper-V and there are machines it
+does not work on; translation is slow and always works, and knowing which of
+the two you are looking at is the first useful thing to establish.
 
 Two more things doctor checks here, because both are optional Windows features
 rather than defaults:

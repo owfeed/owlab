@@ -7,6 +7,61 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+`fidelity: vm` on Windows. It compiled there from the beginning and had
+per-platform process handling written for it, which is not the same as working:
+the first thing it did on a real Windows host was hand QEMU a path only unix
+has, and the second was fail to mention that QEMU had exited.
+
+### Fixed
+
+- **A VM would not boot on Windows at all.** QEMU was given
+  `-object rng-random,filename=/dev/urandom` for the entropy OpenWrt's boot
+  waits on. Windows has no `/dev/urandom`, so QEMU exited before the guest
+  started. It is `rng-builtin` there now — the same virtio-rng to the guest,
+  with no host character device involved.
+- **A QEMU that failed to start was reported as started.** On Windows the
+  process is launched rather than run to completion, so `Start` returned
+  success for a process that was already dead and its stderr went nowhere. The
+  developer got a wait-for-ssh timeout naming nothing. owlab now waits, notices
+  a QEMU that has already exited, and reports what it said.
+- **A VM died with the terminal that started it.** A child process joins its
+  parent's console group and receives `CTRL_CLOSE_EVENT` when that window
+  closes. It is now started with `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`,
+  which also means Ctrl-C during `owlab up` interrupts the wait rather than the
+  router.
+- **QEMU installed correctly was reported as not installed.** Neither the
+  official Windows installer nor `winget` puts QEMU on `PATH`, and owlab looked
+  only there — so a developer who had just installed it exactly as instructed
+  was told to install it. `PATH` is still first, followed by the directories
+  the installers actually use: `%ProgramFiles%\qemu`, `%LOCALAPPDATA%\Programs\qemu`,
+  the scoop app directory, chocolatey's, and `/opt/homebrew/bin` on macOS.
+- **`qemu-img` is taken from beside the emulator** rather than from `PATH`. The
+  two have to come from the same install — a `qemu-img` from a different QEMU
+  can write a qcow2 the emulator then refuses — and on Windows neither is on
+  `PATH` for a lookup to find.
+- **UEFI firmware is looked for beside the binary too.** A unix install puts
+  `edk2-*.fd` in `../share/qemu`; the Windows build keeps it next to
+  `qemu-system-*.exe`.
+
+### Added
+
+- `OWLAB_ACCEL` forces an accelerator. `OWLAB_ACCEL=tcg` is the escape hatch
+  for a host where hardware acceleration does not work, which on Windows is not
+  hypothetical: WHPX sits on top of Hyper-V and is reported to hang some
+  machines on an SMP boot while working on the next one over.
+- `owlab doctor` prints the `qemu-system-*` and `qemu-img` it settled on, so
+  "found outside PATH" is visible rather than merely true, and names the exact
+  `dism.exe` command that enables Windows Hypervisor Platform when `whpx` is
+  missing.
+- The install hint is now chosen by which package manager is on the machine —
+  winget, scoop or chocolatey; brew or port; apt, dnf, pacman, zypper or apk —
+  rather than guessed from the OS. A missing QEMU also names every directory
+  searched and the `OWLAB_QEMU` override.
+- An `Environment` section in the reference listing every `OWLAB_*` variable,
+  and troubleshooting entries for each failure above, by symptom.
+
 ## [0.5.2] - 2026-07-29
 
 The README has said "Linux, WSL2, Docker Desktop for Windows, or macOS" since the

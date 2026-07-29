@@ -176,7 +176,7 @@ func (v *VM) Start(ctx context.Context, opts StartOptions) error {
 	if err != nil {
 		return err
 	}
-	if err := v.ensureDisks(ctx, base); err != nil {
+	if err := v.ensureDisks(ctx, qemuBin, base); err != nil {
 		return err
 	}
 
@@ -203,20 +203,51 @@ func (v *VM) Start(ctx context.Context, opts StartOptions) error {
 		return nil
 	}
 
+	// Windows. Two things have to be arranged that -daemonize does for free.
+	//
+	// Detached, so the VM survives the console it was started from. A child
+	// started the ordinary way joins its parent's console group and receives
+	// CTRL_CLOSE_EVENT when that window is closed, which would take the
+	// router down with the terminal that happened to start it.
+	//
+	// And its failure has to be noticed. `Start` returns as soon as the
+	// process exists, so QEMU rejecting an argument — the single most likely
+	// outcome on a machine nobody has tried this on — looked exactly like a
+	// successful boot, and the developer got a wait-for-ssh timeout naming
+	// nothing. Waiting briefly and reading stderr turns that back into QEMU's
+	// own message.
 	cmd := exec.Command(qemuBin, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	detach(cmd)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("qemu failed to start: %w", err)
 	}
 	if err := os.WriteFile(v.pidPath(), []byte(strconv.Itoa(cmd.Process.Pid)), 0o644); err != nil {
 		return err
 	}
-	// Released rather than waited on: the VM outlives this command.
-	return cmd.Process.Release()
+
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	select {
+	case <-exited:
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = "it exited immediately and said nothing"
+		}
+		os.Remove(v.pidPath())
+		return fmt.Errorf("qemu failed to start: %s", msg)
+	case <-time.After(2 * time.Second):
+		// Still running, which is what a booting VM looks like. The goroutine
+		// above is left to the process exiting or to owlab exiting first;
+		// either way the VM outlives this command.
+		return nil
+	}
 }
 
 // ensureDisks creates the qcow2 overlay on the cached image, and the extroot
 // disk beside it.
-func (v *VM) ensureDisks(ctx context.Context, base string) error {
+func (v *VM) ensureDisks(ctx context.Context, qemuBin, base string) error {
 	if !fileExists(v.diskPath()) {
 		// A qcow2 with the downloaded image as its backing file. The base is
 		// never written to, so one download serves every router and every
@@ -225,13 +256,13 @@ func (v *VM) ensureDisks(ctx context.Context, base string) error {
 		if err != nil {
 			return err
 		}
-		if err := qemuImg(ctx, "create", "-q", "-f", "qcow2",
+		if err := qemuImg(ctx, qemuBin, "create", "-q", "-f", "qcow2",
 			"-F", "raw", "-b", abs, v.diskPath()); err != nil {
 			return err
 		}
 	}
 	if v.Router.VM.Disk != "" && !fileExists(v.overlayPath()) {
-		if err := qemuImg(ctx, "create", "-q", "-f", "qcow2", v.overlayPath(), v.Router.VM.Disk); err != nil {
+		if err := qemuImg(ctx, qemuBin, "create", "-q", "-f", "qcow2", v.overlayPath(), v.Router.VM.Disk); err != nil {
 			return err
 		}
 	}
@@ -253,12 +284,22 @@ func (v *VM) qemuArgs(t config.Target, accel Accel, firmware string) []string {
 		"-display", "none",
 		"-serial", "file:" + v.ConsolePath(),
 		"-pidfile", v.pidPath(),
-		// OpenWrt's boot waits on entropy — urngd, dropbear host keys, the
-		// jffs2 overlay. Without a virtio-rng the guest is stuck on a kernel
-		// pool that a headless VM has almost nothing to fill from.
-		"-object", "rng-random,filename=/dev/urandom,id=rng0",
-		"-device", "virtio-rng-pci,rng=rng0",
 	}
+
+	// OpenWrt's boot waits on entropy — urngd, dropbear host keys, the jffs2
+	// overlay. Without a virtio-rng the guest is stuck on a kernel pool that a
+	// headless VM has almost nothing to fill from.
+	//
+	// Two spellings of the same thing. rng-random reads a character device,
+	// which Windows does not have: `filename=/dev/urandom` there is a path
+	// QEMU cannot open, and it exits before the guest starts. rng-builtin uses
+	// QEMU's own entropy source and needs no file at all.
+	if runtime.GOOS == "windows" {
+		args = append(args, "-object", "rng-builtin,id=rng0")
+	} else {
+		args = append(args, "-object", "rng-random,filename=/dev/urandom,id=rng0")
+	}
+	args = append(args, "-device", "virtio-rng-pci,rng=rng0")
 	if firmware != "" {
 		args = append(args, "-bios", firmware)
 	}
@@ -352,10 +393,14 @@ func (v *VM) removeDisks() error {
 }
 
 // qemuImg runs qemu-img, which ships with every QEMU install.
-func qemuImg(ctx context.Context, args ...string) error {
-	bin := "qemu-img"
-	if env := os.Getenv("OWLAB_QEMU_IMG"); env != "" {
-		bin = env
+//
+// qemuBin is the emulator already located for this router, and qemu-img is
+// taken from beside it: the two have to come from the same install, and on
+// Windows neither is on PATH for lookup to fall back to.
+func qemuImg(ctx context.Context, qemuBin string, args ...string) error {
+	bin, err := FindQEMUImg(qemuBin)
+	if err != nil {
+		return err
 	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	var stderr bytes.Buffer

@@ -3,6 +3,7 @@ package qemu
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -160,9 +161,21 @@ func TestQEMUArgsForwardToTheLANSide(t *testing.T) {
 func TestQEMUArgsAlwaysGiveTheGuestEntropy(t *testing.T) {
 	v := vmFor(t)
 	joined := strings.Join(v.qemuArgs(v.Router.Target(), Accel{Name: "tcg"}, ""), " ")
-	for _, want := range []string{"rng-random", "virtio-rng-pci"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("no %s in the command line:\n%s", want, joined)
-		}
+	if !strings.Contains(joined, "virtio-rng-pci") {
+		t.Errorf("no virtio-rng-pci in the command line:\n%s", joined)
+	}
+
+	// The backend differs by host and must: rng-random reads a character
+	// device, and naming /dev/urandom on Windows produces a path QEMU cannot
+	// open, so it exits before the guest starts.
+	want := "rng-random"
+	if runtime.GOOS == "windows" {
+		want = "rng-builtin"
+	}
+	if !strings.Contains(joined, want) {
+		t.Errorf("no %s in the command line:\n%s", want, joined)
+	}
+	if runtime.GOOS == "windows" && strings.Contains(joined, "/dev/urandom") {
+		t.Errorf("Windows command line names /dev/urandom, which does not exist there:\n%s", joined)
 	}
 }

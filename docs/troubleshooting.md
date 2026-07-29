@@ -229,6 +229,62 @@ whenever a script has to run on both macOS and Linux.
 while `up` still failed with "address already in use". It now probes `0.0.0.0`,
 which is what Docker binds.
 
+### An installed QEMU that owlab said was not installed
+
+**Symptom.** On Windows, `winget install SoftwareFreedomConservancy.QEMU`
+succeeds, `C:\Program Files\qemu\qemu-system-x86_64.exe` exists, and owlab
+reports it as not found.
+
+**Cause.** Neither the official installer nor winget puts QEMU on `PATH`, and
+owlab looked only there. Being off `PATH` is the normal state of a correct
+Windows install, so this was owlab calling a working machine broken.
+
+**Fix.** `PATH` first, then the directories the installers use —
+`%ProgramFiles%\qemu`, `%LOCALAPPDATA%\Programs\qemu`, the scoop app directory
+and chocolatey's. `owlab doctor` prints the binary and the `qemu-img` it
+settled on, and `OWLAB_QEMU` still overrides both.
+
+`qemu-img` is taken from beside the emulator rather than from `PATH`, for the
+same reason and one more: the two have to come from the same install, since a
+`qemu-img` from a different QEMU can write a qcow2 the emulator then refuses.
+
+### A VM that "started" on Windows and never answered
+
+**Symptom.** `owlab up` reported the router as starting, then timed out waiting
+for ssh. Nothing in the logs, because there was no log.
+
+**Cause.** Two of them, both invisible.
+
+QEMU was told `-object rng-random,filename=/dev/urandom`. There is no
+`/dev/urandom` on Windows, so QEMU exited before the guest started. It is
+`rng-builtin` there now — same virtio-rng for the guest, no character device
+for the host to not have.
+
+And the failure could not be seen: on Windows QEMU is started rather than run
+to completion, so `Start` returned successfully for a process that was already
+dead, and its stderr went nowhere. owlab now waits briefly, notices a QEMU that
+has already exited, and reports what it said.
+
+### A router that died with the terminal that started it
+
+**Symptom.** On Windows, closing the PowerShell window took the running VM with
+it.
+
+**Cause.** A child process started the ordinary way joins its parent's console
+group and receives `CTRL_CLOSE_EVENT` when that window closes. On unix
+`-daemonize` had already detached QEMU; Windows has no such flag.
+
+**Fix.** `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`. The second half also
+means Ctrl-C during `owlab up` interrupts the wait rather than the router.
+
+### WHPX is not a guarantee
+
+Hardware acceleration on Windows goes through Hyper-V, and there are machines
+where a VM will not boot or hangs partway with `whpx` while the same image
+works elsewhere. `OWLAB_ACCEL=tcg` forces translation: roughly an order of
+magnitude slower, and it always works. Establishing which of the two you are
+looking at is worth doing before debugging anything else.
+
 ---
 
 ## Two upstream behaviours worth knowing

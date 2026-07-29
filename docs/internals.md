@@ -641,10 +641,26 @@ the kernel pool from.
 
 ### Lifecycle
 
-QEMU is detached with `-daemonize`, which also writes the pidfile; Windows has
-no such flag, so there the process is started detached and the pidfile written
-by owlab. A pidfile outlives the process that wrote it, so liveness is checked
-with signal 0 rather than trusted.
+QEMU is detached with `-daemonize`, which also writes the pidfile. Windows has
+no such flag, so there the process is started with `DETACHED_PROCESS |
+CREATE_NEW_PROCESS_GROUP` and the pidfile written by owlab. Both halves of that
+flag pair earn their place: without the first, closing the terminal delivers
+`CTRL_CLOSE_EVENT` and takes the router with it; without the second, Ctrl-C
+during `owlab up` interrupts the router rather than the wait.
+
+Starting rather than running to completion costs the one thing `-daemonize`
+gives for free — an exit status. QEMU rejecting an argument looked exactly like
+a successful boot, and surfaced a minute later as a wait-for-ssh timeout naming
+nothing. owlab waits two seconds, and a QEMU that has exited by then is
+reported with whatever it wrote to stderr.
+
+A pidfile outlives the process that wrote it, so liveness is checked rather
+than trusted: signal 0 on unix, `tasklist` on Windows, which has no signals.
+
+The entropy source is the other thing that differs. `rng-random` reads a
+character device, and `/dev/urandom` does not exist on Windows — QEMU exits
+before the guest starts. `rng-builtin` is the same virtio-rng to the guest with
+no host file involved, and is what Windows gets.
 
 `owlab down` asks the *guest* to power itself off over ssh rather than killing
 QEMU. The overlay is a real filesystem with real dirty pages, and pulling the

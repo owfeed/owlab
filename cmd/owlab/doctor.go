@@ -265,6 +265,16 @@ func vmChecks(ctx context.Context, hostArch string) []check {
 	if version == "" {
 		version = d.Binary
 	}
+	// Where it was found, not only that it was. owlab looks beyond PATH now,
+	// and a developer whose QEMU is in Program Files should be able to see
+	// that this is the one being used — and which install it belongs to when
+	// there are two.
+	out = append(out, check{"qemu binary", info, d.Binary})
+	if img, err := qemu.FindQEMUImg(d.Binary); err == nil {
+		out = append(out, check{"qemu-img", info, img})
+	} else {
+		out = append(out, check{"qemu-img", warn, err.Error()})
+	}
 	if d.Accel.Native {
 		out = append(out, check{"fidelity vm", pass,
 			fmt.Sprintf("%s with -accel %s — a %s router boots natively", version, d.Accel.Name, t.Arch)})

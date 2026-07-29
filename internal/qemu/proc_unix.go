@@ -4,8 +4,13 @@ package qemu
 
 import (
 	"errors"
+	"os/exec"
 	"syscall"
 )
+
+// detach is a no-op here: QEMU is started with -daemonize on every platform
+// that has it, so it has already detached itself by the time Start returns.
+func detach(*exec.Cmd) {}
 
 // processAlive reports whether a pid names a live process.
 //
