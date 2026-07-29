@@ -102,7 +102,7 @@ inputs:
     required: false
     default: 20m
   version:
-    description: owlab release to install, such as v0.5.1, or "latest". Pin a tag.
+    description: owlab release to install, such as v0.5.2, or "latest". Pin a tag.
     required: false
     default: latest
   verify:

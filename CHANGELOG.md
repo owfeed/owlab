@@ -7,7 +7,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
-## [Unreleased]
+## [0.5.2] - 2026-07-29
 
 The README has said "Linux, WSL2, Docker Desktop for Windows, or macOS" since the
 first release, and CI proved a third of it: the unit tests ran on Linux, the other
