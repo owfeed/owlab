@@ -3,7 +3,7 @@
 *owlab is the bottom of a three-tool stack —
 [ECOSYSTEM.md](https://github.com/owfeed/owfeed/blob/main/docs/ECOSYSTEM.md) in
 owfeed says where the boundaries run and why. This file says how much of owlab's
-side of that exists, as of 2026-07-28.*
+side of that exists, as of 2026-07-29.*
 
 It lives here rather than in the shared document on purpose. The shared version
 went stale twice, both times on an owlab fact, because nothing in owfeed's CI ever
@@ -19,6 +19,23 @@ somebody has to edit in the same pull request that made it untrue.
 | `owlab build` writes `dist/<arch>/` | The layout `owfeed` and a feed's ingest both read. Built luci-theme-footstrap through the SDK and released it from that tree without rearranging anything |
 | Install from a signed feed by name | `owlab test --feed` on 25.12: the package installs out of a signed index and its LuCI page renders. With the key removed the router reports it as not existing at all |
 | `owlab releases` without a project | Asking a download server what it publishes needs neither an `owlab.yaml` nor a container engine, and no longer demands either |
+| The unit tests pass on Linux, macOS and Windows | `ci.yml` runs `go test`, `owlab doctor` and `owlab version` on `ubuntu-24.04`, `macos-15` and `windows-2025`. Until this was added, "runs everywhere" rested on a cross-compile, and two Windows bugs were living in the gap — permissions derived from a filesystem that has none, and `project.build` run by a shell that is not there |
+
+## Working, and verified on one platform
+
+Everything with a router in it. `owlab up`, `sync`, `install`, `test` and the VM
+tier are exercised end to end on Linux only, by `ci.yml`'s `e2e` job and by daily
+use. macOS and Windows are covered by the unit tests, by the platform-specific
+code paths those tests reach, and by `doctor` starting on a bare host — not by a
+router that actually booted there.
+
+That gap is a property of the runners rather than a decision: GitHub's macOS and
+Windows runners have no container engine that runs Linux images, and Docker
+Desktop cannot be installed on one. Closing it needs hardware this project does
+not have. What is written about those platforms in the
+[runbook](runbook.md#install-owlab-on-this-machine) comes from reading the code
+and from what each platform documents about itself, and is marked as such here
+rather than presented as measurement.
 
 ## Built but not yet exercised in anger
 

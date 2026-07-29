@@ -20,9 +20,19 @@ if [ -n "${OWLAB_SKIP_INSTALL:-}" ] && command -v owlab >/dev/null 2>&1; then
   exit 0
 fi
 
+# Windows is deliberately not here, and not because the binary is missing —
+# releases carry windows/amd64 and windows/arm64, and owlab runs on a
+# developer's Windows machine. A GitHub Windows runner is the one place it
+# cannot: Docker Desktop is not installed there and cannot be, so a runner has
+# no engine that speaks Linux images and every owlab command that needs a
+# router would fail after this step rather than during it. Say so here, where
+# the cause is still visible.
 case "$RUNNER_OS" in
   Linux)  os=linux ;;
   macOS)  os=darwin ;;
+  Windows)
+    echo "::error::owlab needs a container engine that runs Linux images, and GitHub's Windows runners have none. Use a Linux runner."
+    exit 1 ;;
   *) echo "::error::owlab has no release build for $RUNNER_OS"; exit 1 ;;
 esac
 case "$RUNNER_ARCH" in

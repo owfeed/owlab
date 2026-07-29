@@ -10,6 +10,134 @@ to [troubleshooting](troubleshooting.md) — it is sorted by symptom.
 
 ---
 
+## Install owlab on this machine
+
+One Go binary, one container engine. What differs per platform is where the
+engine comes from and, for `fidelity: vm`, where QEMU comes from.
+
+Either way, `owlab doctor` is the check: it names what is present, what is
+missing and what each missing thing costs.
+
+### Linux
+
+```console
+$ go install owfeed.org/owlab/cmd/owlab@latest
+$ owlab doctor
+```
+
+Without a Go toolchain, take `owlab_<version>_linux_<arch>.tar.gz` from the
+[latest release](https://github.com/owfeed/owlab/releases/latest) and put the
+binary on `PATH`.
+
+Docker, Podman or anything else with Compose v2. For `fidelity: vm`:
+
+```console
+$ sudo apt install qemu-system-x86 qemu-system-arm     # or the dnf equivalent
+$ sudo usermod -aG kvm "$USER"                          # log out and back in
+```
+
+Being in the `kvm` group is the part that is easy to miss — QEMU built with
+KVM still falls back to translation without it, and doctor says which of the
+two you have.
+
+### WSL2
+
+Install and run owlab **inside** the WSL distribution, not from PowerShell
+against `\\wsl$`. The commands are the Linux ones above. Either a Docker
+installed in WSL or Docker Desktop with WSL integration enabled works.
+
+Keep the project in the WSL filesystem — `~/src/luci-app-mine`, not
+`/mnt/c/Users/...`. A Windows drive is reached over a translation layer that
+does not propagate inotify, so `owlab sync --watch` never fires, and every file
+read is slow enough to notice on a tree the size of LuCI. Doctor warns when the
+working directory is under `/mnt`.
+
+`fidelity: vm` works here: WSL2 exposes `/dev/kvm`, so a router boots on a real
+kernel at native speed.
+
+### macOS
+
+```console
+$ go install owfeed.org/owlab/cmd/owlab@latest
+$ brew install qemu        # only for fidelity: vm
+$ owlab doctor
+```
+
+Docker Desktop, OrbStack, Colima or Rancher Desktop. On Apple Silicon the
+default router architecture is aarch64 and the VM tier runs on hvf, which is a
+nine-second boot — asking for an `x86_64` router there is legal and translated,
+and doctor says so before you wait for it.
+
+### Windows
+
+owlab is an ordinary console program and runs from PowerShell. There is no
+Windows-specific setup beyond putting it on `PATH`.
+
+```powershell
+go install owfeed.org/owlab/cmd/owlab@latest
+$env:PATH += ";$env:USERPROFILE\go\bin"        # for this session
+owlab doctor
+```
+
+To keep it across sessions, add that directory in Settings > System > About >
+Advanced system settings > Environment Variables, or:
+
+```powershell
+[Environment]::SetEnvironmentVariable('PATH', "$env:PATH;$env:USERPROFILE\go\bin", 'User')
+```
+
+Without a Go toolchain, unpack `owlab_<version>_windows_<arch>.zip` from the
+[latest release](https://github.com/owfeed/owlab/releases/latest) somewhere
+permanent and put that directory on `PATH` the same way. Both `amd64` and
+`arm64` are published.
+
+Docker Desktop with the WSL2 backend. The containers are Linux containers —
+Docker Desktop must not be switched to Windows containers, and `docker version`
+has to report a Linux server.
+
+For `fidelity: vm`:
+
+```powershell
+winget install SoftwareFreedomConservancy.QEMU
+```
+
+and enable **Windows Hypervisor Platform** in Windows Features. Without it QEMU
+has no `whpx` and falls back to translation — minutes rather than seconds, and
+doctor names it rather than leaving you to guess.
+
+Two more things doctor checks here, because both are optional Windows features
+rather than defaults:
+
+- **OpenSSH Client**, under Settings > System > Optional features. `fidelity:
+  vm` routers are reached over ssh; container routers are not, so a
+  container-only project never needs it.
+- **A POSIX shell**, if the project has a `project.build` command. That command
+  is a shell command line and is run by `sh`; Git for Windows ships one. Nothing
+  else is substituted for it — handing a POSIX command line to `cmd.exe` would
+  run something quietly different.
+
+Line endings are worth one look. The scripts in a package are executed by
+busybox, which reads a CRLF shebang as a command name ending in `\r` and reports
+`bad interpreter: /bin/sh^M`. Add to the project's `.gitattributes`:
+
+```
+* text=auto eol=lf
+```
+
+then `git add --renormalize .`. Doctor checks for CRLF and fails on it, since
+nothing downstream would name the cause.
+
+Verify, on any of the four:
+
+```console
+$ owlab doctor
+$ owlab up
+$ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/
+200
+```
+
+---
+
 ## Start work on a package
 
 ```console

@@ -155,6 +155,80 @@ func TestIsConfigFile(t *testing.T) {
 	}
 }
 
+// The permissions a file arrives with come from where it is going and what is
+// in it, never from the source file — the host's own bits mean different
+// things on each platform owlab runs on, and on two of them they mean nothing
+// at all.
+func TestModeFor(t *testing.T) {
+	exec := []string{
+		"/etc/init.d/thing",
+		"/usr/bin/thing",
+		"/usr/libexec/thing",
+		"/etc/hotplug.d/iface/20-thing",
+		"/usr/share/mypkg/helper.sh", // not an exec directory, but a script
+	}
+	data := []string{
+		"/www/luci-static/theme/cascade.css",
+		"/usr/share/ucode/luci/theme.uc",
+		"/usr/lib/lua/luci/controller/x.lua",
+	}
+	for _, p := range exec {
+		body := []byte("#!/bin/sh\n")
+		if !strings.HasSuffix(p, ".sh") {
+			body = []byte("no shebang here")
+		}
+		if got := ModeFor(p, body); got != 0o755 {
+			t.Errorf("ModeFor(%s) = %o, want 755", p, got)
+		}
+	}
+	for _, p := range data {
+		if got := ModeFor(p, []byte("body{}")); got != 0o644 {
+			t.Errorf("ModeFor(%s) = %o, want 644", p, got)
+		}
+	}
+}
+
+// The archive's modes must not depend on the mode of the file on disk. The
+// project helper writes everything 0644, so an init script that comes out 0755
+// can only have got there from the destination, and a CSS file that comes out
+// 0644 proves the rule is not "everything is executable".
+func TestArchiveModesIgnoreTheSourceFile(t *testing.T) {
+	cfg := project(t, map[string]string{
+		"root/etc/init.d/thing":                "#!/bin/sh",
+		"htdocs/luci-static/theme/cascade.css": "body{}",
+	})
+	archive, _, _, err := buildArchive(cfg, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]int64{
+		"/etc/init.d/thing":                  0o755,
+		"/www/luci-static/theme/cascade.css": 0o644,
+	}
+	tr := tar.NewReader(bytes.NewReader(archive))
+	seen := 0
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		w, ok := want["/"+hdr.Name]
+		if !ok {
+			continue
+		}
+		seen++
+		if hdr.Mode != w {
+			t.Errorf("%s arrives %o, want %o", hdr.Name, hdr.Mode, w)
+		}
+	}
+	if seen != len(want) {
+		t.Errorf("checked %d members, want %d", seen, len(want))
+	}
+}
+
 // The theme clause is the one that matters: a half-synced theme is where LuCI
 // crashes rather than falling back, so the script has to re-assert it — but
 // only if the theme's files actually arrived.

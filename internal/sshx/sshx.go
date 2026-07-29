@@ -40,18 +40,23 @@ func (t Target) Addr() string { return fmt.Sprintf("%s:%d", t.Host, t.Port) }
 
 // opts are the ssh flags every owlab connection uses.
 //
-// Host key checking is off, and the known_hosts file is /dev/null. This is not
-// a shortcut: the target is a throwaway VM on a forwarded localhost port, its
-// host key is regenerated whenever the disk is rebuilt, and the port number is
-// reused by the next router that takes that slot. Checking would produce a
-// REMOTE HOST IDENTIFICATION HAS CHANGED wall of text on a routine rebuild and
-// train the developer to delete lines from known_hosts. Nothing here
-// authenticates anything — do not copy this pattern to a real host.
+// Host key checking is off, and the known_hosts file is the null device. This
+// is not a shortcut: the target is a throwaway VM on a forwarded localhost
+// port, its host key is regenerated whenever the disk is rebuilt, and the port
+// number is reused by the next router that takes that slot. Checking would
+// produce a REMOTE HOST IDENTIFICATION HAS CHANGED wall of text on a routine
+// rebuild and train the developer to delete lines from known_hosts. Nothing
+// here authenticates anything — do not copy this pattern to a real host.
+//
+// os.DevNull rather than the literal "/dev/null", which Win32-OpenSSH resolves
+// against the current drive and turns into C:\dev\null: a path it cannot open,
+// reported on every single connection. "NUL" is the same idea spelled the way
+// Windows spells it.
 func (t Target) opts() []string {
 	return []string{
 		"-o", "StrictHostKeyChecking=no",
-		"-o", "UserKnownHostsFile=/dev/null",
-		"-o", "GlobalKnownHostsFile=/dev/null",
+		"-o", "UserKnownHostsFile=" + os.DevNull,
+		"-o", "GlobalKnownHostsFile=" + os.DevNull,
 		"-o", "LogLevel=ERROR",
 		"-o", "ConnectTimeout=5",
 		"-p", fmt.Sprint(t.Port),

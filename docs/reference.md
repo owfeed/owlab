@@ -41,6 +41,53 @@ routers:
 A package list with `+`/`-` entries is applied on top of the defaults; a list
 without any prefix replaces them.
 
+### What `sync` copies, and with what permissions
+
+`project.install` maps a source directory to a destination on the router. The
+default is luci.mk's own mapping, so a package laid out the upstream way needs
+no `install:` block at all.
+
+Two things in `/etc` are deliberately never synced: `/etc/config/` and
+`/etc/uci-defaults/`. Those are the router's state rather than the package's —
+a real install ships them as conffiles and leaves an existing one alone, and
+overwriting them on every sync would throw away whatever you just configured.
+
+Permissions come from the destination and the file's contents, never from the
+file on your disk: `0755` for anything under `/bin`, `/sbin`, `/usr/bin`,
+`/usr/sbin`, `/usr/libexec`, `/etc/init.d`, `/etc/rc.d`, `/etc/hotplug.d` or
+`/etc/cron.d`, and for anything starting with `#!`; `0644` for everything else.
+Those are luci.mk's own two modes, so a synced tree has the permissions the
+built package would have installed.
+
+Deriving them rather than copying them is what makes a sync mean the same thing
+on every host. Windows has no execute bit and reports every file as `0666`; a
+Windows drive mounted into WSL reports every file as `0777`. Carrying either
+across gave a router that behaved differently depending on which machine ran
+the sync, and neither failure names permissions: procd reports a
+non-executable init script as a service that does not exist.
+
+### `project.build` and `project.post_sync`
+
+```yaml
+project:
+  build: ./build-css.sh htdocs/luci-static/footstrap/cascade.css
+  post_sync: |
+    uci -q set luci.themes.Footstrap=/luci-static/footstrap
+    uci -q commit luci
+```
+
+`build` runs on the host before every sync, in the project directory.
+`post_sync` runs on each router after the files arrive and before LuCI's caches
+are dropped.
+
+Both are shell command lines, not argument lists — a pipeline, a redirect or a
+`&&` all work, because the string is handed to a shell rather than split on
+spaces. `post_sync` runs under the router's busybox ash. `build` runs under
+`sh`, which on Windows means Git for Windows' `sh.exe` or another POSIX shell
+on `PATH`; nothing is substituted for it, since handing a POSIX command line to
+`cmd.exe` would quietly run something else. `owlab doctor` reports whether that
+shell is there, and whether `build` names a program it can find.
+
 ### The stock package set
 
 A router with no `packages:` at all is not a bare rootfs — it is what a
@@ -397,9 +444,12 @@ one per line. The action writes a table to the job summary and exposes
 `owlab` itself. Both verify the download against this repository's build
 attestation before the binary is executed or put on `PATH`.
 
-`ubuntu-latest` works as it is. GitHub's macOS runners have no container engine
-at all, and the action says so rather than failing later with something about a
-socket.
+`ubuntu-latest` works as it is. GitHub's macOS and Windows runners have no
+container engine that runs Linux images — Docker Desktop is not installed there
+and cannot be — and the action says so rather than failing later with something
+about a socket. That is a property of the runners, not of owlab: on a
+developer's own macOS or Windows machine, where an engine is installed, every
+command works.
 
 A ready-made workflow is in
 [examples/workflow/package-ci.yml](../examples/workflow/package-ci.yml).

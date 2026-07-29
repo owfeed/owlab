@@ -15,9 +15,20 @@ $ go install owfeed.org/owlab/cmd/owlab@latest
 $ owlab doctor
 ```
 
+Without a Go toolchain, take a binary from the
+[latest release](https://github.com/owfeed/owlab/releases/latest) — linux,
+darwin and windows, amd64 and arm64 — and put it on `PATH`. On Windows that is
+PowerShell and `owlab.exe`; there is nothing else to it.
+
 You need Docker (or OrbStack, Colima, Podman, Rancher Desktop) with Compose v2.
-For `fidelity: vm` you need QEMU as well: `brew install qemu`, or
-`apt install qemu-system-arm qemu-system-x86`.
+For `fidelity: vm` you need QEMU as well: `brew install qemu`,
+`apt install qemu-system-arm qemu-system-x86`, or
+`winget install SoftwareFreedomConservancy.QEMU`.
+
+What each platform needs beyond that — the WSL2 filesystem rule, the two
+optional Windows features, the `kvm` group on Linux — is one section of the
+[runbook](docs/runbook.md#install-owlab-on-this-machine). `owlab doctor` checks
+all of it and says what each missing piece costs.
 
 Shipping the package too, not just developing it? The
 [cookbook](https://owfeed.org/cookbook/) walks the whole path — build, test,

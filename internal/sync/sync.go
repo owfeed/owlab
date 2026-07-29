@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -123,17 +124,42 @@ func Run(ctx context.Context, opts Options, routers []*config.Router) []Result {
 	return results
 }
 
-// runBuild runs project.build in the project directory.
+// BuildShell is the POSIX shell that runs project.build, and the error to
+// report when this machine has none.
 //
-// Via `sh -c` rather than by splitting the string, because the value is a
-// command line — it can have arguments, a pipeline, or a redirect, and
-// splitting on spaces would break all three. On Windows this needs a POSIX
-// shell on PATH; a project that has no build step is unaffected.
+// A shell rather than a split command line: the value in owlab.yaml can carry
+// arguments, a pipeline or a redirect, and splitting on spaces breaks all
+// three. Everywhere but Windows that shell is `sh` and always present.
+//
+// On Windows it has to be looked up. Git for Windows puts a real `sh.exe` on
+// PATH and is on most developers' machines already; when it is not, the answer
+// is an error naming the cause. Falling back to cmd.exe or to PowerShell would
+// hand a POSIX command line to an interpreter that parses it differently —
+// `./build.sh out.css 2>&1` means three unrelated things in three shells — and
+// a build that silently does something else is worse than one that stops.
+func BuildShell() (string, error) {
+	if runtime.GOOS != "windows" {
+		return "sh", nil
+	}
+	for _, name := range []string{"sh", "bash"} {
+		if p, err := exec.LookPath(name); err == nil {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("project.build needs a POSIX shell and neither sh nor bash is on PATH. " +
+		"Install Git for Windows (it ships sh.exe) or run owlab from WSL")
+}
+
+// runBuild runs project.build in the project directory.
 func runBuild(ctx context.Context, dir, command string, verbose bool) error {
 	if verbose {
 		fmt.Fprintf(os.Stderr, "+ %s\n", command)
 	}
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	shell, err := BuildShell()
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, shell, "-c", command)
 	cmd.Dir = dir
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -211,7 +237,7 @@ func buildArchive(cfg *config.Config, verbose bool) ([]byte, int, int64, error) 
 			if err != nil {
 				return err
 			}
-			w.AddTime(target, body, info.Mode(), info.ModTime())
+			w.AddTime(target, body, ModeFor(target, body), info.ModTime())
 			count++
 			total += int64(len(body))
 			if verbose {
@@ -229,6 +255,51 @@ func buildArchive(cfg *config.Config, verbose bool) ([]byte, int, int64, error) 
 		return nil, 0, 0, err
 	}
 	return archive, count, total, nil
+}
+
+// execDirs are the destinations whose contents are executed rather than read.
+//
+// By destination and not by source, because that is the fact that decides it:
+// procd runs everything in /etc/init.d, and a file that lands in /usr/bin was
+// put there to be called.
+var execDirs = []string{
+	"/bin/",
+	"/sbin/",
+	"/usr/bin/",
+	"/usr/sbin/",
+	"/usr/libexec/",
+	"/etc/init.d/",
+	"/etc/rc.d/",
+	"/etc/hotplug.d/",
+	"/etc/cron.d/",
+	"/etc/uci-defaults/",
+}
+
+// ModeFor decides the permissions a synced file arrives with.
+//
+// Derived from the destination and the contents rather than copied from the
+// source file, which is the only way this can mean the same thing on every
+// host owlab runs on. Windows has no execute bit at all and reports every
+// regular file as 0666; a Windows drive mounted into WSL reports every file as
+// 0777. Carrying either across produced a router that behaved differently
+// depending on which machine ran the sync — an init script that never starts
+// on one, a world-writable /www on the other — and the failure never mentions
+// permissions: procd reports a non-executable service as simply not there.
+//
+// The two modes are luci.mk's own (INSTALL_DATA is 0644, INSTALL_BIN is 0755),
+// so a synced tree now has the permissions the built package would have
+// installed. That was already true on Linux by accident and is now true
+// everywhere on purpose.
+func ModeFor(target string, body []byte) fs.FileMode {
+	if bytes.HasPrefix(body, []byte("#!")) {
+		return 0o755
+	}
+	for _, d := range execDirs {
+		if strings.HasPrefix(target, d) {
+			return 0o755
+		}
+	}
+	return 0o644
 }
 
 // isConfigFile reports whether a destination path is router state rather than

@@ -35,6 +35,10 @@ jobs:
   # "it compiles on the maintainer's laptop" is not the bar. The VM tier in
   # particular has per-platform process handling — signals on unix, tasklist on
   # Windows — which only a real cross-compile exercises.
+  #
+  # windows/arm64 is here for the same reason it is in the release matrix: the
+  # machines exist, and a tool that will not even build for them is a tool that
+  # cannot be installed on them.
   cross:
     runs-on: ubuntu-24.04
     strategy:
@@ -46,6 +50,7 @@ jobs:
           - {goos: darwin,  goarch: amd64}
           - {goos: darwin,  goarch: arm64}
           - {goos: windows, goarch: amd64}
+          - {goos: windows, goarch: arm64}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -55,6 +60,46 @@ jobs:
           GOOS: ${{ matrix.target.goos }}
           GOARCH: ${{ matrix.target.goarch }}
         run: go build ./...
+
+  # The unit tests, on the hosts the README promises rather than only on the
+  # one that is cheapest to run.
+  #
+  # A cross-compile proves the per-platform code parses; it proves nothing
+  # about what it does. The things that differ are the things a Linux runner
+  # cannot see: Windows reports every file as 0666 so nothing derived from a
+  # source file's mode can be trusted, path separators are not "/", and
+  # `owlab doctor` shells out to programs that are optional features there.
+  #
+  # These runners have no container engine that speaks Linux images, so this is
+  # `go test` and `owlab doctor` — not e2e. Docker Desktop cannot be installed
+  # on a GitHub runner, and the e2e job below covers what a real engine does.
+  host:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+
+      # doctor is the one command that must work on a machine where nothing
+      # else does, which makes "it starts at all here" worth asserting. It
+      # reports missing pieces as warnings and exits 0; a non-zero exit means
+      # it found something it considers fatal, and on a bare runner there is
+      # nothing fatal to find.
+      #
+      # `go run` rather than building and invoking the binary: the output name
+      # differs by platform and PowerShell will not execute a file without the
+      # .exe extension, which is exactly the kind of per-shell detail this job
+      # exists to keep out of the way.
+      - name: owlab doctor runs on a bare host
+        run: |
+          go run ./cmd/owlab doctor
+          go run ./cmd/owlab version
 
   # The image build context ships inside the binary, so a shell script with a
   # syntax error is a runtime failure on someone else's router rather than a

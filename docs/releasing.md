@@ -24,8 +24,8 @@ page.
 
 ## What the tag does
 
-`release.yml` builds five archives — linux/amd64, linux/arm64, darwin/amd64,
-darwin/arm64, windows/amd64 — each carrying the binary, the README, the
+`release.yml` builds six archives — linux/amd64, linux/arm64, darwin/amd64,
+darwin/arm64, windows/amd64, windows/arm64 — each carrying the binary, the README, the
 changelog, the licence and `docs/`. Then it writes `SHA256SUMS`, publishes the
 release as a **draft**, and flips it to published afterwards.
 

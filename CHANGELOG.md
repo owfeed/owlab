@@ -7,6 +7,57 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+The README has said "Linux, WSL2, Docker Desktop for Windows, or macOS" since the
+first release, and CI proved a third of it: the unit tests ran on Linux, the other
+platforms got a cross-compile. A cross-compile shows the per-platform code parses.
+Everything below is what it does not show.
+
+### Fixed
+
+- **A synced file's permissions no longer come from the host's filesystem.** They
+  are derived from the destination and the contents — `0755` under `/etc/init.d`,
+  `/usr/bin` and the rest, or for anything starting with `#!`; `0644` otherwise.
+  These are luci.mk's own two modes, so a synced tree now matches what the built
+  package installs. Windows has no execute bit and reports every file as `0666`,
+  which meant an init script synced from Windows arrived non-executable and procd
+  reported the service as not existing at all. A Windows drive mounted into WSL
+  had the opposite problem, reporting everything as `0777`.
+- **`project.build` on Windows.** It is run by `sh`, which is not on `PATH` there
+  by default. owlab now looks for `sh` and then `bash` — Git for Windows ships
+  both — and when neither is present says so, naming the cause, instead of failing
+  with a bare "file not found". Nothing is substituted: handing a POSIX command
+  line to `cmd.exe` would quietly run something else.
+- **ssh to a `fidelity: vm` router from Windows.** The known-hosts file was the
+  literal `/dev/null`, which Win32-OpenSSH resolves against the current drive and
+  turns into `C:\dev\null` — a path it cannot open, complained about on every
+  connection. It is now `os.DevNull`, which is `NUL` there.
+
+### Added
+
+- `owlab doctor` checks the two things Windows ships as optional features rather
+  than defaults: an ssh client (needed only for `fidelity: vm`) and a POSIX shell
+  (needed only for `project.build`). Both are warnings that say what they cost.
+- The unit tests, plus `owlab doctor` and `owlab version`, now run on
+  `windows-2025` and `macos-15` in CI. No e2e there — GitHub's runners for those
+  platforms have no container engine that runs Linux images.
+- `windows/arm64` release builds. The machines exist and `go install` already
+  worked on them; now there is a binary for anyone without a Go toolchain.
+- An install section in the [runbook](docs/runbook.md#install-owlab-on-this-machine),
+  one part per platform, covering what each needs beyond the binary — the `kvm`
+  group on Linux, the WSL2 filesystem rule, Windows Hypervisor Platform and the
+  two optional features on Windows. The README points at it and now also mentions
+  the release archives, which were previously published and never documented.
+- The reference documents what `sync` copies, with which permissions and why, and
+  what `project.build` and `project.post_sync` each run under.
+
+### Changed
+
+- `owlab/setup` on a Windows runner now explains that the runner has no engine for
+  Linux images, rather than claiming owlab has no Windows build — which stopped
+  being true in this release.
+
 ## [0.5.1] - 2026-07-29
 
 No code changes. Cut so that the tag every consumer pins is an immutable release.

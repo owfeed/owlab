@@ -10,6 +10,133 @@
 
 ---
 
+## Поставить owlab на эту машину
+
+Один бинарь на Go и один контейнерный движок. По платформам различается только
+откуда берётся движок и, для `fidelity: vm`, откуда берётся QEMU.
+
+В любом случае проверка — `owlab doctor`: он называет, что есть, чего нет и чем
+именно грозит каждое отсутствующее.
+
+### Linux
+
+```console
+$ go install owfeed.org/owlab/cmd/owlab@latest
+$ owlab doctor
+```
+
+Без тулчейна Go — взять `owlab_<версия>_linux_<арх>.tar.gz` из
+[последнего релиза](https://github.com/owfeed/owlab/releases/latest) и положить
+бинарь в `PATH`.
+
+Docker, Podman или что угодно ещё с Compose v2. Для `fidelity: vm`:
+
+```console
+$ sudo apt install qemu-system-x86 qemu-system-arm     # или то же самое через dnf
+$ sudo usermod -aG kvm "$USER"                          # и перелогиниться
+```
+
+Про группу `kvm` забывают чаще всего: QEMU, собранный с KVM, всё равно
+скатывается в трансляцию, пока пользователь не в группе, — doctor говорит, что
+из двух получилось.
+
+### WSL2
+
+Ставить и запускать owlab **внутри** дистрибутива WSL, а не из PowerShell по
+пути `\\wsl$`. Команды те же, что в Linux. Годится и Docker, поставленный в WSL,
+и Docker Desktop с включённой WSL-интеграцией.
+
+Проект держать в файловой системе WSL — `~/src/luci-app-mine`, а не
+`/mnt/c/Users/...`. Диск Windows виден через слой трансляции, который не
+пробрасывает inotify: `owlab sync --watch` не сработает ни разу, а каждое чтение
+файла достаточно медленное, чтобы это было заметно на дереве размером с LuCI.
+Doctor предупреждает, когда рабочий каталог лежит под `/mnt`.
+
+`fidelity: vm` здесь работает: WSL2 отдаёт `/dev/kvm`, и роутер грузится на
+настоящем ядре на полной скорости.
+
+### macOS
+
+```console
+$ go install owfeed.org/owlab/cmd/owlab@latest
+$ brew install qemu        # только для fidelity: vm
+$ owlab doctor
+```
+
+Docker Desktop, OrbStack, Colima или Rancher Desktop. На Apple Silicon
+архитектура роутера по умолчанию aarch64, VM-tier идёт через hvf — загрузка за
+девять секунд. Попросить там `x86_64` можно, но он будет транслироваться, и
+doctor скажет об этом до того, как ждать.
+
+### Windows
+
+owlab — обычная консольная программа и запускается из PowerShell. Никакой
+особой настройки под Windows, кроме `PATH`, не нужно.
+
+```powershell
+go install owfeed.org/owlab/cmd/owlab@latest
+$env:PATH += ";$env:USERPROFILE\go\bin"        # на текущую сессию
+owlab doctor
+```
+
+Чтобы сохранилось между сессиями — добавить каталог в «Параметры > Система > О
+системе > Дополнительные параметры системы > Переменные среды», либо:
+
+```powershell
+[Environment]::SetEnvironmentVariable('PATH', "$env:PATH;$env:USERPROFILE\go\bin", 'User')
+```
+
+Без тулчейна Go — распаковать `owlab_<версия>_windows_<арх>.zip` из
+[последнего релиза](https://github.com/owfeed/owlab/releases/latest) в
+постоянное место и так же добавить каталог в `PATH`. Публикуются и `amd64`, и
+`arm64`.
+
+Docker Desktop с бэкендом WSL2. Контейнеры здесь линуксовые: Docker Desktop не
+должен быть переключён в Windows containers, `docker version` обязан показывать
+линуксовый сервер.
+
+Для `fidelity: vm`:
+
+```powershell
+winget install SoftwareFreedomConservancy.QEMU
+```
+
+и включить **Платформу гипервизора Windows** (Windows Hypervisor Platform) в
+компонентах Windows. Без неё у QEMU нет `whpx` и всё уходит в трансляцию —
+минуты вместо секунд; doctor это называет, а не оставляет гадать.
+
+Ещё две вещи doctor проверяет именно здесь, потому что обе — необязательные
+компоненты Windows, а не данность:
+
+- **Клиент OpenSSH**, в «Параметры > Система > Дополнительные компоненты». До
+  роутеров `fidelity: vm` owlab добирается по ssh; до контейнерных — нет, так
+  что проекту без VM он не нужен.
+- **POSIX-шелл**, если у проекта задан `project.build`. Это командная строка
+  шелла, и выполняет её `sh`; Git for Windows такой приносит. Ничем другим он не
+  подменяется — отдать POSIX-строку в `cmd.exe` значит тихо выполнить не то.
+
+Отдельно стоит посмотреть на переводы строк. Скрипты пакета исполняет busybox, а
+он читает шебанг с CRLF как имя команды, оканчивающееся на `\r`, и сообщает
+`bad interpreter: /bin/sh^M`. В `.gitattributes` проекта:
+
+```
+* text=auto eol=lf
+```
+
+и `git add --renormalize .`. Doctor ищет CRLF и падает на нём, потому что ничто
+дальше по цепочке причину не назовёт.
+
+Проверка, на любой из четырёх:
+
+```console
+$ owlab doctor
+$ owlab up
+$ curl -s -o /dev/null -w '%{http_code}\n' http://localhost:8080/
+200
+```
+
+---
+
 ## Начать работу над пакетом
 
 ```console

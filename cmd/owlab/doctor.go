@@ -17,6 +17,7 @@ import (
 	"owfeed.org/owlab/internal/dockercli"
 	"owfeed.org/owlab/internal/engine"
 	"owfeed.org/owlab/internal/qemu"
+	syncpkg "owfeed.org/owlab/internal/sync"
 )
 
 type checkResult int
@@ -98,6 +99,7 @@ func (a *app) doctor(ctx context.Context, args []string) error {
 	}
 
 	checks = append(checks, vmChecks(ctx, hostArch)...)
+	checks = append(checks, hostToolChecks()...)
 
 	// ssh keys: what will be installed, or why nothing will be.
 	if keys, src := compose.PublicKeys(); len(keys) > 0 {
@@ -275,6 +277,38 @@ func vmChecks(ctx context.Context, hostArch string) []check {
 		out = append(out, check{"vm firmware", info, d.Firmware})
 	}
 	out = append(out, check{"vm images", info, qemu.CacheDir()})
+	return out
+}
+
+// hostToolChecks reports the programs owlab shells out to that are not on
+// every machine.
+//
+// Both are absent by default on exactly one platform, and in both cases the
+// failure surfaces far from the cause: a missing ssh client is reported by
+// `owlab shell` as an exec error naming no router, and a missing POSIX shell
+// turns project.build into a failed sync. Neither is fatal on its own —
+// container-only projects never reach ssh, and a project with no build step
+// never needs a shell — so both are warnings that say what they cost.
+func hostToolChecks() []check {
+	var out []check
+
+	// Windows has shipped the OpenSSH client since 1809, but as an optional
+	// feature that a trimmed image may not have.
+	if _, err := exec.LookPath("ssh"); err != nil {
+		detail := "no ssh client on PATH — fidelity vm routers are reached over ssh, so shell, exec, sync and down would fail for them"
+		if runtime.GOOS == "windows" {
+			detail += ". Enable it: Settings > System > Optional features > OpenSSH Client"
+		}
+		out = append(out, check{"ssh client", warn, detail})
+	}
+
+	if runtime.GOOS == "windows" {
+		if shell, err := syncpkg.BuildShell(); err == nil {
+			out = append(out, check{"posix shell", pass, shell + " — project.build can run"})
+		} else {
+			out = append(out, check{"posix shell", warn, err.Error()})
+		}
+	}
 	return out
 }
 

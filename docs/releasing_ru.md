@@ -22,8 +22,8 @@ $ git push origin v0.2.0
 
 ## Что делает тег
 
-`release.yml` собирает пять архивов — linux/amd64, linux/arm64, darwin/amd64,
-darwin/arm64, windows/amd64 — в каждом бинарь, README, changelog, лицензия и
+`release.yml` собирает шесть архивов — linux/amd64, linux/arm64, darwin/amd64,
+darwin/arm64, windows/amd64, windows/arm64 — в каждом бинарь, README, changelog, лицензия и
 `docs/`. Затем пишет `SHA256SUMS`, публикует релиз **черновиком** и отдельным
 шагом переводит его в опубликованные.
 
