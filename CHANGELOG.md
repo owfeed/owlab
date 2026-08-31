@@ -7,6 +7,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+### Fixed
+
+- **`owlab test` no longer fails because something else on the host holds 2222.** Its
+  synthesised routers took `8080 + index` and `2222 + index` unconditionally, so one
+  unrelated listener — an ssh container, a tunnel, another project's stand — failed the
+  whole run with `driver failed programming external connectivity`, naming no port. They
+  now take the first free port from that base, remembering what the same pass has already
+  handed out: probing alone gave two routers the same port, which the config gate caught
+  as "openwrt-25.12.4 and openwrt-24.10.8 both use host ssh port 2223". **Configured
+  routers are untouched** — a port written in `owlab.yaml` is a promise, and quietly
+  serving a different one is worse than failing; the probe would also have made the port
+  a router gets depend on what else the machine happens to be running, which `internal/qemu`
+  caught as a test expecting 2222 and getting 2223.
+
 ## [0.5.3] - 2026-07-29
 
 `fidelity: vm` on Windows. It compiled there from the beginning and had

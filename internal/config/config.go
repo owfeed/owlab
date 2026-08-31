@@ -9,6 +9,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path"
 	"path/filepath"
@@ -18,6 +19,40 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// FreePortFrom returns the first port from `start` upwards that nothing is
+// listening on and this pass has not already handed out, or `start` itself if
+// none of the candidates can be tested.
+//
+// It is for SYNTHESISED routers only — `owlab test`, where nobody wrote the port
+// down. A configured router keeps the port its owlab.yaml declares, or the
+// deterministic 8080/2222 + index: an author who wrote a port meant it, and a
+// config whose URLs move with whatever else the host is running is worse than one
+// that fails.
+//
+// `taken` is what makes two synthesised routers land on different ports: probing
+// alone gave both the first free port above their own base, and the config gate
+// caught it — "openwrt-25.12.4 and openwrt-24.10.8 both use host ssh port 2223".
+//
+// It binds rather than reads a table: a port in use by another user's process is
+// invisible in /proc to anyone but root, and that is exactly the case this exists
+// for. The window between the probe and the container's own bind is unavoidable
+// and harmless — the run fails the same way it did before, just far more rarely.
+func FreePortFrom(start int, taken map[int]bool) int {
+	for p := start; p < start+64 && p < 65535; p++ {
+		if taken[p] {
+			continue
+		}
+		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", p))
+		if err != nil {
+			continue
+		}
+		_ = ln.Close()
+		taken[p] = true
+		return p
+	}
+	return start
+}
 
 // FileName is the config file owlab looks for, walking up from the
 // working directory.

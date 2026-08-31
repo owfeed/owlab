@@ -59,6 +59,9 @@ func Synthesize(o SynthOptions) (*Config, error) {
 		Distro: strPtr(string(distro)),
 		Arch:   strPtr(orDefault(o.Arch, "auto")),
 	}
+	// Shared across the synthesised routers: a port free for one is not free for the
+	// next once it has been handed out.
+	taken := map[int]bool{}
 	for i, rel := range o.Releases {
 		rel = strings.TrimSpace(rel)
 		if rel == "" {
@@ -70,6 +73,7 @@ func Synthesize(o SynthOptions) (*Config, error) {
 			Release:  strPtr(rel),
 			Packages: o.Packages,
 			Fixtures: o.Fixtures,
+			Ports:    &Ports{HTTP: FreePortFrom(8080+i, taken), SSH: FreePortFrom(2222+i, taken)},
 		}, i)
 		if err != nil {
 			return nil, fmt.Errorf("release %q: %w", rel, err)
