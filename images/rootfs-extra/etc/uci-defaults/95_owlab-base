@@ -84,6 +84,94 @@ if nft add table inet owlab_probe 2>/dev/null; then
 	nft delete table inet owlab_probe 2>/dev/null
 fi
 
+# Keep the container's own interface inside a firewall zone that accepts input.
+#
+# fw4 renders a zone as `iifname "<dev>" jump input_<zone>` and works out
+# <dev> from the zone's `network` list when it builds the ruleset. A zone that
+# resolves to no device emits no jump, and the packet then falls off the end
+# of the input chain into `jump handle_reject` — a TCP reset, seen from the
+# host as an empty reply and from a sibling container as "Connection refused",
+# against a uhttpd that is up and listening on 0.0.0.0:80. Measured on
+# imm 25.12.1 by taking the network back out of the zone:
+#
+#   chain input {                       # policy drop
+#     iifname "dummy0" jump input_wan   # ... and no br-lan line
+#     jump handle_reject                # so lan traffic lands here
+#   }
+#   $ curl -o /dev/null -w '%{http_code}' http://localhost:18026/cgi-bin/luci/
+#   000                                 # curl exit 52, empty reply
+#
+# That is the shape reported in owfeed/owlab#3, where the ImmortalWrt routers
+# on a stand were unreachable on their published ports and the OpenWrt ones
+# beside them were not. Both distributions ship a lan zone with input ACCEPT,
+# so on a boot that goes well this changes nothing — it is here because the
+# one interface the container is reachable on must not depend on netifd having
+# finished with `lan` at the moment fw4 read the config.
+#
+# `device` is what makes that true: fw4 takes it literally instead of asking
+# netifd, and deduplicates it against the same device found through `network`.
+# Measured with both keys set: one `iifname "br-lan" jump input_lan` line, and
+# 403 back from LuCI.
+#
+# The zone is repaired rather than the firewall switched off, for the reason
+# given further down: fw4 works in here, and disabling it would hide a whole
+# class of real behaviour.
+lan_dev="$(uci -q get network.lan.device)"
+[ -n "$lan_dev" ] || lan_dev="br-lan"
+
+lan_zone=""
+i=0
+while [ -n "$(uci -q get "firewall.@zone[$i]")" ]; do
+	if [ "$(uci -q get "firewall.@zone[$i].name")" = "lan" ]; then
+		lan_zone="@zone[$i]"
+		break
+	fi
+	for net in $(uci -q get "firewall.@zone[$i].network"); do
+		[ "$net" = "lan" ] && lan_zone="@zone[$i]"
+	done
+	[ -n "$lan_zone" ] && break
+	i=$((i + 1))
+done
+
+if [ -z "$lan_zone" ]; then
+	uci -q add firewall zone >/dev/null
+	uci -q set firewall.@zone[-1].name='lan'
+	uci -q set firewall.@zone[-1].output='ACCEPT'
+	uci -q set firewall.@zone[-1].forward='ACCEPT'
+	uci -q add_list firewall.@zone[-1].network='lan'
+	lan_zone="@zone[-1]"
+	echo "owlab: no firewall zone covered the lan network, created one"
+fi
+
+uci -q set "firewall.$lan_zone.input=ACCEPT"
+
+# add_list appends without looking, so ask before adding.
+have=""
+for dev in $(uci -q get "firewall.$lan_zone.device"); do
+	[ "$dev" = "$lan_dev" ] && have=1
+done
+[ -n "$have" ] || uci -q add_list "firewall.$lan_zone.device=$lan_dev"
+
+# dropbear listens on one address, and it is not the one that has to work.
+#
+# ImmortalWrt ships `option Interface 'lan'`; OpenWrt ships no such key.
+# Measured on the same stand, netstat -ltnp inside each container:
+#
+#   imm2512    tcp 0 0 192.168.163.5:22  LISTEN  2262/dropbear
+#   owrt2512   tcp 0 0 0.0.0.0:22        LISTEN   889/dropbear
+#
+# Binding a single interface address bets that netifd finished with `lan`
+# before dropbear started and that nothing will ever arrive on another
+# address. A container that is recreated constantly, published to the host and
+# occasionally on a second docker network makes both of those a bad bet — the
+# reported symptom is an ssh connection closed the moment it is opened.
+# Dropping the key restores the wildcard bind.
+i=0
+while [ -n "$(uci -q get "dropbear.@dropbear[$i]")" ]; do
+	uci -q delete "dropbear.@dropbear[$i].Interface"
+	i=$((i + 1))
+done
+
 uci commit
 
 # Stop the services that cut a container off from its own network.

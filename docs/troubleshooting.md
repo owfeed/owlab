@@ -8,6 +8,84 @@ when you hit them, because almost none of them presents as its cause.
 
 ---
 
+## "The router never answers on its published port"
+
+### The container's interface is in no firewall zone
+
+**Symptom.** `owlab up` reports `did not answer on HTTP in time`. `curl`
+against the published port gets nothing back — exit 52, empty reply — while
+inside the container `uhttpd` is listening on `0.0.0.0:80` and a local request
+is answered. Reported on ImmortalWrt, where two routers were unreachable and
+the OpenWrt routers on the same stand were not.
+
+```console
+# uclient-fetch -O- http://127.0.0.1/cgi-bin/luci/
+HTTP error 403                                              <- LuCI wants a login: correct
+$ curl -o /dev/null -w '%{http_code}\n' http://localhost:18026/cgi-bin/luci/
+000
+```
+
+`owlab logs` stopping at `- generating board file -` is not a clue. That is the
+last line a healthy container prints.
+
+**Cause.** fw4 renders a zone as `iifname "<dev>" jump input_<zone>`, and works
+out `<dev>` from the zone's `network` list at the moment it builds the ruleset.
+A zone that resolves to no device emits no jump line at all, so the packet
+falls off the end of the input chain into `jump handle_reject` — a TCP reset.
+The host sees an empty reply; a sibling container on the same docker network
+sees `Connection refused`.
+
+```console
+# nft list ruleset | sed -n '/^\tchain input {/,/^\t}/p'
+chain input {
+        type filter hook input priority filter; policy drop;
+        iifname "dummy0" jump input_wan     # ... and no br-lan line
+        jump handle_reject                  # so lan traffic lands here
+}
+```
+
+**Fix.** `95_owlab-base` names the lan device on that zone explicitly —
+`list device 'br-lan'` beside the `network 'lan'` the zone already carries,
+`input ACCEPT` on it, and a zone created outright if the image ships none for
+the lan network. fw4 takes `device` literally instead of asking netifd, so the
+jump is there whatever netifd had done when fw4 read the config, and it
+deduplicates the device against the network: one jump line, measured.
+
+The firewall stays on. fw4 works in a container, and turning it off would hide
+a whole class of real behaviour.
+
+**Check it.** On the router:
+
+```console
+# nft list ruleset | grep 'jump input_lan'
+        iifname "br-lan" jump input_lan comment "!fw4: Handle lan IPv4/IPv6 input traffic"
+```
+
+### ssh is closed the moment it is opened
+
+**Symptom.** `ssh -p 12226 root@localhost` against an ImmortalWrt router is
+closed immediately, while HTTP on the same container answers.
+
+**Cause.** ImmortalWrt ships `option Interface 'lan'` in `/etc/config/dropbear`
+and OpenWrt ships no such key, so dropbear binds one address rather than the
+wildcard. Measured on one stand, `netstat -ltnp` inside each container:
+
+```console
+imm2512    tcp 0 0 192.168.163.5:22  LISTEN  2262/dropbear
+owrt2512   tcp 0 0 0.0.0.0:22        LISTEN   889/dropbear
+```
+
+That address is correct only for as long as netifd finished with `lan` before
+dropbear started and nothing ever arrives by another address — neither of which
+a container recreated this often can promise.
+
+**Fix.** `95_owlab-base` deletes the key, so dropbear binds `0.0.0.0:22` on both
+distributions.
+
+**Check it.** `netstat -ltn` inside the container must show `0.0.0.0:22`.
+
+---
+
 ## "The router answers LuCI but nothing works"
 
 ### procd jails services, and a container cannot build a jail
