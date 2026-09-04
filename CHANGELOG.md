@@ -7,6 +7,40 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+### Added
+
+- **A release pin that goes stale now fails a build.** `sh tools/pins.sh check`
+  reads the pins out of `images/owlab.yaml` and refuses any release literal in
+  `images/Dockerfile` or a workflow that names a release the config does not
+  pin; `ci.yml` runs it on every push. Nothing caught this before, because an
+  old release still builds — on 2026-09-04 `ARG BASE_IMAGE` and both release
+  literals in `ci.yml` still said 25.12.4 while the config had been on 25.12.5
+  since it was written, and every job was green the whole time. Comments,
+  `examples/`, the READMEs and `docs/` are outside the check on purpose: a
+  release number there is an illustration, and the README's sample `owlab
+  releases` output shows a pin one release behind deliberately.
+- **`pins.yml` proposes the bump upstream has made available.** Daily, it asks
+  `owlab releases --json` — the report that has existed since 0.2.0 and that
+  nothing read — and when `stale` is not zero it rewrites the pins with
+  `tools/pins.sh bump`, validates the result with `tools/pins.sh check` and
+  `owlab context --list`, and opens a pull request. It never pushes to `main`:
+  what proves a new release still builds a router is the CI run on that pull
+  request. It then dispatches `ci.yml` on the pin branch, because a pull request
+  authored by `app/github-actions` has its `pull_request` run held in
+  `action_required` under this repository's approval policy, and
+  `workflow_dispatch` is GitHub's own documented exception to that.
+
+### Changed
+
+- The e2e matrix, the `action` job's `releases:` input and `ARG BASE_IMAGE` move
+  from 25.12.4 to 25.12.5, which is what `images/owlab.yaml` has pinned all
+  along. `openwrt/rootfs:x86_64-25.12.5` was not on Docker Hub when this landed
+  — upstream tags the download server first — and it does not matter: `owlab
+  context` asks the registry and falls back to the rootfs tarball, which is the
+  path the published 25.12.5 images were already built through.
+
 ## [0.5.6] - 2026-09-04
 
 ### Fixed

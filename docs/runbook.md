@@ -256,6 +256,44 @@ reports the release you pinned.
 Do not pin `snapshot`. Snapshot images and snapshot feeds are rebuilt daily and
 independently, so installs start failing within a day.
 
+### Check the copies of the pin
+
+`images/owlab.yaml` is the pin a person edits. The same release number is also
+copied into `images/Dockerfile` and the CI workflows, which start a router
+without reading that config.
+
+```console
+$ sh tools/pins.sh check
+images/owlab.yaml pins: 24.10.6 24.10.8 25.12.1 25.12.5
+every release literal in the pin files is one images/owlab.yaml pins
+```
+
+It fails when a workflow or `images/Dockerfile` names a release
+`images/owlab.yaml` does not pin, and `ci.yml` runs it on every push. Nothing
+else catches that: an old release still builds, so a forgotten copy stays green
+while CI tests a release nobody runs.
+
+To move every copy of one release at once:
+
+```console
+$ sh tools/pins.sh bump 25.12.4 25.12.5
+```
+
+Comments, `examples/`, the READMEs and `docs/` keep the release they name.
+Both commands leave them alone, because a release number in prose is an
+illustration — the sample output above this section is a pin deliberately one
+release behind.
+
+### The job that proposes a bump
+
+`pins.yml` runs daily, asks `owlab releases --json` the same question, and opens
+a pull request when the answer is not "up to date". It rewrites the pins, runs
+`tools/pins.sh check` and `owlab context --list` over the result, and stops
+there.
+
+It never pushes to `main`. What proves a new release still builds a router is
+the CI run on that pull request, not a larger number in a directory listing.
+
 ---
 
 ## Install a package to try it

@@ -24,7 +24,17 @@ ARG BASE_STAGE=upstream
 # Both of these must be declared here, before the first FROM: an ARG inside a
 # stage is scoped to that stage, and `FROM ${BASE_STAGE}` would then resolve
 # against an empty base name.
-ARG BASE_IMAGE=openwrt/rootfs:x86_64-25.12.4
+#
+# The default is never what builds an image -- owlab passes BASE_IMAGE on every
+# invocation -- but it is read as documentation, so it is held to the pin in
+# owlab.yaml by `tools/pins.sh check`. It is also the one place the tarball
+# fallback does not reach: `owlab context` asks the registry first and switches
+# to ROOTFS_URL when the release has no container image yet, and on 2026-09-04
+# `openwrt/rootfs:x86_64-25.12.5` was exactly that -- tagged on the download
+# server, not yet mirrored to Docker Hub. A bare `docker build images/` with
+# these defaults would have failed on the pull while every owlab build of the
+# same release succeeded.
+ARG BASE_IMAGE=openwrt/rootfs:x86_64-25.12.5
 ARG ROOTFS_URL=
 ARG ALPINE_TAG=3.22
 
