@@ -9,6 +9,17 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Load-bearing, not a convenience for re-running by hand. `pins.yml` opens its
+  # pull requests with `gh pr create` under GITHUB_TOKEN, so their author is
+  # `app/github-actions`, and this repository's approval policy is
+  # `first_time_contributors`: the `pull_request` run is created and then held in
+  # `action_required` until a person presses a button. GitHub's own exception is
+  # the way out and needs no credential -- "`workflow_dispatch` and
+  # `repository_dispatch` events always create workflow runs" -- so `pins.yml`
+  # dispatches this workflow on the pin branch after opening the pull request.
+  # Check runs bind to a commit rather than to an event, and the head of the pin
+  # branch IS the pull request's head commit, so the same contexts are reported
+  # against it. Removing this line makes every proposed pin arrive unchecked.
   workflow_dispatch:
 
 permissions:
@@ -132,6 +143,18 @@ jobs:
       - name: The installer the actions share parses
         run: bash -n setup/install.sh
 
+      # The release number is copied out of images/owlab.yaml into everything
+      # that starts a router, and a stale copy fails nothing: an old release
+      # still builds, it just stops being the one anybody runs. This is the only
+      # way that ever goes red. Measured on 2026-09-04 -- `ARG BASE_IMAGE` and
+      # both release literals here still said 25.12.4 while the config had been
+      # on 25.12.5 the whole time, and every job was green.
+      #
+      # Scoped to the workflows and images/Dockerfile on purpose; the list and
+      # the reasons for what is left out are in tools/pins.sh.
+      - name: Every release literal names a release images/owlab.yaml pins
+        run: sh tools/pins.sh check
+
   # Dogfooding, and the only test here that runs against OpenWrt rather than
   # against a description of how OpenWrt behaves.
   #
@@ -152,7 +175,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {distro: openwrt, release: "25.12.4"}
+          - {distro: openwrt, release: "25.12.5"}
           - {distro: openwrt, release: "24.10.8"}
           - {distro: immortalwrt, release: "25.12.1"}
     steps:
@@ -204,7 +227,7 @@ jobs:
 
       - uses: ./action
         with:
-          releases: "25.12.4"
+          releases: "25.12.5"
           fixtures: "none"
           assert: |
             http 200 /cgi-bin/luci/admin/status/overview

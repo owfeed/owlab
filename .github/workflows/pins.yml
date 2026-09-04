@@ -1,0 +1,220 @@
+name: pins
+
+# Move the release pins when upstream tags a point release — by opening a pull
+# request, never by pushing to main.
+#
+# The answer has been available since `owlab releases --json` existed; what was
+# missing was a reader. `images.yml` calls `/tmp/owlab releases || true` and
+# prints the table into a log nobody opens, which is how `ARG BASE_IMAGE` and
+# both release literals in `ci.yml` sat on 25.12.4 while the config was on
+# 25.12.5, with every job green. This job is the consumer of that JSON, and
+# `tools/pins.sh check` in ci.yml is the gate that catches whatever it misses.
+#
+# It proposes; it does not apply. Moving a pin changes which OpenWrt every e2e
+# job and every published image is built against, and the evidence that the new
+# release works is the CI run on the pull request — not the fact that a
+# directory listing had a larger number in it. `tools/check-updates.sh` in
+# owfeed/owfeed-packages is the same shape for the same reason, and the two
+# traps below are the ones it paid for.
+
+on:
+  schedule:
+    # Daily, so a point release is noticed within a day rather than within a
+    # week. Not on the hour, because GitHub's scheduler is heavily contended at
+    # :00 and delays runs by tens of minutes; not at 04:17 Monday, because that
+    # is when `images.yml` rebuilds, and two jobs that both build owlab and both
+    # read the same download server have no reason to do it in the same minute.
+    - cron: '43 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never two at once. Both would branch from the same main, write the same pins
+# and open a second pull request for the same bump. Not cancel-in-progress: a
+# run killed between `git push` and `gh pr create` leaves a branch with no pull
+# request on it, and nothing would ever go back for it.
+concurrency:
+  group: owlab-pins
+  cancel-in-progress: false
+
+jobs:
+  propose:
+    runs-on: ubuntu-24.04
+    # Written out in full rather than added to: naming any scope in a job-level
+    # block sets every scope this job does not name to none, so `contents` and
+    # `pull-requests` have to be repeated here or pushing the branch and opening
+    # the pull request stop working.
+    #
+    # `actions: write` is the dispatch at the end of the step, and it is the one
+    # permission whose absence is invisible: without it the dispatch is a 403,
+    # the pull request is open, and its checks never start. See the comment on
+    # `workflow_dispatch` in ci.yml for why the dispatch is needed at all.
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Propose the pins upstream has moved past
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+
+          go build -o "$RUNNER_TEMP/owlab" ./cmd/owlab
+
+          # From images/, because `owlab releases` compares against the project
+          # it is standing in. Run anywhere without an owlab.yaml it answers a
+          # different question — what the download servers publish — and that
+          # document has no `stale` field at all, so the check below would read
+          # `null` and this job would do nothing forever.
+          ( cd images && "$RUNNER_TEMP/owlab" releases --json ) > "$RUNNER_TEMP/releases.json"
+          cat "$RUNNER_TEMP/releases.json"
+
+          schema="$(jq -r '.schema' "$RUNNER_TEMP/releases.json")"
+          if [ "$schema" != "owlab.releases/v1" ]; then
+            echo "owlab releases --json now emits $schema; this job reads owlab.releases/v1" >&2
+            echo "  update the jq below rather than letting it read fields that moved" >&2
+            exit 1
+          fi
+
+          stale="$(jq -r '.stale' "$RUNNER_TEMP/releases.json")"
+          if [ "$stale" = "0" ]; then
+            echo "every pin is the newest point release of its branch"
+            exit 0
+          fi
+
+          # One line per pin that moved, deduplicated: a branch is pinned by two
+          # routers (x86_64 and aarch64) carrying the same release, so the pair
+          # must be applied once rather than twice.
+          jq -r '.routers[] | select(.behind > 0) | "\(.pinned) \(.newest)"' \
+            "$RUNNER_TEMP/releases.json" | sort -u > "$RUNNER_TEMP/pairs"
+          echo "pins to move:"
+          sed 's/^/  /' "$RUNNER_TEMP/pairs"
+
+          # Refuse an ambiguous rewrite rather than guess. `tools/pins.sh bump`
+          # replaces a release literal wherever it appears, and two distributions
+          # can be pinned to the same release on the same branch — OpenWrt and
+          # ImmortalWrt have both published a 25.12.1 — and then move at
+          # different times. One old release with two answers would rewrite one
+          # distribution's pin to the other's, and the diff would look right.
+          # `tr -d` because BSD wc pads its count with spaces and GNU wc does
+          # not, and a string comparison of "       2" against "2" is an
+          # ambiguity that is not there — which would refuse every bump on a
+          # developer's Mac while passing on the runner.
+          olds="$(cut -d' ' -f1 "$RUNNER_TEMP/pairs" | sort -u | wc -l | tr -d ' ')"
+          rows="$(wc -l < "$RUNNER_TEMP/pairs" | tr -d ' ')"
+          if [ "$olds" != "$rows" ]; then
+            echo "the same pinned release maps to more than one newest release:" >&2
+            sed 's/^/  /' "$RUNNER_TEMP/pairs" >&2
+            echo "move these by hand — a literal rewrite cannot tell them apart" >&2
+            exit 1
+          fi
+
+          # Redirected from a file rather than piped: a `while read` on the right
+          # of a pipe runs in a subshell, and everything it changed about this
+          # shell — including whether it ran at all — is gone by the next line.
+          while read -r old new; do
+            sh tools/pins.sh bump "$old" "$new"
+          done < "$RUNNER_TEMP/pairs"
+
+          if git diff --quiet; then
+            echo "the report says stale but no pin file changed"
+            echo "  the pins are somewhere tools/pins.sh does not look; nothing to propose"
+            exit 0
+          fi
+          git --no-pager diff --stat
+
+          # What the pull request has to survive anyway, run here so a rewrite
+          # that cannot be read never reaches a reviewer. `context --list` is the
+          # stronger of the two: it resolves the matrix against the download
+          # server, so a release that is tagged but has no artifacts for a target
+          # fails here rather than twenty minutes into a build.
+          sh tools/pins.sh check
+          ( cd images && "$RUNNER_TEMP/owlab" context --list >/dev/null )
+
+          # Named for what it proposes, so a re-run before the pull request is
+          # merged lands on the same branch instead of opening a second one.
+          branch="pins/$(cut -d' ' -f2 "$RUNNER_TEMP/pairs" | sort -u | tr '\n' '-' | sed 's/-$//')"
+
+          # Captured, not piped into grep. A pipeline reports the status of its
+          # LAST command, so a `gh` that failed would reach grep as empty output
+          # and read as "no pull request is open" — the one answer that makes
+          # this push a branch and open a duplicate. Measured in
+          # owfeed-packages, where a job without a checkout failed exactly here.
+          #
+          # `-R "$GITHUB_REPOSITORY"` on every gh call for the same reason: gh
+          # falls back to `git remote` to decide which repository it means, and
+          # the fallback is one refactor away from not being there.
+          open="$(gh pr list -R "$GITHUB_REPOSITORY" --head "$branch" --state open \
+                    --json number -q '.[0].number')"
+          if [ -n "$open" ]; then
+            echo "#$open already proposes $branch"
+            exit 0
+          fi
+
+          subject="chore(pins): $(sed 's/^\(.*\) \(.*\)$/\1 -> \2/' "$RUNNER_TEMP/pairs" \
+                     | tr '\n' ',' | sed 's/,$//; s/,/, /g')"
+
+          {
+            echo "Upstream publishes a newer point release on these branches:"
+            echo
+            sed 's/^\(.*\) \(.*\)$/- \`\1\` -> \`\2\`/' "$RUNNER_TEMP/pairs"
+            echo
+            echo '```'
+            jq -r '.routers[] | select(.behind > 0)
+                   | "\(.router)  \(.distro)  \(.pinned) -> \(.newest)  (\(.behind) behind)"' \
+              "$RUNNER_TEMP/releases.json"
+            echo '```'
+            echo
+            echo "Rewritten by \`tools/pins.sh bump\`, which moves a release literal only where"
+            echo "this repository runs one: \`images/owlab.yaml\`, \`images/Dockerfile\` and the"
+            echo "workflows. Prose, \`examples/\` and the READMEs keep the release they name."
+            echo
+            echo "What this does not prove is that the new release still builds a router. That is"
+            echo "what the CI run on this branch is for: the e2e job installs on both package"
+            echo "managers against a real image, and \`tools/pins.sh check\` re-reads the rewrite."
+          } > "$RUNNER_TEMP/body.md"
+
+          git config user.name  "owlab-bot"
+          git config user.email "owlab-bot@users.noreply.github.com"
+          git switch -c "$branch"
+          # One file for both, so the commit a reviewer reads in `git log` says
+          # the same thing as the pull request they read it from. `-F` rather
+          # than `-m`: git refuses the two together.
+          { echo "$subject"; echo; cat "$RUNNER_TEMP/body.md"; } > "$RUNNER_TEMP/message"
+          git commit -a -F "$RUNNER_TEMP/message"
+
+          # --force-with-lease, because a run that pushed the branch and then
+          # failed before opening the pull request leaves it behind, and the next
+          # run's push is a non-fast-forward against it — so one failure would
+          # wedge this bump until somebody deleted the branch by hand. The branch
+          # belongs to this job and its content is derived from the report, so
+          # replacing it loses nothing; the lease still refuses if someone else
+          # moved it.
+          git push -u --force-with-lease origin "$branch"
+
+          url="$(gh pr create -R "$GITHUB_REPOSITORY" --base main --head "$branch" \
+                   --title "$subject" --body-file "$RUNNER_TEMP/body.md")"
+          echo "$url"
+
+          # Start the checks by hand, because GitHub will not start them itself
+          # for a pull request authored by `app/github-actions` under this
+          # repository's approval policy. The reasoning is on `workflow_dispatch`
+          # in ci.yml.
+          #
+          # Not allowed to fail the run: the job's product is the pull request
+          # and by this line it exists. Reported rather than swallowed, because a
+          # silent `|| true` leaves a pull request whose checks nobody will start.
+          if gh workflow run ci.yml -R "$GITHUB_REPOSITORY" --ref "$branch"; then
+            echo "ci dispatched on $branch"
+          else
+            echo "CHECKS NOT DISPATCHED — the pull request is open and nothing is running against it"
+            echo "  run 'gh workflow run ci.yml -R $GITHUB_REPOSITORY --ref $branch',"
+            echo "  or approve the waiting run by hand"
+          fi
