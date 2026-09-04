@@ -7,7 +7,7 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
-## [Unreleased]
+## [0.6.0] - 2026-09-04
 
 ### Added
 
@@ -462,7 +462,8 @@ First release.
   to be re-run still leaves the immutable tags behind.
 
 [artifact-contract]: https://github.com/VizzleTF/owfeed/blob/main/docs/artifact-contract.md
-[Unreleased]: https://github.com/VizzleTF/owlab/compare/v0.5.6...HEAD
+[Unreleased]: https://github.com/VizzleTF/owlab/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/VizzleTF/owlab/compare/v0.5.6...v0.6.0
 [0.5.6]: https://github.com/VizzleTF/owlab/compare/v0.5.5...v0.5.6
 [0.5.5]: https://github.com/VizzleTF/owlab/compare/v0.5.4...v0.5.5
 [0.4.1]: https://github.com/VizzleTF/owlab/compare/v0.4.0...v0.4.1
