@@ -426,7 +426,20 @@ func (a *app) testInstall(ctx context.Context, r *config.Router, run syncpkg.Exe
 	}
 
 	cmd := pre + pkgmgr.Install(pm, installArgs, pkgmgr.Options{
-		Update: len(feed) > 0 || feedSrc != nil,
+		// Unconditional, not just when a feed was added. A package installed
+		// by path still resolves its DEPENDENCIES out of the index, and the
+		// index a router boots with is as old as the image layer that ran
+		// `opkg update` — which is cached, and on a reused image is whatever
+		// the feed looked like the week it was built. OpenWrt rebuilds the
+		// packages inside a pinned point release without bumping a version,
+		// so an index that old names bytes the server no longer serves:
+		//
+		//   opkg_install_pkg: Checksum or size mismatch for package bash.
+		//
+		// Free on the apk line, which revalidates a cached index older than
+		// four hours by itself; the cost on the opkg line is one index fetch
+		// per router per run.
+		Update: true,
 		// A locally built package carries no signature the router's keyring
 		// knows, and there is no key it could carry that would.
 		Untrusted: len(files) > 0,

@@ -8,6 +8,48 @@ when you hit them, because almost none of them presents as its cause.
 
 ---
 
+## "The image build fails"
+
+### The index in the image is older than the layer that uses it
+
+**Symptom.** `owlab up` fails while installing an `extra_packages:` file on a
+24.10 router, and names a package nobody asked for:
+
+```
+opkg_install_pkg: Checksum or size mismatch for package bash. Either the opkg
+or the package index are corrupt. Try 'opkg update'.
+owlab: build failed: exit status 1
+```
+
+`bash` here is a **dependency** of the staged package, not the staged package.
+Only the opkg line does this.
+
+**Cause.** `opkg update` ran in an earlier layer than the install. Buildkit
+keeps that layer for as long as the release and the feed package list hold,
+while the install layer re-runs on every change to the staged files — so the
+index can be months older than the install reading it.
+
+A pinned point release does not save you, because it is not frozen: OpenWrt
+rebuilds the packages inside `releases/24.10.8/` in place, without bumping a
+version. Measured on 2026-09-04 against an image built 2026-07-29:
+
+```
+index in the image     bash 5.2.37-r1  Size 473650  SHA256 f1872e60...
+downloads.openwrt.org  bash 5.2.37-r1  Size 473647  SHA256 20eaa220...
+```
+
+Same version, different bytes — which is exactly what opkg reports as a
+checksum mismatch.
+
+**Fix.** `opkg update` runs in the same layer as the install, and `owlab test`
+refreshes the index before installing a local file too. apk needs neither:
+apk-tools 3.0.5 revalidates a cached index older than `--cache-max-age`
+(4 hours by default) on its own, so `apk add` in a month-old image
+re-downloads every APKINDEX before it resolves anything. opkg has no such
+policy — it reads whatever the last `opkg update` left and never asks.
+
+---
+
 ## "The router never answers on its published port"
 
 ### The container's interface is in no firewall zone
@@ -365,7 +407,7 @@ looking at is worth doing before debugging anything else.
 
 ---
 
-## Two upstream behaviours worth knowing
+## Three upstream behaviours worth knowing
 
 ### `kmods` must stay in the feed list
 
@@ -381,3 +423,11 @@ apk records hard pins in `/etc/apk/world` (`base-files=1707~4ccb782af7`).
 Pointing a 25.12.4 rootfs at the 25.12.5 feed fails every install with
 `breaks: world[...]`. owlab does not rewrite the feeds at all, which is the
 simplest way to keep this right.
+
+### A pinned point release is still a moving target
+
+The pin fixes which release you install from, not which bytes that release
+serves. `releases/24.10.8/packages/` is rebuilt in place — the `Packages`
+index for a release cut months ago was last modified yesterday — and a package
+can be replaced under the same version string. So an index is only good for as
+long as it is fresh, and every place that reads one has to refresh it first.

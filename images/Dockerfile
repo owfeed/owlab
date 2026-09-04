@@ -135,6 +135,34 @@ COPY extra/ /tmp/owlab-extra/
 # installing one at a time makes that a hard error ("unable to select
 # packages") for anything but the luckiest ordering. Handed the whole set, the
 # package manager resolves among them.
+#
+# opkg's index is refreshed HERE, in the layer that uses it, and that is the
+# whole reason the line exists. The `opkg update` above runs in a different
+# RUN, whose inputs are the release and the feed package list; buildkit keeps
+# that layer for as long as those hold, while this one re-runs on every change
+# to the staged files. The two are routinely months apart.
+#
+# That is fatal because a pinned point release is not frozen. OpenWrt rebuilds
+# the packages inside `releases/24.10.8/` in place, without bumping a version,
+# so an index from an older build names bytes the server no longer serves:
+#
+#   image built 2026-07-29  bash 5.2.37-r1  Size 473650  SHA256 f1872e60...
+#   downloads.openwrt.org   bash 5.2.37-r1  Size 473647  SHA256 20eaa220...
+#
+#   opkg_install_pkg: Checksum or size mismatch for package bash. Either the
+#   opkg or the package index are corrupt. Try 'opkg update'.
+#
+# It bites here rather than above because a local package is installed by
+# path, but its DEPENDENCIES still come out of the index.
+#
+# apk gets no equivalent line, measured: apk-tools 3.0.5 revalidates a cached
+# index older than --cache-max-age (4 hours by default) on its own, so an
+# `apk add` inside a month-old image re-downloads every APKINDEX before it
+# resolves anything, and a second one seconds later does not. opkg has no such
+# policy — it reads whatever the last `opkg update` left and never asks.
+#
+# Inside the `if`, so a build with no out-of-feed package fetches nothing, and
+# in this layer only, so nothing that cached before still caches.
 RUN set -eu; \
 	dir="/tmp/owlab-extra/$ROUTER_ID"; \
 	set -- ; \
@@ -144,6 +172,7 @@ RUN set -eu; \
 		if [ "$PKG_MANAGER" = "apk" ]; then \
 			apk add --allow-untrusted --force-overwrite "$@"; \
 		else \
+			opkg update; \
 			opkg install --force-overwrite "$@"; \
 		fi; \
 	fi; \
