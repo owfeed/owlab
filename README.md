@@ -43,7 +43,7 @@ version: 1
 
 routers:
   - id: owrt2512
-    release: "25.12.4"
+    release: "25.12.5"
 ```
 
 ```console
@@ -60,7 +60,7 @@ Open the URL. Log in as `root`, leave the password blank.
 ```yaml
 routers:
   - id: owrt2512
-    release: "25.12.4"
+    release: "25.12.5"
   - id: owrt2410
     release: "24.10.8"
   - id: imm2512
@@ -96,7 +96,7 @@ $ owlab install owrt2512 luci-app-ttyd
 
 That one is gone after `owlab up --rebuild`. `packages:` survives.
 
-## Install a package that is not in any feed
+### Install a package that is not in any feed
 
 Your own, or anything from GitHub Releases. Both URLs, because apk and opkg
 name their files differently:
@@ -177,7 +177,7 @@ apps to check the cascade against.
 routers:
   - id: real
     fidelity: vm
-    release: "25.12.4"
+    release: "25.12.5"
     packages: ["+kmod-nft-tproxy"]
 ```
 
@@ -249,7 +249,7 @@ output for one release.
 - uses: owfeed/owlab/action@v0.6.0
   with:
     releases: "25.12.5 24.10.8"
-    install: dist/*/luci-app-mine-*.apk
+    install: dist/*/luci-app-mine-*
     assert: |
       http 200 /cgi-bin/luci/admin/services/mine
       service mined
@@ -264,7 +264,7 @@ The same thing locally, and what the action runs:
 
 ```console
 $ owlab test --release 25.12.5 --release 24.10.8 \
-    --install 'dist/*/luci-app-mine-*.apk' \
+    --install 'dist/*/luci-app-mine-*' \
     --assert 'http 200 /cgi-bin/luci/admin/services/mine'
 ```
 

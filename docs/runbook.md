@@ -328,9 +328,13 @@ defaults:
 $ owlab up --rebuild
 ```
 
-Verify: the build prints `owlab: installing luci-app-mine-1.0-r1.apk`. A
-failure here is fatal — the build stops rather than handing you a router
-quietly missing it.
+Verify: the build prints `owlab: installing luci-app-mine-1.0-r1.apk`.
+
+If it cannot be installed, the build carries on and that router starts without
+it, so one bad file does not cancel the other routers. `owlab up` names what is
+missing after its table and exits non-zero, `owlab test` fails that router on
+its `extra_packages` step, and the list stays on the router in
+`/etc/owlab/extras-failed`.
 
 Both URLs, because apk and opkg do not share a naming scheme. Pin an exact
 release, never a `latest` link: these are installed without checking

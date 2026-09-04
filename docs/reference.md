@@ -25,13 +25,13 @@ defaults:                         # merged into every router
 routers:
   - id: owrt2512
     distro: openwrt               # openwrt | immortalwrt
-    release: "25.12.4"
+    release: "25.12.5"
     packages: ["+luci-app-sqm"]   # + adds to defaults, - removes
     ports: { http: 8025, ssh: 2225 }
 
   - id: real                      # fidelity vm only:
     fidelity: vm
-    release: "25.12.4"
+    release: "25.12.5"
     memory: 512M                  # qemu -m
     cpus: 2                       # qemu -smp
     disk: 2G                      # extroot disk; 0 to use the image's own
@@ -253,8 +253,8 @@ carries no traffic.
 
 ### Pin point releases
 
-`release: "25.12.4"`, not `"25.12"`. The package manager records hard version
-pins (`base-files=1707~4ccb782af7` in `/etc/apk/world`), so a 25.12.1 rootfs
+`release: "25.12.5"`, not `"25.12"`. The package manager records hard version
+pins (`base-files=1707~4ccb782af7` in `/etc/apk/world`), so a 25.12.4 rootfs
 pointed at the 25.12.5 feed fails every install with `breaks: world[...]`.
 owlab pins the feed to the exact release the rootfs came from, and old
 point releases stay available upstream, so this always works.
@@ -271,9 +271,9 @@ installing the LuCI set. Starting from a published image takes seconds:
 ```yaml
 routers:
   - id: owrt2512
-    release: "25.12.4"
+    release: "25.12.5"
     arch: x86_64
-    image: ghcr.io/owfeed/owlab-rootfs:openwrt-25.12.4-x86_64
+    image: ghcr.io/owfeed/owlab-rootfs:openwrt-25.12.5-x86_64
 ```
 
 Everything else still applies on top — your `packages:` are installed (the
@@ -284,8 +284,8 @@ different code path, so nothing behaves differently from a locally built one.
 Published tags are `<distro>-<release>-<arch>`:
 
 ```
-ghcr.io/owfeed/owlab-rootfs:openwrt-25.12.4-x86_64
-ghcr.io/owfeed/owlab-rootfs:openwrt-25.12.4-aarch64_generic
+ghcr.io/owfeed/owlab-rootfs:openwrt-25.12.5-x86_64
+ghcr.io/owfeed/owlab-rootfs:openwrt-25.12.5-aarch64_generic
 ghcr.io/owfeed/owlab-rootfs:openwrt-24.10.8-x86_64
 ghcr.io/owfeed/owlab-rootfs:immortalwrt-25.12.1-x86_64
 ...
@@ -346,7 +346,7 @@ running router, tear everything down, exit 0 or 1.
 
 ```console
 $ owlab test --release 25.12.5 --release 24.10.8 \
-    --install 'dist/*/luci-app-mine-*.apk' \
+    --install 'dist/*/luci-app-mine-*' \
     --assert 'http 200 /cgi-bin/luci/admin/services/mine'
 ```
 
@@ -469,7 +469,7 @@ add'` is the whole of "is anything stale".
 - uses: owfeed/owlab/action@v0.6.0
   with:
     releases: "25.12.5 24.10.8"
-    install: dist/*/luci-app-mine-*.apk
+    install: dist/*/luci-app-mine-*
     assert: |
       http 200 /cgi-bin/luci/admin/services/mine
       service mined
