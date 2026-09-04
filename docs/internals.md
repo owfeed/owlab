@@ -435,7 +435,7 @@ the two package managers do not share a naming scheme: the same release
 publishes `luci-theme-footstrap-0.11.5-r1.apk` and
 `luci-theme-footstrap_0.11.5-r1_all.ipk`.
 
-Four things about how these are installed, each of which was a bug first.
+Five things about how these are installed, each of which was a bug first.
 
 **Downloaded on the host.** A stock OpenWrt rootfs has no `curl` and its
 busybox `wget` cannot do TLS, so an in-image download would depend on which
@@ -449,7 +449,8 @@ packages depend on each other — `luci-app-example` requires `example-daemon`, 
 before it — which apk refuses outright with `unable to select packages`.
 
 **All of them in one command.** Handed the whole set, the package manager
-resolves among them and the ordering stops mattering at all.
+resolves among them and the ordering stops mattering — until the retry below,
+which is one file at a time and leans on the staged order again.
 
 **`--force-overwrite`.** Their dependencies routinely replace a file the stock
 image already owns:
@@ -464,9 +465,27 @@ exactly what was asked for. ImmortalWrt already ships `dnsmasq-full`, so
 without this the same config produced a different router on OpenWrt 24.10 than
 on the other three.
 
-**A failure here is fatal**, unlike a feed name. These are named by URL — the
-developer said "install this file" — and a build that reported success without
-it would hand them a router quietly missing the thing they are testing against.
+**A failure here is neither swallowed nor fatal**, unlike a feed name. These
+are named by URL — the developer said "install this file" — so a build that
+reported success without one would hand them a router quietly missing the thing
+they are testing against.
+
+Fatal was the first answer and cost more than it saved. `docker compose build`
+puts every router in one buildkit solve, and buildkit cancels the solve on the
+first target that fails, so one unusable file killed every other router in the
+lab. Measured 2026-09-04 on a three-router stand: opkg exits 255 on an
+unsatisfiable dependency, apk exits 27 on `unable to select packages`, and both
+left `CANCELED` neighbours — it is `set -eu`, not the package manager. Nor is
+there a knob: neither `docker compose build` nor `docker buildx bake` has a
+`--keep-going`.
+
+So the set is installed as one, then one file at a time if that failed, and
+what is still missing is written to `/etc/owlab/extras-failed` — which
+`owlab up` reads back off the running router and reports under its table before
+exiting non-zero, and which `owlab test` fails on as an `extra_packages` step.
+The record is what makes tolerance honest rather than silent: a build log
+scrolls past, and a router started from a cached image never printed one at
+all.
 
 These are installed **without signature verification**. Projects publishing
 this way usually sign with usign and ship a `.sig` beside the artifact, but

@@ -50,6 +50,53 @@ downloads.openwrt.org  bash 5.2.37-r1  Size 473647  SHA256 20eaa220...
 opkg такой политики нет — он читает то, что оставил последний `opkg update`, и
 ничего не спрашивает.
 
+### `extra_packages` одного роутера отменили сборку всех остальных
+
+**Симптом.** `owlab up` падает на шаге extras одного роутера, и вместе с ним
+останавливаются роутеры, которые собирались нормально:
+
+```
+#33 ERROR: process "/bin/sh -c set -eu; ... opkg install --force-overwrite ..." exit code: 255
+#18 [imm2410 stage-3  2/12] ...   #18 CANCELED
+#24 [imm2512 stage-3  2/12] ...   #24 CANCELED
+owlab: build failed: exit status 1
+```
+
+**Причина.** `docker compose build` кладёт все роутеры в один solve buildkit, а
+buildkit отменяет весь solve на первой упавшей цели. Шаг extras выходил с
+ненулевым кодом из-за одного подготовленного файла — и один пакет на одном
+роутере стоил всей лаборатории.
+
+Так ведут себя обе линии релизов: дело в `set -eu`, а не в менеджере пакетов.
+Замерено 2026-09-04: opkg выходит с 255 на неразрешимой зависимости, apk — с 27
+на `unable to select packages`, и оба раза соседние роутеры в том же запуске
+получили CANCELED. Настройкой сборки это не лечится: ни у `docker compose
+build`, ни у `docker buildx bake` нет `--keep-going`.
+
+**Что сделано.** Шаг extras ставит весь набор разом, а если это не вышло —
+ставит каждый файл по отдельности, чтобы исправные всё-таки встали. То, что не
+встало, названо в логе сборки, записано в `/etc/owlab/extras-failed`, сообщено
+`owlab up` после его таблицы и роняет `owlab test`:
+
+```
+! owrt2410 is running WITHOUT luci-app-example_1.0_all.ipk
+!   Every other router built and started; only these packages are missing.
+!   The package manager said why during the build — one router at a time shows it again:
+!     owlab up --rebuild owrt2410
+```
+
+Напечатав это, `owlab up` завершается с ненулевым кодом. Лаборатория поднята и
+остальные роутеры пригодны, но это не то, что описано в конфиге, — а скрипт,
+который запускает `owlab up` перед своими проверками, не должен принимать одно
+за другое.
+
+Спросить работающий роутер напрямую:
+
+```console
+$ owlab exec owrt2410 -- cat /etc/owlab/extras-failed
+luci-app-example_1.0_all.ipk
+```
+
 ---
 
 ## «Роутер вообще не отвечает на опубликованном порту»
@@ -232,7 +279,9 @@ OpenWrt 24.10.
 `dnsmasq-full` из коробки, поэтому три роутера из четырёх не пострадали — один
 и тот же конфиг давал на одном из них другой роутер.
 
-**Решение.** `--force-overwrite`, и провал в `extra_packages` теперь фатален.
+**Решение.** `--force-overwrite`, а пакет из `extra_packages`, который не
+встал, теперь называется, а не проходит незамеченным, — где именно, см.
+«`extra_packages` одного роутера отменили сборку всех остальных» выше.
 
 ---
 

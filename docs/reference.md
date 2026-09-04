@@ -166,10 +166,20 @@ Downloads happen on the host and are cached in `.owlab/cache/`, so `up` does
 not re-fetch them. They have to: a stock OpenWrt rootfs has no `curl`, and its
 busybox `wget` cannot do TLS.
 
-A failure here is fatal, unlike a name in `packages:` that a particular feed
-happens not to carry. These are named by URL — you said "install this file" —
-and a build that reported success without it would hand you a router quietly
-missing the thing you are testing against. They are also installed with
+A failure here is neither passed over nor fatal, unlike a name in `packages:`
+that a particular feed happens not to carry. These are named by URL — you said
+"install this file" — so owlab will not report success without one. It will
+not fail the build either: every router in a lab is built in one buildkit
+solve, and one failing target cancels all the others, so a single package would
+take the whole lab down.
+
+What happens instead: the set is installed together, then one file at a time if
+that failed, so the good ones still land. Whatever is still missing is named by
+`owlab up` after its table, is failed on by `owlab test`, and is left on the
+router in `/etc/owlab/extras-failed`. `owlab up` exits non-zero when it has to
+print that — the lab is running, and it is not what your config describes.
+
+They are also installed with
 `--force-overwrite`, because their dependencies routinely replace a file the
 stock image already owns: `luci-app-openclash` pulls `dnsmasq-full`, which
 ships `/etc/init.d/dnsmasq` and collides with `dnsmasq`. Without it the same
