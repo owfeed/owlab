@@ -137,3 +137,97 @@ func TestResolveHostLeavesARealURLAlone(t *testing.T) {
 		}
 	}
 }
+
+// The bug this filter exists for: one glob over `dist/*/` matches both formats,
+// and before filtering every router got both. apk answered the .ipk with
+// `v2 package format error` and failed the .apk in the same command with it.
+func TestFilterFilesKeepsOnlyThisManagersFormat(t *testing.T) {
+	mixed := []string{
+		"dist/noarch/luci-theme-example-0.11.7-r1.apk",
+		"dist/all/luci-theme-example_0.11.7-r1_all.ipk",
+	}
+
+	keep, skipped := FilterFiles(config.APK, mixed)
+	if len(keep) != 1 || keep[0] != mixed[0] {
+		t.Errorf("apk kept %v, want just the .apk", keep)
+	}
+	if len(skipped) != 1 || skipped[0] != mixed[1] {
+		t.Errorf("apk skipped %v, want just the .ipk", skipped)
+	}
+
+	keep, skipped = FilterFiles(config.OPKG, mixed)
+	if len(keep) != 1 || keep[0] != mixed[1] {
+		t.Errorf("opkg kept %v, want just the .ipk", keep)
+	}
+	if len(skipped) != 1 || skipped[0] != mixed[0] {
+		t.Errorf("opkg skipped %v, want just the .apk", skipped)
+	}
+}
+
+// A single-release run must come out exactly as it did before the filter
+// existed, or every workflow already written pays for a bug it never hit.
+func TestFilterFilesLeavesASingleLineRunAlone(t *testing.T) {
+	for _, tc := range []struct {
+		pm    config.PackageManager
+		files []string
+	}{
+		{config.APK, []string{"dist/noarch/a.apk", "dist/aarch64_generic/b.apk"}},
+		{config.OPKG, []string{"dist/all/a.ipk", "dist/aarch64_generic/b.ipk"}},
+	} {
+		keep, skipped := FilterFiles(tc.pm, tc.files)
+		if len(keep) != len(tc.files) || len(skipped) != 0 {
+			t.Errorf("%s: kept %v, skipped %v", tc.pm, keep, skipped)
+		}
+	}
+}
+
+// Only the two package formats are ruled on. Anything else — a script, an
+// archive a fixture unpacks — is not something owlab was asked to judge, and
+// dropping it would break installs that work today.
+func TestFilterFilesPassesUnknownExtensionsThrough(t *testing.T) {
+	files := []string{"payload.tar.gz", "setup.sh", "extras"}
+	for _, pm := range []config.PackageManager{config.APK, config.OPKG} {
+		keep, skipped := FilterFiles(pm, files)
+		if len(keep) != len(files) || len(skipped) != 0 {
+			t.Errorf("%s: kept %v, skipped %v", pm, keep, skipped)
+		}
+	}
+}
+
+// A glob matching only the other line's format leaves this router with nothing.
+// The caller has to be able to see that, because a package manager invoked with
+// no arguments succeeds and would report an install that never happened.
+func TestFilterFilesCanKeepNothing(t *testing.T) {
+	keep, skipped := FilterFiles(config.APK, []string{"dist/all/a.ipk", "dist/all/b.ipk"})
+	if len(keep) != 0 {
+		t.Errorf("kept %v, want nothing", keep)
+	}
+	if len(skipped) != 2 {
+		t.Errorf("skipped %v, want both", skipped)
+	}
+}
+
+// The note names the file and the manager that refused it. `v2 package format
+// error` is what apk says on its own, and it describes a byte sequence rather
+// than the reason — which is that this router runs the other package manager.
+func TestSkipNoteNamesTheFileAndTheManager(t *testing.T) {
+	got := SkipNote(config.APK, "/tmp/luci-theme-example_0.11.7-r1_all.ipk")
+	want := "owlab: skipping luci-theme-example_0.11.7-r1_all.ipk (this router uses apk)"
+	if got != want {
+		t.Errorf("SkipNote =\n  %q\nwant\n  %q", got, want)
+	}
+	if got := SkipNote(config.OPKG, "dist/noarch/x.apk"); got != "owlab: skipping x.apk (this router uses opkg)" {
+		t.Errorf("SkipNote = %q", got)
+	}
+}
+
+// The extension decides, whatever case it was written in: a build that emitted
+// `.APK` would otherwise be silently handed to opkg.
+func TestInstallableIgnoresExtensionCase(t *testing.T) {
+	if !Installable(config.APK, "X.APK") {
+		t.Error("apk refused an uppercase .APK")
+	}
+	if Installable(config.APK, "X.IPK") {
+		t.Error("apk accepted an uppercase .IPK")
+	}
+}
