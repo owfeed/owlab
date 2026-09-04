@@ -8,9 +8,10 @@ go vet ./...
 go test ./...
 ```
 
-Those three, plus a cross-compile for five platforms, a `dash -n` pass over the
-shell that ships inside the image, and an end-to-end job that starts real
-routers on three release/distro combinations, run in CI on every pull request.
+Those three, plus a cross-compile for six platforms, a `dash -n` pass over the
+shell that ships inside the image and in `tools/`, `sh tools/pins.sh check` over
+the copies of the release pin, and an end-to-end job that starts real routers on
+three release/distro combinations, run in CI on every pull request.
 If a change touches how a router is built or reached, the end-to-end job is the
 one that will tell you.
 

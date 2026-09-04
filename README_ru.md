@@ -250,7 +250,7 @@ dist/
 - uses: owfeed/owlab/action@v0.6.0
   with:
     releases: "25.12.5 24.10.8"
-    install: dist/*/luci-app-mine-*.apk
+    install: dist/*/luci-app-mine-*
     assert: |
       http 200 /cgi-bin/luci/admin/services/mine
       service mined
@@ -265,7 +265,7 @@ summary написано, какой роутер и какая проверка
 
 ```console
 $ owlab test --release 25.12.5 --release 24.10.8 \
-    --install 'dist/*/luci-app-mine-*.apk' \
+    --install 'dist/*/luci-app-mine-*' \
     --assert 'http 200 /cgi-bin/luci/admin/services/mine'
 ```
 

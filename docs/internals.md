@@ -580,7 +580,7 @@ reproducible than naming a model.
 Upstream combined disk images — kernel, bootloader and rootfs in one file:
 
 ```
-openwrt-25.12.4-armsr-armv8-generic-squashfs-combined-efi.img.gz
+openwrt-25.12.5-armsr-armv8-generic-squashfs-combined-efi.img.gz
 ```
 
 **squashfs, not ext4.** squashfs is what a router runs: a read-only `/rom` with
