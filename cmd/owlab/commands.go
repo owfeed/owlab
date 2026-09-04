@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -94,12 +96,89 @@ func (a *app) up(ctx context.Context, args []string) error {
 		}
 	}
 
-	if *noWait {
-		return a.printReady(routers, nil)
+	var ready map[string]bool
+	if !*noWait {
+		ready = a.waitForLuCI(ctx, routers)
 	}
-	ready := a.waitForLuCI(ctx, routers)
-	return a.printReady(routers, ready)
+	if err := a.printReady(routers, ready); err != nil {
+		return err
+	}
+	// After the table, because it is what should be left on screen — and
+	// after the build, because the build no longer stops for it.
+	return a.reportMissingExtras(ctx, containers)
 }
+
+// extrasFailedPath is where an image build records the extra_packages it could
+// not install. See the extras layer in images/Dockerfile.
+//
+// Read back off the router rather than scraped out of the build log, for two
+// reasons: the log is thousands of lines of buildkit progress that nobody
+// reads, and a router started from a cached image never printed one at all.
+const extrasFailedPath = "/etc/owlab/extras-failed"
+
+// missingExtras asks one router which of its extra_packages did not install.
+//
+// Empty for almost every router: the file exists only when a build had
+// something to record.
+func missingExtras(ctx context.Context, run syncpkg.Exec) []string {
+	var buf bytes.Buffer
+	// A missing file is the normal case, not an error to propagate — and any
+	// other failure here (a router that stopped, an engine that went away) is
+	// already reported by whatever else is talking to the same router.
+	if err := run(ctx, "cat "+extrasFailedPath+" 2>/dev/null || true", nil, &buf); err != nil {
+		return nil
+	}
+	var out []string
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// reportMissingExtras names, per router, the extra_packages its image was
+// built without.
+//
+// This is the half of issue #12 that is not "stop cancelling the other
+// routers". One bad file no longer fails the build, and tolerance with no
+// report is silence — which is worse than the failure it replaced: the
+// developer named a file, the router does not have it, and nothing but a line
+// in the middle of a buildkit log would say so. Hence the non-zero exit as
+// well: a script that runs `owlab up` before its own checks must not read
+// "lab is up" as "lab is what the config describes".
+func (a *app) reportMissingExtras(ctx context.Context, routers []*config.Router) error {
+	var bad []string
+	for _, r := range routers {
+		if len(r.Extra) == 0 {
+			continue
+		}
+		run, err := a.execFor(r)
+		if err != nil {
+			continue
+		}
+		missing := missingExtras(ctx, run)
+		if len(missing) == 0 {
+			continue
+		}
+		bad = append(bad, r.ID)
+		fmt.Fprintf(os.Stderr, "\n! %s is running WITHOUT %s\n", r.ID, strings.Join(missing, ", "))
+	}
+	if len(bad) == 0 {
+		return nil
+	}
+	fmt.Fprintf(os.Stderr,
+		"!   Every other router built and started; only these packages are missing.\n"+
+			"!   The package manager said why during the build — one router at a time shows it again:\n"+
+			"!     owlab up --rebuild %s\n", bad[0])
+	return errExtrasMissing
+}
+
+// errExtrasMissing is the exit status of an `owlab up` that started every
+// router and could not put a named package on one of them. A plain sentinel:
+// the routers and packages have already been printed one line each, and an
+// "owlab: extra_packages missing" summary on top would bury which is which.
+var errExtrasMissing = errors.New("extra_packages missing")
 
 // resolveBaseImages asks the registry whether each router's upstream image
 // exists, and switches the ones that do not onto the rootfs tarball.

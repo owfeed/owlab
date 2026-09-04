@@ -48,6 +48,52 @@ apk-tools 3.0.5 revalidates a cached index older than `--cache-max-age`
 re-downloads every APKINDEX before it resolves anything. opkg has no such
 policy — it reads whatever the last `opkg update` left and never asks.
 
+### One router's `extra_packages` cancelled every other router
+
+**Symptom.** `owlab up` fails at the extras step of one router, and routers
+that were building fine stop with it:
+
+```
+#33 ERROR: process "/bin/sh -c set -eu; ... opkg install --force-overwrite ..." exit code: 255
+#18 [imm2410 stage-3  2/12] ...   #18 CANCELED
+#24 [imm2512 stage-3  2/12] ...   #24 CANCELED
+owlab: build failed: exit status 1
+```
+
+**Cause.** `docker compose build` puts every router in one buildkit solve, and
+buildkit cancels the whole solve on the first target that fails. The extras
+step exited non-zero on one staged file, so one package on one router cost the
+lab.
+
+Both release lines do this — it is `set -eu`, not the package manager.
+Measured 2026-09-04: opkg exits 255 on an unsatisfiable dependency, apk exits
+27 on `unable to select packages`, and each cancelled the other routers in the
+same run. There is no build-side setting to fall back on: neither `docker
+compose build` nor `docker buildx bake` has a `--keep-going`.
+
+**Fix.** The extras step installs the set, and when that fails installs each
+file on its own so the good ones still land. What is still missing is named in
+the build log, recorded in `/etc/owlab/extras-failed`, reported by `owlab up`
+after its table, and failed on by `owlab test`:
+
+```
+! owrt2410 is running WITHOUT luci-app-example_1.0_all.ipk
+!   Every other router built and started; only these packages are missing.
+!   The package manager said why during the build — one router at a time shows it again:
+!     owlab up --rebuild owrt2410
+```
+
+`owlab up` exits non-zero when it prints that. The lab is running and every
+other router is usable, but it is not what the config describes, and a script
+that runs `owlab up` before its own checks must not read one as the other.
+
+Ask a running router directly:
+
+```console
+$ owlab exec owrt2410 -- cat /etc/owlab/extras-failed
+luci-app-example_1.0_all.ipk
+```
+
 ---
 
 ## "The router never answers on its published port"
@@ -233,7 +279,9 @@ Only on OpenWrt 24.10.
 `dnsmasq-full`, so three of the four routers were unaffected — the same config
 produced a different router on one of them.
 
-**Fix.** `--force-overwrite`, and a failure in `extra_packages` is now fatal.
+**Fix.** `--force-overwrite`, and a package in `extra_packages` that does not
+install is named rather than passed over — see "One router's `extra_packages`
+cancelled every other router" above for where that is reported.
 
 ---
 

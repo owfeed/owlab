@@ -132,11 +132,32 @@ RUN set -eu; \
 # without this the same config produces a different router on OpenWrt 24.10
 # than on the other three.
 #
-# A failure here is FATAL, unlike the feed packages above. The distinction is
-# that a feed name can legitimately be missing on an older release, while
-# these are named by URL: the developer said "install this file", and a build
-# that reports success without it hands them a router that is quietly missing
-# the thing they are testing against.
+# A failure here is neither swallowed like a missing feed name nor fatal. The
+# distinction from the feed packages above is that a feed name can legitimately
+# be absent on an older release, while these are named by URL: the developer
+# said "install this file", so a build that reports success without it hands
+# them a router quietly missing the thing they are testing against.
+#
+# Fatal was the first answer, and it was worse. `docker compose build` puts
+# every router in ONE buildkit solve, and buildkit cancels the whole solve on
+# the first target that fails. Measured 2026-09-04, one .ipk with an
+# unsatisfiable dependency staged for one 24.10 router:
+#
+#   #16 CANCELED   (another 24.10 router, still installing feed packages)
+#   #13 CANCELED   (a 25.12 router, still installing feed packages)
+#   target bad2410: failed to solve: ... exit code: 255
+#
+# One package on one router cost every other router in the lab. There is no
+# build-side flag to fall back on either: neither `docker compose build` nor
+# `docker buildx bake` has a --keep-going, so the tolerance has to be decided
+# in this RUN or not at all.
+#
+# What happens instead: the set is installed as one, and if that fails each
+# file is installed on its own so the good ones still land. Whatever still
+# fails is NAMED once per package and recorded in /etc/owlab/extras-failed —
+# which `owlab up` reads back off the running router and reports after its
+# table, and which `owlab test` fails on. The record is the point: a build log
+# scrolls past and nobody reads it, so the fact has to outlive the build.
 ARG ROUTER_ID=""
 COPY extra/ /tmp/owlab-extra/
 #
@@ -173,17 +194,40 @@ COPY extra/ /tmp/owlab-extra/
 #
 # Inside the `if`, so a build with no out-of-feed package fetches nothing, and
 # in this layer only, so nothing that cached before still caches.
+#
+# The retry installs the files in staged order, which is the order the
+# developer wrote them in — see fetchExtraPackages. That is what makes a
+# one-at-a-time pass usable at all: a dependent package staged after the
+# package it needs installs second and resolves against a router that already
+# has it.
+#
+# The old record is removed before anything else, and unconditionally: this
+# same Dockerfile also runs on top of an already-built owlab image, and a
+# failure that image recorded would otherwise be reported as this build's.
 RUN set -eu; \
 	dir="/tmp/owlab-extra/$ROUTER_ID"; \
+	rm -f /etc/owlab/extras-failed; \
 	set -- ; \
 	for f in "$dir"/*; do [ -f "$f" ] && set -- "$@" "$f"; done; \
 	if [ "$#" -gt 0 ]; then \
 		for f in "$@"; do echo "owlab: installing $(basename "$f" | cut -c4-)"; done; \
 		if [ "$PKG_MANAGER" = "apk" ]; then \
-			apk add --allow-untrusted --force-overwrite "$@"; \
+			install_extras() { apk add --allow-untrusted --force-overwrite "$@"; }; \
 		else \
 			opkg update; \
-			opkg install --force-overwrite "$@"; \
+			install_extras() { opkg install --force-overwrite "$@"; }; \
+		fi; \
+		if ! install_extras "$@"; then \
+			failed=""; \
+			for f in "$@"; do \
+				install_extras "$f" || failed="$failed $(basename "$f" | cut -c4-)"; \
+			done; \
+			if [ -n "$failed" ]; then \
+				mkdir -p /etc/owlab; \
+				for p in $failed; do echo "$p"; done > /etc/owlab/extras-failed; \
+				echo "owlab: FAILED to install:$failed"; \
+				echo "owlab: this router is built without it; owlab up says so at the end"; \
+			fi; \
 		fi; \
 	fi; \
 	rm -rf /tmp/owlab-extra

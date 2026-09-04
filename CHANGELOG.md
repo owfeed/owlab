@@ -41,6 +41,36 @@ one waits for a major.
   context` asks the registry and falls back to the rootfs tarball, which is the
   path the published 25.12.5 images were already built through.
 
+### Fixed
+
+- **One router's `extra_packages` no longer cancels every other router.**
+  `docker compose build` puts the whole lab in one buildkit solve, and buildkit
+  cancels the solve on the first target that fails — so the extras step, which
+  ran under `set -eu` with no guard, turned one unusable file into a failed
+  lab. Measured 2026-09-04 on a three-router stand: one `.ipk` with an
+  unsatisfiable dependency exited 255 and took `#16 CANCELED`, `#13 CANCELED`
+  and `owlab: build failed: exit status 1` with it. Both release lines did it —
+  it is `set -eu`, not the package manager: the same stand with a `.apk` that
+  apk answers `unable to select packages` exited 27 and cancelled its
+  neighbour. There is nothing to configure around it, either: neither `docker
+  compose build` nor `docker buildx bake` has a `--keep-going`.
+
+  The extras step now installs the set as before, and only if that fails
+  installs each file on its own, in the staged order, so the good ones still
+  land. The successful path is byte-for-byte the run it was.
+
+- **A package that did not install is now said out loud instead of being
+  fatal.** Tolerating a failure silently would be worse than the cancelled
+  builds it replaces, so the retry names each file it could not install, writes
+  the list to `/etc/owlab/extras-failed`, and `owlab up` reads it back off each
+  running router and prints it under the ready table:
+  `! owrt2410 is running WITHOUT luci-app-example_1.0_all.ipk`. `owlab up`
+  exits non-zero when it prints that — the lab is up, and it is not what the
+  config describes — and `owlab test` gains an `extra_packages` step that fails
+  the router before any assertion runs against a box missing what it was told
+  to have. Read as-built at any time with
+  `owlab exec <router> -- cat /etc/owlab/extras-failed`.
+
 ## [0.5.6] - 2026-09-04
 
 ### Fixed

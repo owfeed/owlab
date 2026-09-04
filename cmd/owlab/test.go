@@ -200,6 +200,15 @@ func (a *app) test(ctx context.Context, args []string) error {
 			if err != nil {
 				record(checkpkg.Result{Check: "reach", Kind: "up", Detail: err.Error()})
 			} else {
+				// Before anything is installed or asserted. A bad
+				// extra_packages file no longer fails the image build
+				// (issue #12), so this step is the only thing left that can
+				// fail a run whose router is missing a package the config
+				// named — and asserting against such a router would report a
+				// pass for something that was never on it.
+				if len(r.Extra) > 0 && r.Fidelity != config.VM {
+					record(extrasStep(ctx, run, r))
+				}
 				if len(files) > 0 || len(installs) > 0 {
 					record(a.testInstall(ctx, r, run, files, installs, feedSpec))
 				}
@@ -254,6 +263,21 @@ func (a *app) test(ctx context.Context, args []string) error {
 
 // errTestFailed reports assertion failures without printing anything more.
 var errTestFailed = errors.New("test failed")
+
+// extrasStep turns the image's own record of failed extra_packages into a test
+// step, so a run cannot pass on a router the build could not finish equipping.
+//
+// Only for the container tier: a VM installs its extra_packages over ssh
+// during provisioning, which fails as itself and never reaches here.
+func extrasStep(ctx context.Context, run syncpkg.Exec, r *config.Router) checkpkg.Result {
+	res := checkpkg.Result{Check: "extra_packages", Kind: checkpkg.KindPackage, OK: true}
+	if missing := missingExtras(ctx, run); len(missing) > 0 {
+		res.OK = false
+		res.Detail = "built without " + strings.Join(missing, ", ") +
+			" — `owlab up --rebuild " + r.ID + "` shows what the package manager said"
+	}
+	return res
+}
 
 // testReport is the --json document. The schema field is first because
 // consumers of a machine-readable output need a way to tell when it changed.

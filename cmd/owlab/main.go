@@ -154,10 +154,11 @@ func main() {
 		if errors.Is(err, context.Canceled) {
 			os.Exit(130)
 		}
-		// A failed assertion has already been printed, one line per failure.
-		// Repeating it as "owlab: test failed" would bury the reason under a
-		// summary of it.
-		if errors.Is(err, errTestFailed) {
+		// A failed assertion, and a router started without a package its
+		// config named, have both already been printed one line each.
+		// Repeating either as "owlab: test failed" would bury the reason
+		// under a summary of it.
+		if errors.Is(err, errTestFailed) || errors.Is(err, errExtrasMissing) {
 			os.Exit(1)
 		}
 		fmt.Fprintln(os.Stderr, "owlab: "+err.Error())
