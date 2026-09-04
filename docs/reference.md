@@ -347,7 +347,7 @@ $ owlab test --release 25.12.5 --release 24.10.8 \
 | `--arch` | architecture for those routers; the host's by default |
 | `--packages` | packages for those routers; `+name` adds to the stock set |
 | `--fixtures` | fixture profiles for those routers, e.g. `none` or `all` |
-| `--install` | a path (globs expanded) is pushed to the router and installed from there; anything else is looked up in the feeds. Repeatable |
+| `--install` | a path (globs expanded) is pushed to the router and installed from there; anything else is looked up in the feeds. Repeatable. Each router gets only the format its package manager reads — `.apk` on 25.12+, `.ipk` on 24.10 and earlier — so one glob can cover both release lines. A file left out is named on the router's install line |
 | `--assert` | one assertion, repeatable. Every one runs on every router |
 | `--feed` | add a package feed before installing, so a name is resolved out of a signed index instead of a file. The index URL for apk, the directory URL for opkg. Goes with `--feed-key` |
 | `--feed-key` | the feed's public key file. For opkg the *filename* must be the key id, because that is what opkg looks it up by |

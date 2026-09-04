@@ -10,6 +10,7 @@
 package pkgmgr
 
 import (
+	"path/filepath"
 	"strings"
 
 	"owfeed.org/owlab/internal/config"
@@ -158,4 +159,56 @@ func Install(pm config.PackageManager, pkgs []string, o Options) string {
 	}
 	b.WriteString(add + " " + strings.Join(pkgs, " ") + "\n")
 	return b.String()
+}
+
+// Installable reports whether pm can read this package file.
+//
+// The decision is the file extension and nothing else: a name that is neither
+// format — a script, a tarball, an archive a fixture unpacks — is not something
+// owlab was asked to judge, and refusing it here would break installs that work.
+//
+// Only the two package formats are ruled on, because only they are silently
+// wrong. apk hands an .ipk to its own parser and reports
+// `v2 package format error`, which describes a byte sequence and never mentions
+// that this router uses the other manager.
+func Installable(pm config.PackageManager, file string) bool {
+	switch strings.ToLower(filepath.Ext(file)) {
+	case ".apk":
+		return pm == config.APK
+	case ".ipk":
+		return pm == config.OPKG
+	}
+	return true
+}
+
+// SkipNote is the single line naming a file this router was not given.
+//
+// Said out loud on purpose. A glob that matched only the other release line's
+// format leaves nothing to install, and an install of nothing succeeds — so
+// without this line the run reports success and then fails every assertion
+// after it, with no reason anywhere on screen.
+func SkipNote(pm config.PackageManager, file string) string {
+	return "owlab: skipping " + filepath.Base(file) + " (this router uses " + string(pm) + ")"
+}
+
+// FilterFiles splits package files into the ones pm can install and the ones it
+// cannot.
+//
+// One glob covering both release lines is the natural way to test a package
+// that ships in both formats, and it is exactly the layout `owfeed build`
+// leaves behind — `dist/noarch/*.apk` for 25.12 beside `dist/all/*.ipk` for
+// 24.10. The glob is expanded once on the host, so before this every router got
+// every match: the wrong-format file failed, and because all of them go into a
+// single command it took the compatible one down with it.
+//
+// Callers filter before pushing, so no router is handed bytes it has no use for.
+func FilterFiles(pm config.PackageManager, files []string) (keep, skipped []string) {
+	for _, f := range files {
+		if Installable(pm, f) {
+			keep = append(keep, f)
+			continue
+		}
+		skipped = append(skipped, f)
+	}
+	return keep, skipped
 }

@@ -32,7 +32,7 @@ func (a *app) test(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	var releases, installs, asserts, packages stringList
 	fs.Var(&releases, "release", "release to test against, repeatable or space/comma separated (synthesizes routers; no owlab.yaml needed)")
-	fs.Var(&installs, "install", "package file or feed name to install, repeatable; globs are expanded")
+	fs.Var(&installs, "install", "package file or feed name to install, repeatable; globs are expanded, and each router gets only the package format it can read")
 	feedURL := fs.String("feed", "", "package feed to add before installing: the index URL for apk, the directory URL for opkg")
 	feedKey := fs.String("feed-key", "", "the feed's public key file (for opkg the filename must be the key id)")
 	feedName := fs.String("feed-name", "owlab-feed", "name the feed is registered under")
@@ -349,11 +349,34 @@ type feedSource struct {
 func (a *app) testInstall(ctx context.Context, r *config.Router, run syncpkg.Exec, files, named []string, feedSrc *feedSource) checkpkg.Result {
 	start := time.Now()
 	feed := feedNames(named, files)
+	pm := r.PackageManager()
+
+	// --install expands its globs once, on the host, so a run covering both
+	// release lines would otherwise hand this router the other line's format
+	// too. That is not merely a wasted file: everything goes into one command,
+	// so an .ipk on an apk router fails the .apk beside it as well.
+	files, dropped := pkgmgr.FilterFiles(pm, files)
+	var skips []string
+	for _, f := range dropped {
+		skips = append(skips, pkgmgr.SkipNote(pm, f))
+	}
+
 	res := checkpkg.Result{
 		Kind:  "install",
 		Check: "install " + strings.Join(append(append([]string{}, baseNames(files)...), feed...), " "),
 	}
 	defer func() { res.Seconds = time.Since(start).Round(time.Millisecond).Seconds() }()
+
+	// Nothing this router can read. Reported as a skip rather than run, because
+	// `apk add` with no arguments succeeds: installing nothing would be a green
+	// line saying the package went on, and the assertions would then fail
+	// pointing at the router instead of at the glob.
+	if len(files) == 0 && len(feed) == 0 {
+		res.Check = "install (nothing for " + string(pm) + ")"
+		res.Detail = strings.Join(skips, "; ")
+		res.OK = true
+		return res
+	}
 
 	installArgs := append([]string{}, feed...)
 
@@ -376,7 +399,7 @@ func (a *app) testInstall(ctx context.Context, r *config.Router, run syncpkg.Exe
 			return res
 		}
 		url := pkgmgr.ResolveHost(feedSrc.URL, r.Fidelity == config.VM)
-		pre = pkgmgr.AddFeed(r.PackageManager(), feedSrc.Name, shQuote(url), dest)
+		pre = pkgmgr.AddFeed(pm, feedSrc.Name, shQuote(url), dest)
 	}
 
 	for _, f := range files {
@@ -402,7 +425,7 @@ func (a *app) testInstall(ctx context.Context, r *config.Router, run syncpkg.Exe
 		installArgs = append(installArgs, dest)
 	}
 
-	cmd := pre + pkgmgr.Install(r.PackageManager(), installArgs, pkgmgr.Options{
+	cmd := pre + pkgmgr.Install(pm, installArgs, pkgmgr.Options{
 		Update: len(feed) > 0 || feedSrc != nil,
 		// A locally built package carries no signature the router's keyring
 		// knows, and there is no key it could carry that would.
@@ -418,6 +441,9 @@ func (a *app) testInstall(ctx context.Context, r *config.Router, run syncpkg.Exe
 	// is invisible on every page until both are dropped. The same script a sync
 	// runs, for the same reason.
 	_ = run(ctx, syncpkg.ReloadScript(a.cfg.Project.Theme), nil, io.Discard)
+	// Carried on the passing line too: what a router did not get is as much a
+	// part of the result as what it did.
+	res.Detail = strings.Join(skips, "; ")
 	res.OK = true
 	return res
 }

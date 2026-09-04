@@ -7,6 +7,26 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+### Fixed
+
+- **`owlab test --install` no longer hands a router the other release line's package
+  format.** The glob was expanded once on the host and the whole result given to every
+  router, so a run covering both lines gave the apk box an `.ipk` and the opkg box an
+  `.apk` — which is exactly the layout `owfeed build` produces (`dist/noarch/*.apk`
+  beside `dist/all/*.ipk`). apk answered with `v2 package format error`, and because
+  every file goes into one command it failed the package that would have installed
+  along with it, taking every assertion after it down too. Each router now receives
+  only the format its package manager reads, filtered **before** the file is pushed;
+  anything with another extension passes through as before, and a single-release run
+  is unchanged. **A file left out is named** — `owlab: skipping foo.ipk (this router
+  uses apk)` — because a package manager invoked with no arguments succeeds, so a glob
+  that matched only the other line would otherwise be a green line claiming an install
+  that never happened. A router left with nothing to install is reported as a skip
+  rather than run. `owlab install` filters the same way, from the same place in
+  `internal/pkgmgr`, so the two tiers cannot drift apart.
+
 ## [0.5.4] - 2026-09-01
 
 ### Fixed

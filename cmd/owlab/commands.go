@@ -436,9 +436,20 @@ func (a *app) install(ctx context.Context, args []string) error {
 			continue
 		}
 
+		pm := r.PackageManager()
 		installArgs := append([]string(nil), names...)
+		pushed := 0
 		pushErr := false
 		for _, l := range locals {
+			// The other release line's format, filtered before the push so the
+			// router is never handed bytes it cannot read. It matters beyond
+			// the wasted transfer: every file goes into one command, so an
+			// .ipk on an apk router fails the .apk beside it — and apk says
+			// only `v2 package format error`, which names no manager.
+			if !pkgmgr.Installable(pm, l.dest) {
+				fmt.Fprintln(os.Stderr, pkgmgr.SkipNote(pm, l.dest))
+				continue
+			}
 			if err := run(ctx, "tar -C / -xf -", l.archive, os.Stderr); err != nil {
 				// The router never received the file, so there is nothing to
 				// install from it. Carrying on would run a package manager
@@ -450,8 +461,16 @@ func (a *app) install(ctx context.Context, args []string) error {
 				break
 			}
 			installArgs = append(installArgs, l.dest)
+			pushed++
 		}
-		if pushErr || len(installArgs) == 0 {
+		if pushErr {
+			continue
+		}
+		// Everything named was for the other package manager. Said out loud,
+		// because a package manager invoked with no arguments succeeds, and a
+		// silent success here reads exactly like an install that worked.
+		if len(installArgs) == 0 {
+			fmt.Printf("== %s (%s)\n   nothing to install\n", r.ID, pm)
 			continue
 		}
 
@@ -471,14 +490,18 @@ func (a *app) install(ctx context.Context, args []string) error {
 				continue
 			}
 			url := pkgmgr.ResolveHost(*feed, r.Fidelity == config.VM)
-			cmd = pkgmgr.AddFeed(r.PackageManager(), *feedName, shQuote(url), feedKeyDest)
+			cmd = pkgmgr.AddFeed(pm, *feedName, shQuote(url), feedKeyDest)
 		}
 
-		cmd += pkgmgr.Install(r.PackageManager(), installArgs, pkgmgr.Options{
-			Update:    true,
-			Untrusted: len(locals) > 0,
+		cmd += pkgmgr.Install(pm, installArgs, pkgmgr.Options{
+			Update: true,
+			// Keyed to what this router actually received, not to what the
+			// command line held: with every local file filtered out, only feed
+			// names are left, and --allow-untrusted there would accept a
+			// package whose index signature never checked out.
+			Untrusted: pushed > 0,
 		})
-		fmt.Printf("== %s (%s)\n", r.ID, r.PackageManager())
+		fmt.Printf("== %s (%s)\n", r.ID, pm)
 		if err := run(ctx, cmd, nil, os.Stdout); err != nil {
 			markFailed(r.ID)
 		}
