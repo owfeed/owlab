@@ -7,6 +7,29 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+### Fixed
+
+- **A 24.10 image build no longer fails on a package nobody asked for.** `opkg update`
+  ran in an earlier layer than the install of the `extra_packages:` files, and buildkit
+  keeps that layer for as long as the release and the feed package list hold — while the
+  install layer re-runs on every change to the staged files. The index the install read
+  could therefore be months old, and a pin does not make that safe: OpenWrt rebuilds the
+  packages inside `releases/24.10.8/` in place, under the same version string. Measured
+  on 2026-09-04 against an image built 2026-07-29, `bash 5.2.37-r1` was 473650 bytes /
+  `f1872e60…` in the image's index and 473647 bytes / `20eaa220…` on the server, which
+  opkg reports as `Checksum or size mismatch for package bash` and the build as
+  `exit code: 255`. `opkg update` now runs in the same layer as the install, and
+  `owlab test` refreshes the index before installing a local file too — a package
+  installed by path still resolves its dependencies out of the index. Nothing that
+  cached before stops caching: the refresh is inside the branch that has something to
+  install, in the layer that was re-running anyway, and costs about 1.6 s and a megabyte
+  of gzipped indexes per opkg router. The apk line needs none of this, measured:
+  apk-tools 3.0.5 revalidates a cached index older than `--cache-max-age` (4 hours by
+  default) on its own, and re-downloaded every APKINDEX before resolving in a month-old
+  image.
+
 ## [0.5.5] - 2026-09-04
 
 ### Fixed
