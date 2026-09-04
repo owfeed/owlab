@@ -11,6 +11,25 @@ one waits for a major.
 
 ### Fixed
 
+- **A router whose lan network resolves to no firewall zone is reachable again.** fw4
+  renders a zone as `iifname "<dev>" jump input_<zone>` and takes `<dev>` from the
+  zone's `network` list as it builds the ruleset; a zone that resolves to no device
+  emits no jump, so lan traffic falls off the end of the input chain into
+  `jump handle_reject` and the router answers a published port with a TCP reset —
+  an empty reply from the host, `Connection refused` from a sibling container —
+  while `uhttpd` is up and listening on `0.0.0.0:80` (owfeed/owlab#3, reported on
+  ImmortalWrt with the OpenWrt routers on the same stand unaffected). `95_owlab-base`
+  now names the lan device on that zone (`list device 'br-lan'`), sets its `input` to
+  `ACCEPT`, and creates the zone if the image ships none for the lan network. `device`
+  is taken literally rather than resolved through netifd, so the jump does not depend
+  on what netifd had done when fw4 read the config; fw4 deduplicates it against the
+  network, leaving one jump line. **The firewall stays on** — fw4 works in a container,
+  and disabling it would hide a whole class of real behaviour.
+- **dropbear listens on `0.0.0.0:22` on ImmortalWrt too.** ImmortalWrt ships
+  `option Interface 'lan'` in `/etc/config/dropbear` and OpenWrt does not, so dropbear
+  bound `192.168.163.5:22` instead of the wildcard and ssh to the published port was
+  closed as it opened. `95_owlab-base` deletes the key.
+
 - **`owlab test --install` no longer hands a router the other release line's package
   format.** The glob was expanded once on the host and the whole result given to every
   router, so a run covering both lines gave the apk box an `.ipk` and the opkg box an
