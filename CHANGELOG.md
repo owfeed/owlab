@@ -28,9 +28,10 @@ one waits for a major.
   `owlab context --list`, and opens a pull request. It never pushes to `main`:
   what proves a new release still builds a router is the CI run on that pull
   request. It then dispatches `ci.yml` on the pin branch, because a pull request
-  authored by `app/github-actions` has its `pull_request` run held in
-  `action_required` under this repository's approval policy, and
-  `workflow_dispatch` is GitHub's own documented exception to that.
+  opened with `GITHUB_TOKEN` has its `pull_request` run held in
+  `action_required` — GitHub does that to any such pull request, and it is not
+  this repository's approval policy (measured in owfeed/owfeed-packages#53) —
+  and `workflow_dispatch` is GitHub's own documented exception to it.
 
 ### Changed
 

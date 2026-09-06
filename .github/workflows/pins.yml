@@ -204,9 +204,8 @@ jobs:
           echo "$url"
 
           # Start the checks by hand, because GitHub will not start them itself
-          # for a pull request authored by `app/github-actions` under this
-          # repository's approval policy. The reasoning is on `workflow_dispatch`
-          # in ci.yml.
+          # for a pull request this token opened. The reasoning is on
+          # `workflow_dispatch` in ci.yml.
           #
           # Not allowed to fail the run: the job's product is the pull request
           # and by this line it exists. Reported rather than swallowed, because a

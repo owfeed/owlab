@@ -10,10 +10,13 @@ on:
     branches: [main]
   pull_request:
   # Load-bearing, not a convenience for re-running by hand. `pins.yml` opens its
-  # pull requests with `gh pr create` under GITHUB_TOKEN, so their author is
-  # `app/github-actions`, and this repository's approval policy is
-  # `first_time_contributors`: the `pull_request` run is created and then held in
-  # `action_required` until a person presses a button. GitHub's own exception is
+  # pull requests with `gh pr create` under GITHUB_TOKEN, and GitHub holds those:
+  # "when a workflow using `GITHUB_TOKEN` creates or updates a pull request, the
+  # resulting `pull_request` event creates workflow runs in an approval-required
+  # state" -- the run is created and then held in `action_required` until a person
+  # presses a button. NOT this repository's approval policy: owfeed-packages
+  # measured that one, relaxing it at repository and organisation level at once,
+  # and the hold stayed (owfeed/owfeed-packages#53). GitHub's own exception is
   # the way out and needs no credential -- "`workflow_dispatch` and
   # `repository_dispatch` events always create workflow runs" -- so `pins.yml`
   # dispatches this workflow on the pin branch after opening the pull request.
