@@ -285,7 +285,20 @@ func runUpdate(t *testing.T, pm config.PackageManager, out string, rc int) (int,
 	if err := os.WriteFile(filepath.Join(bin, name), []byte(stub), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("/bin/sh", "-c", "set -eu\n"+UpdateShell(pm))
+	// Run the generated shell through a real one, because what is being tested is
+	// how it behaves under `set -e` -- not what string it is. A rewrite that reads
+	// correctly and still exits at the wrong line is exactly the bug this covers.
+	//
+	// Skipped where there is no POSIX shell to run it in. The one place that is
+	// true is a Windows host, and owlab there is a client: it drives an engine and
+	// never executes this text itself, which runs inside a router. Asserting on
+	// the string instead would pass while the shell was broken, and that is worse
+	// than a platform saying plainly it cannot check this.
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("no POSIX shell on this host, so the generated shell cannot be run: %v", err)
+	}
+	cmd := exec.Command(sh, "-c", "set -eu\n"+UpdateShell(pm))
 	// Prepended, not replaced: the shell still needs grep, sed and printf.
 	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	got, err := cmd.CombinedOutput()
