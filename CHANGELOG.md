@@ -7,6 +7,33 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+### Fixed
+
+- **One unreachable feed no longer ends the install before a package is tried.**
+  `apk update` and `opkg update` both exit non-zero when a single configured feed does
+  not answer, and the package layer ran them under a bare `set -eu` — so a router whose
+  image is behind its feed failed the build before the per-package loop below, the loop
+  already written to survive a package this feed does not carry. That is not a rare
+  condition: a rootfs image pins its kmods index by kernel hash, the feed keeps only the
+  last handful of kernel builds, and an image older than that window 404s on that one
+  sub-index on every run until the image itself is rebuilt. The refresh now continues
+  when at least one feed was read and still fails when none was, in the container tier
+  and the VM tier alike (`internal/pkgmgr.UpdateShell`, pasted into `images/Dockerfile`
+  and held to it by a test). Measured on `openwrt/rootfs:x86_64-25.12.4`, one bad feed
+  beside the eight the image ships: `1 unavailable, 0 stale; 11279 distinct packages
+  available`, exit 1, eight feeds read. With every feed pointed at an unresolvable host:
+  `8 unavailable, 0 stale; 136 distinct packages available`, exit 8, none read — so the
+  package count in that summary line is not on its own the signal it looks like, since
+  those 136 are the installed database. opkg is affected identically (exit 1 with one
+  bad feed of eight on 24.10.8, exit 7 with the network cut) and is fixed the same way.
+- **A partial refresh says so.** The index refresh used to be silenced on both streams.
+  A clean one still prints nothing, but a partial one replays every line the manager
+  wrote — so the feed that did not answer is named in the log — and adds
+  `owlab: apk update: partial refresh, 8 feed(s) read, 11279 packages available; …`.
+  Tolerating a dead feed quietly would leave a missing package with no visible cause.
+
 ## [0.6.0] - 2026-09-04
 
 ### Added

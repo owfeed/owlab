@@ -1,9 +1,16 @@
 package pkgmgr
 
 import (
+	"errors"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
+	owlab "owfeed.org/owlab"
 	"owfeed.org/owlab/internal/config"
 )
 
@@ -231,3 +238,172 @@ func TestInstallableIgnoresExtensionCase(t *testing.T) {
 		t.Error("apk accepted an uppercase .IPK")
 	}
 }
+
+// The measured output of a real `apk update` that lost one feed of nine, on
+// openwrt/rootfs:x86_64-25.12.4 (2026-09-07). Trimmed to three of the eight
+// bracketed lines; the count of them is what the shell reads, not their text.
+const apkPartial = `ERROR: wget: exited with error 8
+WARNING: updating and opening https://downloads.openwrt.org/releases/25.12.4/targets/x86/64/kmods/6.12.99-1-dead/packages.adb: unexpected end of file
+ [https://downloads.openwrt.org/releases/25.12.4/targets/x86/64/packages/packages.adb]
+ [https://downloads.openwrt.org/releases/25.12.4/packages/x86_64/base/packages.adb]
+ [https://downloads.openwrt.org/releases/25.12.4/packages/x86_64/luci/packages.adb]
+1 unavailable, 0 stale; 11279 distinct packages available`
+
+// The same image with every feed pointed at an unresolvable host. Note the
+// package count: 136 is the installed database, not a feed, which is why a
+// count above zero cannot be the test on its own.
+const apkDead = `wgetFailed to send request: Operation not permitted
+ERROR: wget: exited with error 4
+WARNING: updating and opening https://downloads.openwrt.org/releases/25.12.4/packages/x86_64/video/packages.adb: unexpected end of file
+8 unavailable, 0 stale; 136 distinct packages available`
+
+const apkOK = ` [https://downloads.openwrt.org/releases/25.12.4/targets/x86/64/packages/packages.adb]
+ [https://downloads.openwrt.org/releases/25.12.4/packages/x86_64/base/packages.adb]
+OK: 11279 distinct packages available`
+
+// opkg on openwrt/rootfs:x86_64-24.10.8, one bad feed among seven good ones.
+const opkgPartial = `Downloading https://downloads.openwrt.org/releases/24.10.8/packages/x86_64/base/Packages.gz
+Updated list of available packages in /var/opkg-lists/openwrt_base
+Updated list of available packages in /var/opkg-lists/openwrt_luci
+Collected errors:
+ * opkg_download: Failed to download https://downloads.openwrt.org/releases/24.10.8/targets/x86/64/kmods/6.6.999-1-deadbeef/Packages.gz, wget returned 8.`
+
+// The same image with the network cut.
+const opkgDead = `Downloading https://downloads.openwrt.org/releases/24.10.8/packages/x86_64/base/Packages.gz
+*** Failed to download the package list from https://downloads.openwrt.org/releases/24.10.8/packages/x86_64/base/Packages.gz`
+
+// runUpdate runs the generated refresh under `set -eu` — the way every caller
+// runs it — against a stub manager that replays measured output and exits rc.
+func runUpdate(t *testing.T, pm config.PackageManager, out string, rc int) (int, string) {
+	t.Helper()
+	bin := t.TempDir()
+	stub := "#!/bin/sh\ncat <<'OUT'\n" + out + "\nOUT\nexit " + strconv.Itoa(rc) + "\n"
+	name := "opkg"
+	if pm == config.APK {
+		name = "apk"
+	}
+	if err := os.WriteFile(filepath.Join(bin, name), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("/bin/sh", "-c", "set -eu\n"+UpdateShell(pm))
+	// Prepended, not replaced: the shell still needs grep, sed and printf.
+	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	got, err := cmd.CombinedOutput()
+	code := 0
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		code = ee.ExitCode()
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	return code, string(got)
+}
+
+// The bug: one unreachable feed out of nine ended the whole install before a
+// single package was tried. apk calls that condition recoverable and so does
+// this now — but not quietly, because a package missing later has to be
+// traceable to the feed that did not answer.
+func TestPartialRefreshContinuesAndNamesTheFeed(t *testing.T) {
+	code, out := runUpdate(t, config.APK, apkPartial, 1)
+	if code != 0 {
+		t.Fatalf("a partial refresh ended the install with %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "partial refresh, 3 feed(s) read, 11279 packages available") {
+		t.Errorf("no summary of what did work:\n%s", out)
+	}
+	if !strings.Contains(out, "kmods/6.12.99-1-dead/packages.adb") {
+		t.Errorf("the feed that did not answer is not named:\n%s", out)
+	}
+
+	code, out = runUpdate(t, config.OPKG, opkgPartial, 1)
+	if code != 0 {
+		t.Fatalf("opkg: a partial refresh ended the install with %d:\n%s", code, out)
+	}
+	if !strings.Contains(out, "partial refresh, 2 feed(s) read") {
+		t.Errorf("opkg: no summary of what did work:\n%s", out)
+	}
+	if !strings.Contains(out, "kmods/6.6.999-1-deadbeef") {
+		t.Errorf("opkg: the feed that did not answer is not named:\n%s", out)
+	}
+}
+
+// No feed answered at all. Installing from an index that was never read would
+// fail every package afterwards with a message about the package instead of
+// the network, so this still ends the run, with the manager's own exit code.
+func TestNoFeedAnsweredStillFails(t *testing.T) {
+	code, out := runUpdate(t, config.APK, apkDead, 8)
+	if code != 8 {
+		t.Fatalf("exit %d, want apk's own 8:\n%s", code, out)
+	}
+	if !strings.Contains(out, "apk update failed: no feed answered") {
+		t.Errorf("does not say what failed:\n%s", out)
+	}
+
+	code, out = runUpdate(t, config.OPKG, opkgDead, 7)
+	if code != 7 {
+		t.Fatalf("opkg: exit %d, want opkg's own 7:\n%s", code, out)
+	}
+	if !strings.Contains(out, "opkg update failed: no feed answered") {
+		t.Errorf("opkg: does not say what failed:\n%s", out)
+	}
+}
+
+// 136 packages "available" with every feed unresolvable is the installed
+// database talking. Taking the summary line at its word — the first fix that
+// suggests itself — would install from an index nothing refreshed.
+func TestPackagesAvailableAloneIsNotEnough(t *testing.T) {
+	if !strings.Contains(apkDead, "distinct packages available") {
+		t.Fatal("fixture no longer carries the summary line this guards against")
+	}
+	if code, out := runUpdate(t, config.APK, apkDead, 8); code == 0 {
+		t.Errorf("a refresh that read no feed was accepted:\n%s", out)
+	}
+}
+
+// A non-network failure prints no summary line at all: nothing was counted, so
+// nothing licenses continuing.
+func TestRefreshWithNoSummaryLineFails(t *testing.T) {
+	code, out := runUpdate(t, config.APK, "ERROR: unable to select packages:\n  world[bad-pin]", 99)
+	if code != 99 {
+		t.Errorf("exit %d, want 99:\n%s", code, out)
+	}
+}
+
+// The normal path, which must stay as quiet as it was before: an index refresh
+// reports mirrors and signature checks that say nothing about the install.
+func TestCleanRefreshSaysNothing(t *testing.T) {
+	for _, pm := range []config.PackageManager{config.APK, config.OPKG} {
+		out := apkOK
+		if pm == config.OPKG {
+			out = opkgPartial
+		}
+		code, got := runUpdate(t, pm, out, 0)
+		if code != 0 || got != "" {
+			t.Errorf("%s: exit %d, output %q, want a silent success", pm, code, got)
+		}
+	}
+}
+
+// images/Dockerfile installs the container tier's packages and cannot call Go,
+// so it carries the same shell as text. This is the check that keeps the two
+// tiers refreshing the index identically — the whole reason the commands live
+// in this package rather than at each call site.
+func TestDockerfileRefreshesTheIndexTheSameWay(t *testing.T) {
+	b, err := fs.ReadFile(owlab.BuildContext(), "Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Unwrap the RUN line continuations, so a `\` + newline + tabs reads as
+	// the single space that separates two commands joined by "; ".
+	flat := shellWords(strings.ReplaceAll(string(b), "\\\n", " "))
+	for _, pm := range []config.PackageManager{config.APK, config.OPKG} {
+		want := shellWords(strings.ReplaceAll(strings.TrimSuffix(UpdateShell(pm), "\n"), "\n", "; "))
+		if !strings.Contains(flat, want) {
+			t.Errorf("images/Dockerfile does not run the %s refresh this package generates.\nwant:\n%s", pm, want)
+		}
+	}
+}
+
+// shellWords collapses every run of whitespace to one space, which is the only
+// difference the Dockerfile's indentation is allowed to make.
+func shellWords(s string) string { return strings.Join(strings.Fields(s), " ") }
