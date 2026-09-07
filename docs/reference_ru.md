@@ -407,7 +407,7 @@ caught», lua-шный `stack traceback:`): поймав исключение, L
 ### В GitHub Actions
 
 ```yaml
-- uses: owfeed/owlab/action@v0.6.0
+- uses: owfeed/owlab/action@v0.6.1
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*
@@ -418,7 +418,7 @@ caught», lua-шный `stack traceback:`): поймав исключение, L
 
 У каждого флага выше есть одноимённый input; `assert` и `install` принимают по
 одному значению на строку. Экшен пишет таблицу в summary джоба и отдаёт outputs
-`report` (путь к JSON), `passed` и `failed`. `owfeed/owlab/setup@v0.6.0`
+`report` (путь к JSON), `passed` и `failed`. `owfeed/owlab/setup@v0.6.1`
 ставит только бинарь — для джоба, который сам вызывает `owlab`. Оба проверяют
 скачанное по build attestation этого репозитория до того, как бинарь будет
 запущен или попадёт в `PATH`.
