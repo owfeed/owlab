@@ -94,6 +94,58 @@ $ owlab exec owrt2410 -- cat /etc/owlab/extras-failed
 luci-app-example_1.0_all.ipk
 ```
 
+### One unreachable feed stopped the build before a package was tried
+
+**Symptom.** `owlab up` fails in stage-3, before a single package is installed,
+and the last thing in the log is the package manager saying the rest of the
+feed set is fine:
+
+```
+ERROR: wget: exited with error 8
+WARNING: .../kmods/6.18.33-1-<hash>/packages.adb: unexpected end of file
+1 unavailable, 0 stale; 10206 distinct packages available
+owlab: build failed: exit status 1
+```
+
+It happens on every run against that image, not now and then.
+
+**Cause.** The kmods index is named after the kernel the image runs
+(`kmods/6.18.33-1-<hash>/packages.adb`) and the feed keeps only the last
+handful of kernel builds. An image older than that window asks for a directory
+the feed no longer serves, gets a 404 on that one sub-index, and will keep
+getting it until the image itself is rebuilt — retrying is not the tool, it is
+not a stall. Both managers exit non-zero over one unreachable feed (measured:
+`apk update` exits 1 with one bad feed of nine on 25.12.4, `opkg update` exits 1
+with one of eight on 24.10.8), and the step ran under a bare `set -eu`, so that
+exit ended the layer before the per-package loop below it — the loop already
+written to survive a package this feed does not carry.
+
+**Fix.** The index refresh continues when at least one feed was read, and still
+fails when none was. It is not silent about it: the manager's whole output is
+replayed, so the feed that did not answer is named, followed by a line saying
+what the install is going on with.
+
+```
+owlab: apk update: partial refresh, 8 feed(s) read, 11279 packages available; ...
+```
+
+The count of packages in apk's summary line is deliberately not the whole test.
+With every feed pointed at an unresolvable host, apk still reports `8
+unavailable, 0 stale; 136 distinct packages available` and exits 8 — those 136
+are the installed database, not a feed. Only the count of feeds actually read
+tells the two runs apart.
+
+**Check.** Ask the router what its refresh does, and count the feeds it opened:
+
+```console
+$ owlab exec owrt2512 -- 'apk update 2>&1 | grep -c "^ \["'    # feeds read; 0 means none
+$ owlab exec owrt2410 -- 'opkg update 2>&1 | grep -c "^Updated"'
+```
+
+Zero is the fatal case and owlab will have said so. Anything above zero with a
+non-zero exit is the partial one, and the packages that live in the feed that
+did not answer are the ones that will be reported as skipped.
+
 ---
 
 ## "The router never answers on its published port"

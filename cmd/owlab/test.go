@@ -478,6 +478,15 @@ func (a *app) testInstall(ctx context.Context, r *config.Router, run syncpkg.Exe
 	// is invisible on every page until both are dropped. The same script a sync
 	// runs, for the same reason.
 	_ = run(ctx, syncpkg.ReloadScript(a.cfg.Project.Theme), nil, io.Discard)
+	// A partial index refresh passes, and everything else this install printed
+	// is discarded on a pass — so without this the one line saying a feed did
+	// not answer would vanish with it, and the package it would have carried
+	// goes missing later with nothing on screen to connect the two.
+	for _, line := range strings.Split(log.String(), "\n") {
+		if note := strings.TrimSpace(line); strings.HasPrefix(note, "owlab: ") {
+			skips = append(skips, note)
+		}
+	}
 	// Carried on the passing line too: what a router did not get is as much a
 	// part of the result as what it did.
 	res.Detail = strings.Join(skips, "; ")

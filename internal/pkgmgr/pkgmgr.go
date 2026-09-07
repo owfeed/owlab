@@ -120,6 +120,83 @@ func AddFeed(pm config.PackageManager, name, url, keyFile string) string {
 	return b.String()
 }
 
+// UpdateShell is the shell that refreshes the package index, and the reason
+// this package has an opinion about a feed that does not answer.
+//
+// Both managers exit non-zero when one configured feed is unreachable, and
+// every caller runs them under `set -eu`, so a single dead feed took the whole
+// install down before the per-package loop below it ever ran — the loop that
+// is deliberately written to tolerate a package this release's feed does not
+// carry. The condition is routine rather than exotic: a rootfs image pins its
+// kmods index by kernel hash (kmods/6.18.33-1-<hash>/packages.adb), the feed
+// keeps only the last handful of kernel builds, and an image older than that
+// window 404s on that one sub-index on every run. Retrying does not help; it
+// is a 404, not a stall.
+//
+// What counts as survivable is measured, not reasoned. On
+// openwrt/rootfs:x86_64-25.12.4 (2026-09-07), with one unreachable feed added
+// beside the eight the image ships:
+//
+//	ERROR: wget: exited with error 8
+//	WARNING: updating and opening .../kmods/6.12.99-1-dead/packages.adb: unexpected end of file
+//	 [https://.../targets/x86/64/packages/packages.adb]   <- one per feed that answered, 8 of them
+//	1 unavailable, 0 stale; 11279 distinct packages available
+//	rc=1
+//
+// and on the same image with every feed pointed at an unresolvable host:
+//
+//	8 unavailable, 0 stale; 136 distinct packages available
+//	rc=8
+//
+// So the package count in the summary line is not, on its own, the signal it
+// looks like: it counts the installed database too and stays well clear of
+// zero when nothing at all was reached. What separates the two runs is whether
+// any feed was read, and apk says that in the bracketed lines — eight above,
+// none below. Both are required here: a feed was read, and the summary says
+// packages are available.
+//
+// opkg is affected identically (measured on openwrt/rootfs:x86_64-24.10.8 the
+// same day: rc=1 with one bad feed among seven good ones, rc=7 with the
+// network cut) and marks each feed it read with "Updated list of available
+// packages in /var/opkg-lists/<name>". It prints no summary line at all, so on
+// that side the count of feeds read is the whole test.
+//
+// The output is captured rather than silenced, which is the other half of the
+// fix: a clean refresh prints nothing, and a partial one replays every line
+// the manager wrote, so the log names the feed that did not answer. Tolerating
+// a partial refresh silently would leave the developer to guess why a package
+// went missing.
+//
+// images/Dockerfile runs this same shell in the container tier and is held to
+// it by TestDockerfileRefreshesTheIndexTheSameWay — Docker cannot call Go, so
+// the text is duplicated there, and the two must not drift.
+func UpdateShell(pm config.PackageManager) string {
+	cmd, marker := "opkg update", "^Updated list of available packages"
+	feeds := "/etc/opkg/distfeeds.conf and /etc/opkg/customfeeds.conf"
+	// Only apk prints a summary line, so only apk is asked for one.
+	summary, dead := "", `[ "$owlab_read" -eq 0 ]`
+	partial := `echo "owlab: opkg update: partial refresh, $owlab_read feed(s) read; the feed above did not answer and its packages will be missing" >&2`
+	if pm == config.APK {
+		cmd, marker = "apk update", `^ \[`
+		feeds = "/etc/apk/repositories and /etc/apk/repositories.d"
+		summary = `owlab_have=$(printf '%s\n' "$owlab_upd" | sed -n 's/^[0-9][0-9]* unavailable, [0-9][0-9]* stale; \([0-9][0-9]*\) distinct packages available$/\1/p')` + "\n"
+		dead = `[ "$owlab_read" -eq 0 ] || [ "${owlab_have:-0}" -eq 0 ]`
+		partial = `echo "owlab: apk update: partial refresh, $owlab_read feed(s) read, $owlab_have packages available; the feed above did not answer and its packages will be missing" >&2`
+	}
+	return "" +
+		// `x=$(cmd) && a || b` rather than an if, because a bare failing
+		// assignment under `set -e` ends the script right here, which is the
+		// bug this function exists to fix.
+		`owlab_upd=$(` + cmd + ` 2>&1) && owlab_rc=0 || owlab_rc=$?` + "\n" +
+		// grep -c exits 1 when it counts nothing — the very case that has to
+		// survive — and still prints the 0.
+		`owlab_read=$(printf '%s\n' "$owlab_upd" | grep -c '` + marker + `') || true` + "\n" +
+		summary +
+		`if [ "$owlab_rc" -ne 0 ]; then printf '%s\n' "$owlab_upd" >&2; fi` + "\n" +
+		`if [ "$owlab_rc" -ne 0 ] && { ` + dead + `; }; then echo "owlab: ` + cmd + ` failed: no feed answered. Check the router's network and the feeds in ` + feeds + `" >&2; exit "$owlab_rc"; fi` + "\n" +
+		`if [ "$owlab_rc" -ne 0 ]; then ` + partial + `; fi` + "\n"
+}
+
 // Install is the shell that installs pkgs, or "true" when there is nothing to
 // install — a script fragment that is always safe to concatenate.
 //
@@ -129,9 +206,9 @@ func Install(pm config.PackageManager, pkgs []string, o Options) string {
 	if len(pkgs) == 0 {
 		return "true"
 	}
-	add, update := "opkg install", "opkg update"
+	add := "opkg install"
 	if pm == config.APK {
-		add, update = "apk add", "apk update"
+		add = "apk add"
 	}
 
 	var flags []string
@@ -147,9 +224,7 @@ func Install(pm config.PackageManager, pkgs []string, o Options) string {
 
 	var b strings.Builder
 	if o.Update {
-		// Silenced on both streams: an index refresh reports mirrors and
-		// signature checks that say nothing about the install that follows.
-		b.WriteString(update + " >/dev/null 2>&1\n")
+		b.WriteString(UpdateShell(pm))
 	}
 	if o.Tolerant {
 		b.WriteString("for p in " + strings.Join(pkgs, " ") + "; do\n")
