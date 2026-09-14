@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/netx"
 )
 
 // fetchExtraPackages downloads every router's out-of-feed packages into the
@@ -90,14 +91,15 @@ func Fetch(url, cacheDir string) (string, error) {
 	}
 
 	fmt.Fprintf(os.Stderr, "owlab: fetching %s\n", url)
-	client := &http.Client{Timeout: 5 * time.Minute}
+	// Retries a 5xx or a dropped connection; see internal/netx.
+	client := netx.Client(&http.Client{Timeout: 5 * time.Minute})
 	resp, err := client.Get(url)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GET %s: %s", url, resp.Status)
+		return "", netx.Status(url, resp)
 	}
 
 	// Written to a temporary name and renamed, so an interrupted download
