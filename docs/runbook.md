@@ -300,6 +300,22 @@ there.
 It never pushes to `main`. What proves a new release still builds a router is
 the CI run on that pull request, not a larger number in a directory listing.
 
+**It needs one repository setting.** Turn on **Settings → Actions → General →
+Allow GitHub Actions to create and approve pull requests**. Without it the job
+pushes the branch and then stops at:
+
+```
+pull request create failed: GraphQL: GitHub Actions is not permitted to create or approve pull requests (createPullRequest)
+```
+
+Turning the setting on is the whole fix: the next run replaces the branch it
+left behind and opens the pull request.
+
+**Read the dispatched checks, not the held one.** A pull request opened with
+`GITHUB_TOKEN` gets its `pull_request` run held in `action_required`; GitHub
+does that to every such pull request. `pins.yml` therefore starts `ci.yml` on
+the branch itself. Merge when that run is green.
+
 ---
 
 ## Install a package to try it

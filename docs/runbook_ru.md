@@ -301,6 +301,22 @@ $ sh tools/pins.sh bump 25.12.4 25.12.5
 доказывает прогон CI на этом пулл-реквесте, а не бóльшая цифра в листинге
 каталога.
 
+**Ей нужна одна настройка репозитория.** Включите **Settings → Actions → General
+→ Allow GitHub Actions to create and approve pull requests**. Без неё джоба
+пушит ветку и останавливается на:
+
+```
+pull request create failed: GraphQL: GitHub Actions is not permitted to create or approve pull requests (createPullRequest)
+```
+
+Включить настройку — это весь фикс: следующий прогон заменит оставленную ветку и
+откроет пулл-реквест.
+
+**Смотрите запущенные джобой проверки, а не задержанные.** У пулл-реквеста,
+открытого через `GITHUB_TOKEN`, прогон `pull_request` встаёт в
+`action_required` — GitHub делает так с каждым таким пулл-реквестом. Поэтому
+`pins.yml` сам запускает `ci.yml` на ветке. Сливайте, когда этот прогон зелёный.
+
 ---
 
 ## Поставить пакет попробовать
