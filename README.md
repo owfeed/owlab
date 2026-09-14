@@ -168,7 +168,7 @@ shown — installing a theme package adds `luci.themes.<Name>` and deliberately
 leaves `luci.main.mediaurlbase` alone.
 
 [examples/luci-theme-footstrap](examples/luci-theme-footstrap/owlab.yaml) is a
-real one: four routers, a build step for the generated CSS, and third-party
+real one: four routers, a build step for the generated CSS, and out-of-feed
 apps to check the cascade against.
 
 ### Load kernel modules, or get real WiFi

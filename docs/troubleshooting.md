@@ -381,8 +381,8 @@ resolves among them.
 **Symptom.** `owlab up` prints its green list; the package is not installed.
 Only on OpenWrt 24.10.
 
-**Cause.** `luci-app-openclash` pulls `dnsmasq-full`, which ships
-`/etc/init.d/dnsmasq` and collides with `dnsmasq`. ImmortalWrt already ships
+**Cause.** A package that depends on `dnsmasq-full` pulls it in, and
+`dnsmasq-full` ships `/etc/init.d/dnsmasq` and collides with `dnsmasq`. ImmortalWrt already ships
 `dnsmasq-full`, so three of the four routers were unaffected — the same config
 produced a different router on one of them.
 
