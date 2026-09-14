@@ -19,6 +19,10 @@ func TestExtractConfigFlagFindsItAnywhere(t *testing.T) {
 		// -f belongs to `logs`. Taking it here would break following a log,
 		// which is why the short form is -c.
 		{[]string{"logs", "-f"}, []string{"logs", "-f"}, ""},
+		// After -- the words belong to the command exec runs on the router,
+		// where -c is as likely as anywhere (`grep -c`, `sh -c`).
+		{[]string{"exec", "r", "--", "sh", "-c", "exit 3"}, []string{"exec", "r", "--", "sh", "-c", "exit 3"}, ""},
+		{[]string{"-c", "a.yaml", "exec", "r", "--", "grep", "-c", "x"}, []string{"exec", "r", "--", "grep", "-c", "x"}, "a.yaml"},
 	} {
 		rest, path, err := extractConfigFlag(tc.in)
 		if err != nil {

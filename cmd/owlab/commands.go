@@ -331,13 +331,18 @@ func (a *app) exec(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	run, err := a.execFor(r)
+	run, err := a.tierFor(r).Stream()
 	if err != nil {
 		return err
 	}
 	// Joined and handed to sh -c rather than exec'd directly, so that pipes
 	// and redirection in the command work the way the developer typed them.
-	return run(ctx, strings.Join(cmd, " "), nil, os.Stdout)
+	//
+	// stderr to stderr: with one writer for both, `owlab exec r -- cmd > out`
+	// wrote the command's error messages into the data file. The exit status
+	// needs nothing here — docker exec and ssh both exit with the command's
+	// own status, and main passes that on (`-- 'exit 3'` exits 3).
+	return run(ctx, strings.Join(cmd, " "), execStdin(os.Stdin), os.Stdout, os.Stderr)
 }
 
 // sync copies the project's source tree into running routers.

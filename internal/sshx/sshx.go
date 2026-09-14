@@ -72,14 +72,39 @@ func (t Target) dest() string { return t.User + "@" + t.Host }
 // ask for one has genuinely failed and should say so rather than hang waiting
 // for input that no script will type.
 func (t Target) Run(ctx context.Context, script string, stdin []byte, stdout, stderr io.Writer) error {
+	// A nil slice has to stay a nil reader: a non-nil io.Reader holding a nil
+	// *bytes.Reader would be attached as stdin and panic on the first read.
+	var in io.Reader
+	if stdin != nil {
+		in = bytes.NewReader(stdin)
+	}
+	return t.Stream(ctx, script, in, stdout, stderr)
+}
+
+// Stream is Run with stdin as a stream rather than a buffer.
+//
+// `owlab exec` needs this: `yes | owlab exec r -- head -1` has no end to read
+// into memory, and `tar c . | owlab exec r -- tar x` should not have to hold
+// the archive twice. A nil stdin gets the null device, as before.
+func (t Target) Stream(ctx context.Context, script string, stdin io.Reader, stdout, stderr io.Writer) error {
+	return t.command(ctx, script, stdin, stdout, stderr).Run()
+}
+
+// command builds the ssh invocation Stream runs, apart from running it, so
+// the wiring — which stream goes where — can be tested without a router.
+//
+// No -t, even when stdin is attached: a pseudo-terminal translates LF to CRLF
+// on the way out and mangles every binary byte stream through it, which is
+// exactly what a pipe into or out of exec carries.
+func (t Target) command(ctx context.Context, script string, stdin io.Reader, stdout, stderr io.Writer) *exec.Cmd {
 	args := append(t.opts(), "-o", "BatchMode=yes", t.dest(), script)
 	cmd := exec.CommandContext(ctx, "ssh", args...)
 	if stdin != nil {
-		cmd.Stdin = bytes.NewReader(stdin)
+		cmd.Stdin = stdin
 	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	return cmd.Run()
+	return cmd
 }
 
 // Output runs a script and returns its combined output, with the output

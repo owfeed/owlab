@@ -85,7 +85,7 @@ images/              контекст сборки, вшитый в бинарь
 
 ```go
 type tier interface {
-	Exec() (sync.Exec, error)                                 // выполнить скрипт, возможно с tar на stdin
+	Stream() (stream, error)                                  // выполнить скрипт; stdin, stdout, stderr раздельно
 	Interactive(ctx context.Context, command ...string) error // отдать терминал
 	State(ctx context.Context) string                         // одно слово для `owlab status`
 }
@@ -94,6 +94,14 @@ type tier interface {
 с `containerTier` поверх `docker exec` и `vmTier` поверх ssh. Sync, `post_sync`,
 `install`, сброс кешей LuCI, `shell` и таблица статуса написаны против этого
 интерфейса, и только две реализации знают, какой роутер на том конце.
+
+`Stream` принимает stdin как поток и держит stdout и stderr раздельно, потому что
+`owlab exec` передаёт свой stdin дальше, а у него нет длины (`yes | owlab exec r
+-- head -1`). Байтовый `sync.Exec`, которым пользуются sync, install и проверки,
+собирается из него в `execFor`, так что способ выполнить скрипт у каждого тира
+по-прежнему один. Тир добавляет `docker exec -i` (или отдаёт ssh stdin), только
+когда stdin не nil, и никогда не выделяет tty: tty превращает LF в CRLF в данных
+из пайпа.
 
 Пакетных операций в интерфейсе намеренно **нет**. Compose работает сразу по
 всему проекту и именно из этого получает снос сети, а тир VM поднимает по
