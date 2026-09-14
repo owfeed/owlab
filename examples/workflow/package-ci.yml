@@ -34,7 +34,7 @@ jobs:
       # action@vX.Y.Z below, so a dependabot bump of these lines moves the binary
       # too. Pin a branch or "latest" and a CI result can change without a
       # commit anywhere in this repository.
-      - uses: owfeed/owlab/setup@v0.6.3
+      - uses: owfeed/owlab/setup@v0.6.4
 
       # The verification tier: luci.mk minifies JS and CSS by default, so a real
       # package is not the source tree. Code that works unminified and breaks
@@ -43,7 +43,7 @@ jobs:
       - name: Build the package
         run: owlab build --release '${{ matrix.release }}' --out dist
 
-      - uses: owfeed/owlab/action@v0.6.3
+      - uses: owfeed/owlab/action@v0.6.4
         with:
           releases: ${{ matrix.release }}
           # A glob, because the version in the artifact's file name comes from
