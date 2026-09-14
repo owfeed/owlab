@@ -299,6 +299,60 @@ Firewall в этот список намеренно не входит — fw4 �
 
 ## «Пакет установился и ничего не делает»
 
+### Установка с `--feed` останавливается: «the feed under test ... was not read»
+
+**Симптом.** `owlab test --feed` или `owlab install --feed` падает на шаге
+установки:
+
+```
+owlab: the feed under test (owlab-feed: https://.../packages.adb) was not read: ...
+Refusing to install by name, because apk would take a same-named package from another feed instead.
+```
+
+Выше напечатана причина от самого менеджера: `unexpected end of file` или
+`Failed to download` при 404, `UNTRUSTED signature` или `Signature check failed`
+при чужом ключе.
+
+**Причина.** Роутер не смог прочитать тестируемый фид: URL неверный или отдаёт
+404, либо индекс подписан не тем ключом, что передан в `--feed-key`. До этой
+проверки запуск шёл дальше и проходил. Обновление считает один мёртвый фид
+обычным делом, и `apk add <name>` / `opkg install <name>` брали одноимённый
+пакет из дистрибутивного фида. Измерено на 25.12.4 и 24.10.8 с пробным фидом,
+отдающим 404: оба поставили дистрибутивный `tree-2.2.1` и завершились с кодом 0.
+
+**Что делать.** Исправьте URL или ключ и запустите снова:
+
+- apk нужен URL самого `packages.adb`; opkg — каталог, где лежит `Packages.gz`.
+- Для opkg файл ключа должен называться его id (`usign -F -p <key>`).
+
+Не ответивший дистрибутивный фид по-прежнему только предупреждение. Проверка
+касается одного тестируемого фида.
+
+**Проверка.** Спросите роутер про этот один фид. Вывода общего обновления мало:
+оба его очевидных сигнала, по замерам, врут.
+
+```console
+$ owlab exec owrt2512 -- 'apk update --repositories-file /dev/null -X "$(cat /etc/apk/repositories.d/owlab-feed.list)"; echo rc=$?'
+$ owlab exec owrt2410 -- 'rm -f /var/opkg-lists/owlab-feed; opkg update >/dev/null 2>&1; ls -l /var/opkg-lists/owlab-feed'
+```
+
+| менеджер | что выглядит успехом, но им не является (измерено) | что читает owlab |
+|---|---|---|
+| apk 3.0.5 | ` [url]` печатается из кэша, когда индекс отдаёт 404 на повторном запуске (`0 unavailable, 1 stale`) | код возврата обновления только этого фида: 0 — прочитан; 1 — 404, чужой ключ, устаревший кэш |
+| opkg (24.10.8) | индекс с плохой подписью печатает `Updated list of available packages in /var/opkg-lists/<name>`, затем `Signature check failed`, удаляет список и выходит с 0; при 404 остаётся старый список | `/var/opkg-lists/<name>`: удаляется до обновления и должен появиться после |
+
+Из какого фида пришёл установленный пакет:
+
+```console
+$ owlab exec owrt2512 -- apk query --fields name,version,repositories tree   # URL фида рядом с lib/apk/db/installed
+$ owlab exec owrt2410 -- opkg list-installed tree                             # opkg фид не записывает; сравните версию с Packages фида
+```
+
+Повторный `owlab install --feed` на том же роутере теперь заменяет прежнюю
+строку `src/gz owlab-feed`. Раньше opkg брал первую строку с этим именем и
+пропускал остальные (`Duplicate src declaration ... Skipping.`), так что
+исправленный URL не читался.
+
 ### `br-lan` не существовало
 
 **Симптом.** Пакет ставится, запускается, рапортует об успехе и не пропускает

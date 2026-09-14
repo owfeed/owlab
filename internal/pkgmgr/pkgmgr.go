@@ -86,6 +86,71 @@ type Options struct {
 	// skipped names are printed, because silently getting fewer packages than
 	// were asked for is the failure this is meant to make visible.
 	Tolerant bool
+
+	// Feed is the name AddFeed registered the feed under test with. When set
+	// together with Update, the install stops unless that one feed was read.
+	//
+	// The refresh tolerates a feed that does not answer, and it has to: a
+	// distribution sub-index 404s routinely. But the feed under test is the
+	// reason the run exists. When IT is the one that did not answer — a wrong
+	// URL, an index its key does not verify — the install by name that follows
+	// takes a same-named package from the distribution feed, and the test
+	// passes against bytes the feed under test never served. Measured on
+	// 25.12.4 and 24.10.8 with a probe feed shadowing `tree`: both managers
+	// installed the distribution's tree-2.2.1 and exited 0.
+	Feed string
+}
+
+// Where the feed check looks. Variables rather than literals only so the tests
+// can run the generated shell against a temporary directory instead of the
+// host's /etc and /var.
+var (
+	apkReposDir   = "/etc/apk/repositories.d"
+	opkgListsDir  = "/var/opkg-lists"
+	opkgFeedsConf = "/etc/opkg/customfeeds.conf"
+)
+
+// feedCheck is the shell that proves the feed under test was read by the
+// refresh it surrounds: before goes ahead of UpdateShell, after behind it.
+//
+// Each manager gets the one signal that measurement showed cannot lie, and
+// neither of them is the refresh's own output.
+//
+// apk: the bracketed ` [url]` line is printed for a feed that was NOT read
+// this time, as long as an earlier run cached its index — a 404 on the second
+// run printed the line and `0 unavailable, 1 stale`. What does tell is apk's
+// exit code for a refresh of that feed alone, which ignores the cache: rc=0
+// for a good feed, rc=1 for a 404, for an index signed by a key the router
+// does not trust, and for the stale case (apk-tools 3.0.5, 25.12.4). It costs
+// one fetch of one index.
+//
+// opkg: the list file, removed first. `opkg update` against an index whose
+// signature does not verify prints "Updated list of available packages in
+// /var/opkg-lists/<name>", then "Signature check failed", deletes the list and
+// exits 0 — so neither the marker line nor the exit code says anything. And a
+// 404 leaves the list from an earlier run in place, so the file only means
+// something if this refresh is what wrote it (24.10.8).
+func feedCheck(pm config.PackageManager, name string) (before, after string) {
+	refuse := "Refusing to install by name, because " + string(pm) + " would take a same-named package from another feed instead."
+	if pm == config.APK {
+		return "", "" +
+			`owlab_feed=$(cat ` + apkReposDir + `/` + name + `.list 2>/dev/null) || owlab_feed=` + "\n" +
+			`owlab_rc=1; owlab_chk="no ` + apkReposDir + `/` + name + `.list"` + "\n" +
+			// `x=$(cmd) && a || b`, as in UpdateShell: a failing assignment under
+			// `set -e` would end the script before the message below.
+			`[ -z "$owlab_feed" ] || { owlab_chk=$(apk update --repositories-file /dev/null -X "$owlab_feed" 2>&1) && owlab_rc=0 || owlab_rc=$?; }` + "\n" +
+			`if [ "$owlab_rc" -ne 0 ]; then printf '%s\n' "$owlab_chk" >&2; echo "owlab: the feed under test (` + name + `: $owlab_feed) was not read: apk update --repositories-file /dev/null -X $owlab_feed exited $owlab_rc. ` + refuse + ` Fix --feed (apk wants the URL of packages.adb itself) or --feed-key (the key that signed that index), then rerun." >&2; exit 1; fi` + "\n"
+	}
+	list := opkgListsDir + "/" + name
+	before = `rm -f ` + list + ` ` + list + `.sig || { echo "owlab: cannot remove ` + list + `, so a list from an earlier run would pass for this one" >&2; exit 1; }` + "\n"
+	after = "" +
+		`if [ ! -s ` + list + ` ]; then ` +
+		`owlab_feed=$(sed -n 's/^src\/gz ` + name + ` //p' ` + opkgFeedsConf + ` 2>/dev/null) || owlab_feed=; ` +
+		// UpdateShell replays the output only when opkg failed, and a bad
+		// signature is exactly the case where it did not.
+		`if [ "$owlab_rc" -eq 0 ]; then printf '%s\n' "$owlab_upd" >&2; fi; ` +
+		`echo "owlab: the feed under test (` + name + `: $owlab_feed) was not read: opkg update left no ` + list + ` (a 404, or a Packages.sig that --feed-key does not verify, which opkg reports with exit 0). ` + refuse + ` Fix --feed (opkg wants the directory holding Packages.gz) or --feed-key (named by its key id, usign -F -p <key>), then rerun." >&2; exit 1; fi` + "\n"
+	return before, after
 }
 
 // AddFeed is the shell that points a router at a package feed: the public key
@@ -129,6 +194,13 @@ func AddFeed(pm config.PackageManager, name, url, keyFile string) string {
 	}
 	b.WriteString("mkdir -p /etc/opkg/keys" + stop("creating /etc/opkg/keys"))
 	b.WriteString("cp " + keyFile + " /etc/opkg/keys/" + stop("installing its key into /etc/opkg/keys"))
+	// An earlier line under the same name goes first. opkg keeps the FIRST
+	// `src/gz` of a name and skips the rest ("Duplicate src declaration ...
+	// Skipping.", measured on 24.10.8), so a second `owlab install --feed` on a
+	// running router with a corrected — or broken — URL kept reading the old
+	// one, and the check that the feed under test was read passed on the
+	// wrong URL.
+	b.WriteString("[ ! -f /etc/opkg/customfeeds.conf ] || sed -i '/^src\\/gz " + name + " /d' /etc/opkg/customfeeds.conf" + stop("removing an earlier "+name+" line from /etc/opkg/customfeeds.conf"))
 	// Appended, not written: customfeeds.conf is where a router's own extra
 	// feeds live, and replacing it would take them with it.
 	b.WriteString("printf 'src/gz %s %s\\n' " + name + " " + url + " >> /etc/opkg/customfeeds.conf" + stop("appending to /etc/opkg/customfeeds.conf"))
@@ -244,7 +316,13 @@ func Install(pm config.PackageManager, pkgs []string, o Options) string {
 
 	var b strings.Builder
 	if o.Update {
+		before, after := "", ""
+		if o.Feed != "" {
+			before, after = feedCheck(pm, o.Feed)
+		}
+		b.WriteString(before)
 		b.WriteString(UpdateShell(pm))
+		b.WriteString(after)
 	}
 	if o.Tolerant {
 		b.WriteString("for p in " + strings.Join(pkgs, " ") + "; do\n")

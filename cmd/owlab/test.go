@@ -404,8 +404,9 @@ func (a *app) testInstall(ctx context.Context, r *config.Router, run syncpkg.Exe
 
 	installArgs := append([]string{}, feed...)
 
-	var pre string
+	var pre, feedUnderTest string
 	if feedSrc != nil {
+		feedUnderTest = feedSrc.Name
 		body, err := os.ReadFile(feedSrc.Key)
 		if err != nil {
 			res.Detail = err.Error()
@@ -468,6 +469,10 @@ func (a *app) testInstall(ctx context.Context, r *config.Router, run syncpkg.Exe
 		// knows, and there is no key it could carry that would.
 		Untrusted: len(files) > 0,
 		Overwrite: true,
+		// The same name AddFeed registered: the install stops unless that
+		// feed was read, instead of passing on a same-named package from the
+		// distribution feed.
+		Feed: feedUnderTest,
 	})
 	var log strings.Builder
 	if err := run(ctx, cmd, nil, &log); err != nil {

@@ -599,8 +599,9 @@ func (a *app) install(ctx context.Context, args []string) error {
 		// the test proves nothing: the whole point of installing by name is that
 		// the index's signature is what makes it acceptable, and
 		// --allow-untrusted would accept it whether or not that held.
-		var cmd string
+		var cmd, feedUnderTest string
 		if feedKeyArchive != nil {
+			feedUnderTest = *feedName
 			if err := run(ctx, "tar -C / -xf -", feedKeyArchive, os.Stderr); err != nil {
 				fmt.Fprintf(os.Stderr, "! %s: pushing the feed key: %v\n", r.ID, err)
 				markFailed(r.ID)
@@ -617,6 +618,10 @@ func (a *app) install(ctx context.Context, args []string) error {
 			// names are left, and --allow-untrusted there would accept a
 			// package whose index signature never checked out.
 			Untrusted: pushed > 0,
+			// A name given alongside --feed is meant to come out of it; when
+			// that feed was not read, stop rather than install the same name
+			// from the distribution feed.
+			Feed: feedUnderTest,
 		})
 		fmt.Printf("== %s (%s)\n", r.ID, pm)
 		if err := run(ctx, cmd, nil, os.Stdout); err != nil {

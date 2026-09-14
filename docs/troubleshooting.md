@@ -298,6 +298,61 @@ whole class of real behaviour.
 
 ## "The package installed but does nothing"
 
+### `--feed` install stops with "the feed under test ... was not read"
+
+**Symptom.** `owlab test --feed` or `owlab install --feed` fails at the install
+step with:
+
+```
+owlab: the feed under test (owlab-feed: https://.../packages.adb) was not read: ...
+Refusing to install by name, because apk would take a same-named package from another feed instead.
+```
+
+The package manager's own reason is printed above it: `unexpected end of file`
+or `Failed to download` for a 404, `UNTRUSTED signature` or `Signature check
+failed` for a key mismatch.
+
+**Cause.** The router could not read the feed you are testing: the URL is wrong
+or 404s, or the index is signed by a key other than `--feed-key`. Before this
+check the run went on and passed. The refresh treats one dead feed as routine,
+and `apk add <name>` / `opkg install <name>` then took the same-named package
+from the distribution feed. Measured on 25.12.4 and 24.10.8 with a probe feed
+that 404s: both installed the distribution's `tree-2.2.1` and exited 0.
+
+**Fix.** Correct the URL or the key and rerun:
+
+- apk wants the URL of `packages.adb` itself; opkg wants the directory that
+  holds `Packages.gz`.
+- For opkg the key file must be named by its key id (`usign -F -p <key>`).
+
+A distribution feed that does not answer is still only a warning. The check
+applies to the feed under test alone.
+
+**Check.** Ask the router about that one feed. The refresh's own output is not
+enough, and both of its obvious signals were measured to lie:
+
+```console
+$ owlab exec owrt2512 -- 'apk update --repositories-file /dev/null -X "$(cat /etc/apk/repositories.d/owlab-feed.list)"; echo rc=$?'
+$ owlab exec owrt2410 -- 'rm -f /var/opkg-lists/owlab-feed; opkg update >/dev/null 2>&1; ls -l /var/opkg-lists/owlab-feed'
+```
+
+| manager | what looks like success but is not (measured) | what owlab reads instead |
+|---|---|---|
+| apk 3.0.5 | ` [url]` is printed from the cache when the index 404s on a later run (`0 unavailable, 1 stale`) | exit code of an update of that feed alone: 0 good; 1 for 404, untrusted key, stale |
+| opkg (24.10.8) | an index with a bad signature prints `Updated list of available packages in /var/opkg-lists/<name>`, then `Signature check failed`, deletes the list and exits 0; a 404 leaves an older list in place | `/var/opkg-lists/<name>`, removed before the update, exists after it |
+
+To see which feed an installed package came from:
+
+```console
+$ owlab exec owrt2512 -- apk query --fields name,version,repositories tree   # lists the feed URL next to lib/apk/db/installed
+$ owlab exec owrt2410 -- opkg list-installed tree                             # opkg records no feed; compare the version with the feed's Packages
+```
+
+Running `owlab install --feed` again on the same router now replaces the
+earlier `src/gz owlab-feed` line. Before, opkg kept the first line of a name and
+skipped the rest (`Duplicate src declaration ... Skipping.`), so a corrected
+URL was never read.
+
 ### `br-lan` did not exist
 
 **Symptom.** A package installs, starts, reports success, and moves no traffic.
