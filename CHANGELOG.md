@@ -7,6 +7,22 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+### Fixed
+
+- **A download server that fails for a moment no longer ends the command.** The
+  release listings, the VM image and its `sha256sums`, and out-of-feed packages
+  are asked again on a 5xx, 429 or dropped connection: 4 attempts, 2, 4 and 8 s
+  apart. A 404 is still asked once. When a failure outlasts the retries, the
+  message says it is an outage to wait out, not a problem with `owlab.yaml`.
+
+- **`setup` tells a GitHub outage from a bad release.** `gh release download`
+  and `gh release view` are retried while GitHub answers 5xx or cannot be
+  reached, and exit 8 when that outlasts 4 attempts. When `gh attestation verify`
+  cannot reach GitHub or Sigstore, the step retries and reports an outage
+  (exit 8) instead of "does not verify".
+
 ## [0.6.4] - 2026-09-14
 
 ### Fixed

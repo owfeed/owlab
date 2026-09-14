@@ -562,6 +562,33 @@ looking at is worth doing before debugging anything else.
 
 ---
 
+## "A download failed"
+
+### `503 Service Unavailable (the server is failing, not refusing …)`
+
+The download server or GitHub was failing, and kept failing through owlab's
+retries (4 attempts over about 14 seconds). Nothing is wrong with `owlab.yaml`.
+Run the command again later. For GitHub, check
+[githubstatus.com](https://www.githubstatus.com).
+
+The same applies to `unreachable after 4 attempts (a network or server outage …)`,
+which covers timeouts, DNS failures and refused connections.
+
+### `404 Not Found` on an image, a rootfs or a package
+
+The server answered, and the file is not there. owlab asks for a 404 once. Check
+the release number and target in `owlab.yaml`: the release may not publish that
+image yet, or the out-of-feed package URL is wrong.
+
+### `setup` step: `Upstream outage (safe to rerun)`, exit code 8
+
+`gh release download`, `gh release view` or `gh attestation verify` could not reach
+GitHub or Sigstore after 4 attempts. The binary was not checked, which is different
+from failing verification. Rerun the job. `does not verify as built by
+owfeed/owlab's release workflow`, exit code 1, is the real refusal.
+
+---
+
 ## Three upstream behaviours worth knowing
 
 ### `kmods` must stay in the feed list

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/netx"
 )
 
 // CacheDir is where downloaded disk images live.
@@ -97,13 +98,13 @@ func expectedSum(ctx context.Context, r *config.Router) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	resp, err := netx.Client(&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%s: %s", r.SumsURL(), resp.Status)
+		return "", netx.Status(r.SumsURL(), resp)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
@@ -129,7 +130,9 @@ func fetchTo(ctx context.Context, url, dest string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	resp, err := (&http.Client{Timeout: 30 * time.Minute}).Do(req)
+	// Retries a 5xx or a dropped connection before the download starts; a mirror's
+	// 502 used to end `owlab up` on the first try.
+	resp, err := netx.Client(&http.Client{Timeout: 30 * time.Minute}).Do(req)
 	if err != nil {
 		return "", err
 	}
@@ -138,7 +141,7 @@ func fetchTo(ctx context.Context, url, dest string) (string, error) {
 		if resp.StatusCode == http.StatusNotFound {
 			return "", fmt.Errorf("%s: not found.\n\nThis usually means the release or the target does not publish this image — check the release number in %s", url, config.FileName)
 		}
-		return "", fmt.Errorf("%s: %s", url, resp.Status)
+		return "", netx.Status(url, resp)
 	}
 
 	f, err := os.Create(dest)

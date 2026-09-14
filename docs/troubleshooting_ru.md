@@ -561,6 +561,32 @@ VM не грузится или виснет на середине, тогда �
 
 ---
 
+## «Загрузка упала»
+
+### `503 Service Unavailable (the server is failing, not refusing …)`
+
+Сервер загрузок или GitHub сбоил и продолжал сбоить на протяжении всех повторов owlab
+(4 попытки примерно за 14 секунд). С `owlab.yaml` всё в порядке. Запустите команду
+позже. Для GitHub загляните на [githubstatus.com](https://www.githubstatus.com).
+
+То же относится к `unreachable after 4 attempts (a network or server outage …)`: так
+выглядят таймауты, сбои DNS и отказы в соединении.
+
+### `404 Not Found` на образ, rootfs или пакет
+
+Сервер ответил, и файла там нет. На 404 owlab спрашивает один раз. Проверьте номер
+релиза и target в `owlab.yaml`: релиз может ещё не публиковать такой образ, или URL
+внефидового пакета неверен.
+
+### Шаг `setup`: `Upstream outage (safe to rerun)`, код выхода 8
+
+`gh release download`, `gh release view` или `gh attestation verify` не достучались до
+GitHub или Sigstore за 4 попытки. Бинарник не проверялся — это не то же самое, что
+провал проверки. Перезапустите job. Настоящий отказ — `does not verify as built by
+owfeed/owlab's release workflow` с кодом выхода 1.
+
+---
+
 ## Три поведения апстрима, которые стоит знать
 
 ### `kmods` должен остаться в списке фидов

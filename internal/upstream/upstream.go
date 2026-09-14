@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/netx"
 )
 
 // pointRelease matches the href of a release directory: `href="25.12.4/"`.
@@ -208,13 +209,13 @@ func get(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	resp, err := netx.Client(&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
+		return nil, netx.Status(url, resp)
 	}
 	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 }
@@ -224,7 +225,7 @@ func head(ctx context.Context, url string) bool {
 	if err != nil {
 		return false
 	}
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	resp, err := netx.Client(&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
 		return false
 	}

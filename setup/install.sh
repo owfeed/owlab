@@ -69,11 +69,56 @@ if [ -z "${OWLAB_VERSION:-}" ]; then
   esac
 fi
 
+# gh_outage <gh output>
+#
+# gh exits 1 for every failure, so the text decides whether GitHub was failing or
+# answering. Measured with gh 2.99.0: a 5xx prints `HTTP 503: <message> (<url>)` or
+# `(HTTP 503)`, an unreachable host `error connecting to <host> check your internet
+# connection`, an unreachable proxy `proxyconnect tcp: ... connection refused`, and
+# `gh attestation verify` with no Sigstore trust root reachable `error creating
+# Sigstore verifier: no valid Sigstore verifiers could be initialized`. An answer
+# prints `release not found`, `no assets match the file pattern` or `HTTP 404`.
+gh_outage() {
+  grep -Eqi 'HTTP (408|429|5[0-9][0-9])|status code: (408|429|5[0-9][0-9])|error connecting to|connection (refused|reset)|i/o timeout|TLS handshake timeout|timeout awaiting|no such host|unexpected EOF|server misbehaving|proxyconnect|rate limit|error creating Sigstore verifier' <<<"$1"
+}
+
+# gh_read <gh arguments>
+#
+# A read from GitHub, asked again while GitHub is failing: 4 attempts, 5, 10 and 20 s
+# apart. Exit 8 when the outage outlasts them -- owfeed's code for "upstream outage,
+# safe to rerun" -- and 7 at once for an answer. Before this a single 502 from the
+# release API failed the step with gh's exit 1, the same as a tag that does not exist.
+gh_read() {
+  local attempt=1 delay=5 err
+  err="$(mktemp)"
+  while :; do
+    if gh "$@" 2>"$err"; then
+      rm -f "$err"
+      return 0
+    fi
+    if ! gh_outage "$(cat "$err")"; then
+      cat "$err" >&2
+      rm -f "$err"
+      return 7
+    fi
+    if [ "$attempt" -ge 4 ]; then
+      cat "$err" >&2
+      rm -f "$err"
+      echo "::error title=Upstream outage (safe to rerun)::gh $1 $2 could not reach GitHub after $attempt attempts. Nothing was installed and nothing failed verification; rerun the job."
+      return 8
+    fi
+    echo "gh $1 $2: GitHub did not answer (attempt $attempt of 4), retrying in ${delay}s: $(tr '\n' ' ' <"$err")" >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+    delay=$((delay * 2))
+  done
+}
+
 # The version is needed before the download, not after: the asset name carries
 # it, so "latest" has to be resolved to a tag rather than guessed at.
 if [ "$OWLAB_VERSION" = "latest" ]; then
   echo "::warning::owlab pinned to \"latest\"; pin a tag so a CI result cannot change without a commit"
-  tag="$(gh release view --repo owfeed/owlab --json tagName --jq .tagName)"
+  tag="$(gh_read release view --repo owfeed/owlab --json tagName --jq .tagName)"
 else
   tag="$OWLAB_VERSION"
 fi
@@ -99,7 +144,7 @@ fi
 # --clobber, because a job may have downloaded a DIFFERENT version into the same
 # directory: the short-circuit above returns only on an exact match, so reaching
 # here with the file present means it is the wrong one and has to be replaced.
-gh release download "$tag" --repo owfeed/owlab --pattern "$asset" --dir "$dir" --clobber
+gh_read release download "$tag" --repo owfeed/owlab --pattern "$asset" --dir "$dir" --clobber
 
 # Verify BEFORE the archive is unpacked or anything in it is executed. A check
 # that runs after the thing it checks is not a check.
@@ -112,18 +157,38 @@ if [ "${OWLAB_VERIFY:-true}" = "true" ]; then
   # gh writes its result to stderr, which a composite step swallows, so it is
   # captured and echoed either way: a check nobody can see ran is one nobody
   # believes ran.
-  if out=$(gh attestation verify "$dir/$asset" \
-      --repo owfeed/owlab \
-      --signer-workflow owfeed/owlab/.github/workflows/release.yml 2>&1); then
+  #
+  # Asked again when GitHub's attestation API or Sigstore is what failed: reporting
+  # that as "does not verify" told people the binary was suspect when the check had
+  # never run, and pushed them towards verify: false.
+  attempt=1
+  delay=5
+  while :; do
+    if out=$(gh attestation verify "$dir/$asset" \
+        --repo owfeed/owlab \
+        --signer-workflow owfeed/owlab/.github/workflows/release.yml 2>&1); then
+      echo "$out"
+      echo "verified $asset as built by owfeed/owlab .github/workflows/release.yml"
+      break
+    fi
     echo "$out"
-    echo "verified $asset as built by owfeed/owlab .github/workflows/release.yml"
-  else
-    echo "$out"
+    if gh_outage "$out"; then
+      if [ "$attempt" -lt 4 ]; then
+        echo "the attestation check could not reach GitHub or Sigstore (attempt $attempt of 4); retrying in ${delay}s"
+        sleep "$delay"
+        attempt=$((attempt + 1))
+        delay=$((delay * 2))
+        continue
+      fi
+      echo "::error title=Upstream outage (safe to rerun)::the attestation check could not reach GitHub or Sigstore after $attempt attempts. The binary was not found to be wrong; it was not checked. Rerun the job."
+      rm -f "$dir/$asset"
+      exit 8
+    fi
     echo "::error::$asset does not verify as built by owfeed/owlab's release workflow — refusing to install it"
     echo "::error::releases before v0.2.0 carry no attestation; pin a later tag, or set verify: false to accept an unverified download"
     rm -f "$dir/$asset"
     exit 1
-  fi
+  done
 else
   echo "::warning::owlab installed without verifying its build attestation"
 fi
