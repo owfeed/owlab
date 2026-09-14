@@ -210,7 +210,27 @@ jobs:
           # belongs to this job and its content is derived from the report, so
           # replacing it loses nothing; the lease still refuses if someone else
           # moved it.
-          git push -u --force-with-lease origin "$branch"
+          #
+          # The lease is given its expected value explicitly, because a bare
+          # --force-with-lease has none here. It looks for the remote-tracking
+          # branch through remote.origin.fetch, this checkout's refspec covers
+          # `main` only, and a lease with nothing to compare is refused whatever
+          # the remote holds. Measured on 2026-09-14 — the run before had pushed
+          # pins/25.12.2 and then failed to open the pull request, and every run
+          # after it stopped at
+          #   ! [rejected]  pins/25.12.2 -> pins/25.12.2 (stale info)
+          # which is exactly the wedge the lease exists to prevent. Fetching the
+          # branch into refs/remotes/origin/ first does NOT help — measured in a
+          # --single-branch clone, still `stale info` — because a ref outside the
+          # fetch refspec is not the tracking branch git consults.
+          #
+          # So the sha the remote has right now is the expectation. An empty one
+          # means "the branch must not exist": a first run pushes a new branch,
+          # and if ls-remote fails the push refuses to replace an existing branch
+          # rather than overwriting it blind. Someone moving the branch between
+          # this read and the push is still refused.
+          expected="$(git ls-remote --heads origin "refs/heads/${branch}" | cut -f1)"
+          git push -u --force-with-lease="refs/heads/${branch}:${expected}" origin "${branch}"
 
           url="$(gh pr create -R "$GITHUB_REPOSITORY" --base main --head "$branch" \
                    --title "$subject" --body-file "$RUNNER_TEMP/body.md")"
