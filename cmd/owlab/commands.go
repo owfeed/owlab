@@ -335,14 +335,47 @@ func (a *app) exec(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	// Joined and handed to sh -c rather than exec'd directly, so that pipes
-	// and redirection in the command work the way the developer typed them.
-	//
 	// stderr to stderr: with one writer for both, `owlab exec r -- cmd > out`
 	// wrote the command's error messages into the data file. The exit status
 	// needs nothing here — docker exec and ssh both exit with the command's
 	// own status, and main passes that on (`-- 'exit 3'` exits 3).
-	return run(ctx, strings.Join(cmd, " "), execStdin(os.Stdin), os.Stdout, os.Stderr)
+	return run(ctx, execScript(cmd), execStdin(os.Stdin), os.Stdout, os.Stderr)
+}
+
+// execScript turns the words after `owlab exec r --` into the script both
+// tiers hand to a shell (`docker exec … /bin/sh -c`, or ssh's remote command).
+//
+// One word is a script and goes through as typed, so that a pipe or a
+// redirect quoted as one argument works the way the developer wrote it:
+// `-- 'ps | grep uhttpd'`, `-- 'cat > /tmp/f'`.
+//
+// Two or more words are an argv, the way docker exec and kubectl exec take
+// them, and each is quoted for a POSIX shell before joining. The user's own
+// shell has already removed their quotes by now, so joining bare words
+// re-split them: `-- sh -c 'exit 3'` became `sh -c exit 3`, which runs `exit`
+// with $0 set to 3 and exited 0 instead of 3; `-- printf '%s\n' 'a b'` printed
+// a and b on separate lines. The price is that an operator typed as its own
+// word (`-- cat /etc/passwd '|' grep root`) is now a literal argument to cat.
+func execScript(words []string) string {
+	if len(words) == 1 {
+		return words[0]
+	}
+	quoted := make([]string, len(words))
+	for i, w := range words {
+		quoted[i] = shellQuote(w)
+	}
+	return strings.Join(quoted, " ")
+}
+
+// shellQuote wraps s in single quotes, the one quoting every POSIX shell
+// reads the same way — busybox ash in the container, the login shell dropbear
+// starts on a VM — because nothing inside them is special. A single quote
+// cannot appear inside, so it closes the quotes, adds an escaped one and
+// reopens them:
+//
+//	it's  ->  'it'\''s'
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // sync copies the project's source tree into running routers.

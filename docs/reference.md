@@ -339,6 +339,23 @@ Hyper-V, and it is reported to hang some machines on an SMP boot while working
 on the next one over. Translation is slower by roughly an order of magnitude
 and always works.
 
+## owlab exec
+
+`owlab exec <router> -- <command>` runs a command on a running router. What
+follows `--` is read one of two ways, by the number of words:
+
+| after `--` | runs as | example |
+|---|---|---|
+| one word | a shell script, as written | `owlab exec r -- 'ps \| grep uhttpd'` |
+| two or more words | a command and its arguments, each quoted | `owlab exec r -- sh -c 'exit 3'` |
+
+To use a pipe, redirect or `;`, quote the whole command as one word. An
+operator typed as a separate word is passed to the command as an argument:
+`owlab exec r -- cat /etc/passwd '|' grep root` gives `|` to `cat`.
+
+The exit status is the command's own. stdin is passed through when it is a
+pipe or a file, and stderr stays on stderr.
+
 ## owlab test
 
 One command for CI: start the routers, install the package, assert against the
