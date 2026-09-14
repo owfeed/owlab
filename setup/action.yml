@@ -10,10 +10,16 @@ description: Install a verified owlab binary and put it on PATH.
 inputs:
   version:
     description: >-
-      Release tag to install, such as v0.2.0, or "latest". Pin a tag: "latest"
-      means the tool a CI result depends on can change under you between runs.
+      Release tag to install, such as v0.2.0, or "latest". Leave it unset to
+      install the release this action is pinned at: `setup@v0.6.4` installs
+      v0.6.4. "latest" means the tool a CI result depends on can change under you
+      between runs.
     required: false
-    default: latest
+    # Empty, not "latest". The default used to be "latest", so `uses:
+    # owfeed/owlab/setup@v0.6.3` with no `version:` looked pinned and installed
+    # whatever was newest -- and the pin dependabot moves is the `uses:` ref, never
+    # this input. install.sh resolves empty to the action's own tag.
+    default: ""
   verify:
     description: >-
       Verify the download against its build attestation. Turning this off runs
@@ -40,4 +46,7 @@ runs:
         GH_TOKEN: ${{ inputs.token }}
         OWLAB_VERSION: ${{ inputs.version }}
         OWLAB_VERIFY: ${{ inputs.verify }}
+        # The expression, not the GITHUB_ACTION_REF variable, which is empty in
+        # a composite action's steps. See install.sh.
+        OWLAB_ACTION_REF: ${{ github.action_ref }}
       run: bash "$GITHUB_ACTION_PATH/install.sh"

@@ -6,7 +6,8 @@
 # security check are one copy and one liability.
 #
 # Inputs, all from the environment:
-#   OWLAB_VERSION  a tag such as v0.2.0, or "latest"
+#   OWLAB_VERSION     a tag such as v0.2.0, "latest", or empty for OWLAB_ACTION_REF
+#   OWLAB_ACTION_REF  the ref the calling action was pinned at (github.action_ref)
 #   OWLAB_VERIFY   "true" to check the build attestation before running anything
 #   GH_TOKEN       token for the release download and the attestation API
 set -euo pipefail
@@ -44,9 +45,33 @@ esac
 dir="${RUNNER_TEMP}/owlab"
 mkdir -p "$dir"
 
+# No version asked for: install the release the action itself is pinned at, so
+# `setup@v0.6.4` means owlab 0.6.4 the way it reads. The default used to be
+# "latest", which made every `uses: ...@vX.Y.Z` without a `version:` float --
+# and the ref is the only pin dependabot moves.
+#
+# OWLAB_ACTION_REF comes from `${{ github.action_ref }}` in action.yml, not from
+# the GITHUB_ACTION_REF environment variable: measured on 2026-09-14, inside a
+# composite action's run step the variable is empty while the expression holds
+# the ref the action was called at (a branch or a tag, as written in `uses:`).
+# Only a release-shaped tag is taken. A branch, a SHA or a local `./action` has
+# no release of that name, so those keep the old answer, with the warning below.
+if [ -z "${OWLAB_VERSION:-}" ]; then
+  case "${OWLAB_ACTION_REF:-}" in
+    v[0-9]*.[0-9]*.[0-9]*)
+      OWLAB_VERSION="$OWLAB_ACTION_REF"
+      echo "installing owlab $OWLAB_VERSION, the release this action is pinned at"
+      ;;
+    *)
+      OWLAB_VERSION=latest
+      echo "::warning::this action was called at \"${OWLAB_ACTION_REF:-a local path}\", which is not a release tag; installing the latest release"
+      ;;
+  esac
+fi
+
 # The version is needed before the download, not after: the asset name carries
 # it, so "latest" has to be resolved to a tag rather than guessed at.
-if [ "${OWLAB_VERSION:-latest}" = "latest" ]; then
+if [ "$OWLAB_VERSION" = "latest" ]; then
   echo "::warning::owlab pinned to \"latest\"; pin a tag so a CI result cannot change without a commit"
   tag="$(gh release view --repo owfeed/owlab --json tagName --jq .tagName)"
 else

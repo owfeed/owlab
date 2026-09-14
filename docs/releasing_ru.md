@@ -6,7 +6,8 @@
 
 Сдвиньте заголовок `## [Unreleased]` в `CHANGELOG.md` до версии с датой,
 добавьте ссылку сравнения внизу файла, переведите ссылки
-`owlab/action@vX.Y.Z` и `owlab/setup@vX.Y.Z` в обоих README, в `docs/` и в
+`owlab/action@vX.Y.Z` и `owlab/setup@vX.Y.Z` и пример `gh release download` в
+`SECURITY.md`, в обоих README, в `docs/` и в
 `examples/workflow/` на тег, который вот-вот появится, затем:
 
 ```console

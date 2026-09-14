@@ -63,15 +63,16 @@ alone would accept an attestation produced by any workflow in it holding
 `attestations: write`, so a single merged pull request adding a workflow would
 be enough to mint a valid attestation for arbitrary bytes.
 
-Pin the action to a tag. `latest` means the tool a CI result depends on can
-change between runs without a commit anywhere; the installer warns when it is
-used.
+Pin the action to a tag. The tag decides the binary too: `setup@v0.6.3` with no
+`version:` installs v0.6.3. `latest`, a branch or a SHA means the tool a CI
+result depends on can change between runs without a commit anywhere; the
+installer warns when it is used.
 
 ## Verifying a download by hand
 
 ```sh
-gh release download v0.2.0 -R owfeed/owlab -p 'owlab_0.2.0_linux_amd64.tar.gz'
-gh attestation verify owlab_0.2.0_linux_amd64.tar.gz -R owfeed/owlab \
+gh release download v0.6.3 -R owfeed/owlab -p 'owlab_0.6.3_linux_amd64.tar.gz'
+gh attestation verify owlab_0.6.3_linux_amd64.tar.gz -R owfeed/owlab \
   --signer-workflow owfeed/owlab/.github/workflows/release.yml
 ```
 
