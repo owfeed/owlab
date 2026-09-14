@@ -181,8 +181,8 @@ print that — the lab is running, and it is not what your config describes.
 
 They are also installed with
 `--force-overwrite`, because their dependencies routinely replace a file the
-stock image already owns: `luci-app-openclash` pulls `dnsmasq-full`, which
-ships `/etc/init.d/dnsmasq` and collides with `dnsmasq`. Without it the same
+stock image already owns: a package that depends on `dnsmasq-full` pulls it
+in, and `dnsmasq-full` ships `/etc/init.d/dnsmasq` and collides with `dnsmasq`. Without it the same
 config produces a different router on OpenWrt 24.10 than on the other three.
 
 **These are installed without signature verification.** Projects publishing

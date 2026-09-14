@@ -104,28 +104,24 @@ defaults:
     # one package here that is not about fidelity.
     - +openssh-sftp-server
 
-  # Third-party apps whose stylesheets this theme has to share a document
-  # with. They are the hardest case the theme handles, and no text file can
-  # reason about them: justclash ships no .css at all — every rule is built
-  # from its view JS at runtime.
+  # Out-of-feed apps whose views and stylesheets share a document with this
+  # theme. No feed carries them, so each is named by its release assets: one
+  # .apk for 25.12 and one .ipk for 24.10.
+  #
+  # The cases worth adding here are the ones no text file can reason about:
+  # an app that ships no .css and builds every rule from its view JS at
+  # runtime, or one that inserts its own stylesheets ahead of the theme's in
+  # <head>. Add such an app the same way, pinned to an exact release.
   #
   # These are unsigned dev fixtures. They are pinned to exact releases and
   # installed without signature verification; nothing here ships.
   extra_packages:
-    - name: luci-app-openclash
-      apk: https://github.com/vernesong/OpenClash/releases/download/v0.47.116/luci-app-openclash-0.47.116.apk
-      ipk: https://github.com/vernesong/OpenClash/releases/download/v0.47.116/luci-app-openclash_0.47.116_all.ipk
-    - name: luci-app-justclash
-      apk: https://github.com/SaltyMonkey/justclash/releases/download/v0.73.0/luci-app-justclash-0.73.0-r1.apk
-      ipk: https://github.com/SaltyMonkey/justclash/releases/download/v0.73.0/luci-app-justclash-0.73.0-r1-all.ipk
-    # ssclash embeds the Ace editor, which inserts its stylesheets as the FIRST child of
-    # <head> — and lazily, adding more on first hover. That is the one adversary that can
-    # invert the cascade layer order (docs/17), and neither of the two above can produce it:
-    # a sheet that lands ahead of cascade.css is a different attack on the chrome from a
-    # sheet that outranks it. Reproduced here before the fix, and it stays for the next one.
-    - name: luci-app-ssclash
-      apk: https://github.com/zerolabnet/ssclash/releases/download/v4.7.0/luci-app-ssclash-4.7.0-r1.apk
-      ipk: https://github.com/zerolabnet/ssclash/releases/download/v4.7.0/luci-app-ssclash_4.7.0-r1_all.ipk
+    - name: luci-app-footstrap-files
+      apk: https://github.com/VizzleTF/luci-app-footstrap-files/releases/download/v0.1.4/luci-app-footstrap-files-0.1.4-r1.apk
+      ipk: https://github.com/VizzleTF/luci-app-footstrap-files/releases/download/v0.1.4/luci-app-footstrap-files_0.1.4-r1_all.ipk
+    - name: luci-app-footstrap-cmd
+      apk: https://github.com/VizzleTF/luci-app-footstrap-cmd/releases/download/v0.1.2/luci-app-footstrap-cmd-0.1.2-r1.apk
+      ipk: https://github.com/VizzleTF/luci-app-footstrap-cmd/releases/download/v0.1.2/luci-app-footstrap-cmd_0.1.2-r1_all.ipk
 
 routers:
   - id: owrt2512

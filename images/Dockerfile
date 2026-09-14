@@ -139,8 +139,8 @@ RUN set -eu; \
 #
 # --force-overwrite is needed on opkg and is not a shortcut. These packages
 # pull dependencies that replace a file another package already owns —
-# luci-app-openclash needs dnsmasq-full, which ships /etc/init.d/dnsmasq and
-# collides with the dnsmasq in the stock image:
+# a package that depends on dnsmasq-full pulls it in, and dnsmasq-full ships
+# /etc/init.d/dnsmasq and collides with the dnsmasq in the stock image:
 #
 #   check_data_file_clashes: Package dnsmasq-full wants to install file
 #   /etc/init.d/dnsmasq. But that file is already provided by package dnsmasq
@@ -180,7 +180,7 @@ ARG ROUTER_ID=""
 COPY extra/ /tmp/owlab-extra/
 #
 # All of them in ONE command, in the order owlab staged them. These packages
-# routinely depend on each other — luci-app-podkop requires podkop — and
+# routinely depend on each other — luci-app-example requires example-daemon — and
 # installing one at a time makes that a hard error ("unable to select
 # packages") for anything but the luckiest ordering. Handed the whole set, the
 # package manager resolves among them.
@@ -311,8 +311,8 @@ RUN set -eu; \
 # permanent crash loop and says so only as "Instance dnsmasq::cfg01411c s in a
 # crash loop 6 crashes". Everything downstream then fails for reasons that
 # never mention dnsmasq: no DNS server on the router at all, and any package
-# that configures dnsmasq to forward somewhere — podkop pointing it at
-# sing-box, for one — is configuring a daemon that is not running.
+# that configures dnsmasq to forward somewhere — to a resolver of its own,
+# for one — is configuring a daemon that is not running.
 #
 # procd falls back to running the service directly when ujail is absent, which
 # is why renaming it is the fix rather than a workaround. The alternative is

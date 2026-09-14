@@ -382,8 +382,8 @@ hotplug-скриптов.
 **Симптом.** `owlab up` печатает зелёный список; пакета нет. Только на
 OpenWrt 24.10.
 
-**Причина.** `luci-app-openclash` тянет `dnsmasq-full`, который ставит
-`/etc/init.d/dnsmasq` и сталкивается с `dnsmasq`. ImmortalWrt везёт
+**Причина.** Пакет, зависящий от `dnsmasq-full`, тянет его за собой, а
+`dnsmasq-full` ставит `/etc/init.d/dnsmasq` и сталкивается с `dnsmasq`. ImmortalWrt везёт
 `dnsmasq-full` из коробки, поэтому три роутера из четырёх не пострадали — один
 и тот же конфиг давал на одном из них другой роутер.
 

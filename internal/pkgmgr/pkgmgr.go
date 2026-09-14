@@ -73,9 +73,9 @@ type Options struct {
 
 	// Overwrite lets a package take a file another package already owns.
 	//
-	// Needed by out-of-feed packages that pull a replacement dependency:
-	// luci-app-openclash needs dnsmasq-full, which collides with the dnsmasq
-	// already in the image over /etc/init.d/dnsmasq.
+	// Needed by out-of-feed packages that pull a replacement dependency: one
+	// that depends on dnsmasq-full gets a package that collides with the
+	// dnsmasq already in the image over /etc/init.d/dnsmasq.
 	Overwrite bool
 
 	// Tolerant installs one package at a time and reports the ones this
