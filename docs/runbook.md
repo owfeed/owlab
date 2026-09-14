@@ -259,19 +259,25 @@ independently, so installs start failing within a day.
 ### Check the copies of the pin
 
 `images/owlab.yaml` is the pin a person edits. The same release number is also
-copied into `images/Dockerfile` and the CI workflows, which start a router
-without reading that config.
+copied into `images/Dockerfile`, which starts a router without reading that
+config. The workflows carry no copy: `ci.yml` reads the releases from
+`images/owlab.yaml` at run time.
 
 ```console
 $ sh tools/pins.sh check
 images/owlab.yaml pins: 24.10.6 24.10.8 25.12.1 25.12.5
-every release literal in the pin files is one images/owlab.yaml pins
+no workflow names a release; every release literal in the pin files is one images/owlab.yaml pins
 ```
 
-It fails when a workflow or `images/Dockerfile` names a release
-`images/owlab.yaml` does not pin, and `ci.yml` runs it on every push. Nothing
-else catches that: an old release still builds, so a forgotten copy stays green
-while CI tests a release nobody runs.
+It fails in two cases, and `ci.yml` runs it on every push:
+
+- **A workflow names any release**, even the pinned one. `pins.yml` pushes with
+  `GITHUB_TOKEN`, and GitHub refuses a push from it that changes
+  `.github/workflows/`, so a literal there is a pin nothing automatic can move.
+  Read the release from the `routers` job in `ci.yml` instead.
+- **`images/Dockerfile` names a release `images/owlab.yaml` does not pin.**
+  Nothing else catches that: an old release still builds, so a forgotten copy
+  stays green while CI tests a release nobody runs.
 
 To move every copy of one release at once:
 

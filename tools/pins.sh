@@ -2,17 +2,30 @@
 # The release pins that are not images/owlab.yaml, and the two things worth
 # doing to them.
 #
-#   sh tools/pins.sh check              # do the copies still agree with the config?
+#   sh tools/pins.sh check              # no workflow names a release; the copies agree
 #   sh tools/pins.sh bump 25.12.4 25.12.5   # move every copy of one release
 #
 # owlab pins hard -- a rootfs and its feed have to name the same point release
-# or every install fails -- so the number is copied into every place that
-# starts a router. `images/owlab.yaml` is the one a person edits. Everything
-# else is a copy, and a copy goes stale without failing: an old release still
-# builds, it just stops being the release anyone runs. Measured on 2026-09-04,
+# or every install fails. `images/owlab.yaml` is the one a person edits. A copy
+# of the number goes stale without failing: an old release still builds, it
+# just stops being the release anyone runs. Measured on 2026-09-04,
 # `ARG BASE_IMAGE` and both release literals in `ci.yml` still said 25.12.4
 # while the config had been on 25.12.5 since it was written, and every job was
 # green the whole time.
+#
+# The workflows used to hold such copies, and `bump` rewrote them. That cannot
+# work: `pins.yml` pushes with GITHUB_TOKEN, and GitHub refuses any push from it
+# that touches .github/workflows/. Measured on 2026-09-09, the first real bump:
+#
+#   ! [remote rejected] pins/25.12.2 -> pins/25.12.2 (refusing to allow a
+#   GitHub App to create or update workflow `.github/workflows/ci.yml` without
+#   `workflows` permission)
+#
+# No `permissions:` block grants that scope, so the job failed daily from then
+# on. The workflows now read the releases out of $CONFIG at run time (the
+# `routers` job in ci.yml), `bump` no longer touches them, and `check` refuses
+# ANY release literal in a workflow -- not just a stale one -- because a literal
+# that is correct today is still one `pins.yml` will be unable to move.
 #
 # `check` is the gate in ci.yml. `bump` is what pins.yml runs before opening a
 # pull request. They share this file so that "where the pins live" is one list
@@ -22,8 +35,17 @@ set -eu
 
 CONFIG=images/owlab.yaml
 
-# The files this repository RUNS a release number out of. Not the ones that
-# print one.
+# The files that must not name a release at all: GITHUB_TOKEN cannot push a
+# change to them, so nothing automatic could ever move one.
+workflow_files() {
+	for f in .github/workflows/*.yml .github/workflows/*.yaml; do
+		[ -f "$f" ] || continue
+		echo "$f"
+	done
+}
+
+# The files this repository RUNS a release number out of, which must name a
+# pinned one and which `bump` rewrites. Not the ones that print one.
 #
 # Deliberately outside the list, and this is the whole reason it is narrow --
 # a check that fires on a healthy tree is worse than no check:
@@ -38,9 +60,10 @@ CONFIG=images/owlab.yaml
 #   action/action.yml input documentation, inside a YAML block scalar
 #   internal/, cmd/   test fixtures and the examples in error messages
 #
-# $CONFIG is not here either: it is the answer, not a copy of it.
+# $CONFIG is not here either: it is the answer, not a copy of it. Neither are
+# the workflows; see workflow_files above.
 pin_files() {
-	for f in .github/workflows/*.yml images/Dockerfile; do
+	for f in images/Dockerfile; do
 		[ -f "$f" ] || continue
 		echo "$f"
 	done
@@ -91,6 +114,33 @@ cmd_check() {
 	fi
 	echo "$CONFIG pins: $(echo "$pins" | tr '\n' ' ')"
 
+	# First, because it is the failure that wedges `pins.yml` rather than the
+	# one that merely leaves CI behind -- and a literal that equals the pin
+	# today is exactly as unmovable as a stale one.
+	inwf=0
+	for f in $(workflow_files); do
+		for hit in $(literals "$f"); do
+			echo "  ${hit%:*}: names release ${hit##*:}"
+			inwf=$((inwf + 1))
+		done
+	done
+	if [ "$inwf" -gt 0 ]; then
+		echo
+		echo "$inwf release literal(s) in .github/workflows/." >&2
+		echo "A workflow must not name a release. pins.yml pushes its bump with" >&2
+		echo "GITHUB_TOKEN, and GitHub refuses any such push that changes a workflow" >&2
+		echo "file ('refusing to allow a GitHub App to create or update workflow')," >&2
+		echo "so this literal is a pin that can never move and the job fails daily." >&2
+		echo >&2
+		echo "Fix: read the release from $CONFIG at run time instead -- use" >&2
+		echo "  needs.routers.outputs (the routers job in ci.yml), or the same" >&2
+		echo "  'owlab context --list' pattern images.yml uses" >&2
+		echo "  (a release in a '#' comment is fine; the check skips comments)" >&2
+		echo >&2
+		echo "Re-check with: sh tools/pins.sh check" >&2
+		exit 1
+	fi
+
 	bad=0
 	for f in $(pin_files); do
 		for hit in $(literals "$f"); do
@@ -116,7 +166,7 @@ cmd_check() {
 		echo "Re-check with: sh tools/pins.sh check" >&2
 		exit 1
 	fi
-	echo "every release literal in the pin files is one $CONFIG pins"
+	echo "no workflow names a release; every release literal in the pin files is one $CONFIG pins"
 }
 
 cmd_bump() {
