@@ -30,8 +30,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # Pin the tag. "latest" means a CI result can change without a commit
-      # anywhere in this repository.
+      # The tag is the pin: setup@vX.Y.Z installs owlab vX.Y.Z, and so does
+      # action@vX.Y.Z below, so a dependabot bump of these lines moves the binary
+      # too. Pin a branch or "latest" and a CI result can change without a
+      # commit anywhere in this repository.
       - uses: owfeed/owlab/setup@v0.6.3
 
       # The verification tier: luci.mk minifies JS and CSS by default, so a real

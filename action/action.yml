@@ -107,9 +107,12 @@ inputs:
     required: false
     default: 20m
   version:
-    description: owlab release to install, such as v0.5.4, or "latest". Pin a tag.
+    description: >-
+      owlab release to install, such as v0.5.4, or "latest". Leave it unset to
+      install the release this action is pinned at: `action@v0.6.4` runs v0.6.4.
     required: false
-    default: latest
+    # Empty, for the reason on the same input in setup/action.yml.
+    default: ""
   verify:
     description: Verify the owlab download against its build attestation.
     required: false
@@ -137,16 +140,20 @@ outputs:
 runs:
   using: composite
   steps:
-    # Not `uses: owfeed/owlab/setup@...`: a composite action cannot compute
-    # the ref it was itself called at, so pinning one here would silently run a
-    # different version of the installer than the action being used. Calling the
-    # shared script directly keeps both on the same commit by construction.
+    # Not `uses: owfeed/owlab/setup@...`: `uses:` takes no expression, so the
+    # ref this action was called at cannot be written there, and pinning one
+    # would silently run a different version of the installer than the action
+    # being used. Calling the shared script directly keeps both on the same
+    # commit by construction.
     - name: Install owlab
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.token }}
         OWLAB_VERSION: ${{ inputs.version }}
         OWLAB_VERIFY: ${{ inputs.verify }}
+        # So an unset `version` installs the release this action is pinned at.
+        # See setup/install.sh.
+        OWLAB_ACTION_REF: ${{ github.action_ref }}
       run: bash "$GITHUB_ACTION_PATH/../setup/install.sh"
 
     - name: Check for a container engine

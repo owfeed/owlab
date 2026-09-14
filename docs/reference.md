@@ -499,6 +499,11 @@ one per line. The action writes a table to the job summary and exposes
 `owlab` itself. Both verify the download against this repository's build
 attestation before the binary is executed or put on `PATH`.
 
+The tag in `uses:` is the version. `action@v0.6.3` and `setup@v0.6.3` install
+owlab v0.6.3, so a dependabot bump of that line moves the binary too. Set
+`version:` only to run a different release. Called at a branch or a SHA, both
+install the latest release and say so in a warning.
+
 `ubuntu-latest` works as it is. GitHub's macOS and Windows runners have no
 container engine that runs Linux images — Docker Desktop is not installed there
 and cannot be — and the action says so rather than failing later with something

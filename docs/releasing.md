@@ -6,7 +6,8 @@
 
 Move the `## [Unreleased]` heading in `CHANGELOG.md` down to a version and a
 date, add the comparison link at the bottom, move the `owlab/action@vX.Y.Z` and
-`owlab/setup@vX.Y.Z` references in both READMEs, `docs/` and
+`owlab/setup@vX.Y.Z` references and the `gh release download` example in
+`SECURITY.md`, both READMEs, `docs/` and
 `examples/workflow/` to the tag about to exist, then:
 
 ```console

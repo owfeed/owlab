@@ -7,6 +7,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+### Fixed
+
+- **`setup@vX.Y.Z` and `action@vX.Y.Z` install owlab vX.Y.Z when `version:` is
+  unset.** The default was `latest`, so a step pinned to a tag with no
+  `version:` — the shape of every example in this repository — installed
+  whatever was newest, and a dependabot bump of the `uses:` line moved nothing.
+  An unset `version` now resolves to the action's own ref, read from
+  `${{ github.action_ref }}`: the `GITHUB_ACTION_REF` variable is empty inside a
+  composite action's steps, measured. A branch, a SHA or a local `./action` still
+  installs the latest release, with a warning. An explicit `version:` wins as
+  before.
+
+### Documentation
+
+- `SECURITY.md` verified a download of v0.2.0; it now names the current
+  release, and `docs/releasing.md` lists it among the references a release moves.
+
 ## [0.6.3] - 2026-09-14
 
 ### Changed
