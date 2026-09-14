@@ -483,7 +483,7 @@ add'` is the whole of "is anything stale".
 ### In GitHub Actions
 
 ```yaml
-- uses: owfeed/owlab/action@v0.6.3
+- uses: owfeed/owlab/action@v0.6.4
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*
@@ -495,12 +495,12 @@ add'` is the whole of "is anything stale".
 Every flag above has an input with the same name; `assert` and `install` take
 one per line. The action writes a table to the job summary and exposes
 `report` (the JSON path), `passed` and `failed` as outputs.
-`owfeed/owlab/setup@v0.6.3` installs the binary alone, for a job that drives
+`owfeed/owlab/setup@v0.6.4` installs the binary alone, for a job that drives
 `owlab` itself. Both verify the download against this repository's build
 attestation before the binary is executed or put on `PATH`.
 
-The tag in `uses:` is the version. `action@v0.6.3` and `setup@v0.6.3` install
-owlab v0.6.3, so a dependabot bump of that line moves the binary too. Set
+The tag in `uses:` is the version. `action@v0.6.4` and `setup@v0.6.4` install
+owlab v0.6.4, so a dependabot bump of that line moves the binary too. Set
 `version:` only to run a different release. Called at a branch or a SHA, both
 install the latest release and say so in a warning.
 
