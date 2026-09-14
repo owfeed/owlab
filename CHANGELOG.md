@@ -11,6 +11,15 @@ one waits for a major.
 
 ### Fixed
 
+- **`owlab test --feed` and `owlab install --feed` fail when the feed under test
+  was not read.** A 404, a wrong URL or an index signed by another key used to
+  count as one dead feed among many, and the install by name took a same-named
+  package from the distribution feed, so the test passed. owlab now checks that
+  one feed on its own: apk's exit code for an update of it alone, opkg's list
+  file. Distribution feeds that do not answer are still a warning. A repeated
+  `owlab install --feed` on opkg replaces the earlier feed line instead of
+  adding a duplicate that opkg ignored.
+
 - **`setup@vX.Y.Z` and `action@vX.Y.Z` install owlab vX.Y.Z when `version:` is
   unset.** The default was `latest`, so a step pinned to a tag with no
   `version:` — the shape of every example in this repository — installed

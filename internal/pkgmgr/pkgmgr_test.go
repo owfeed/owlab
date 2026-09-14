@@ -483,3 +483,243 @@ func TestDockerfileRefreshesTheIndexTheSameWay(t *testing.T) {
 // shellWords collapses every run of whitespace to one space, which is the only
 // difference the Dockerfile's indentation is allowed to make.
 func shellWords(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// A second `owlab install --feed` on a running router appends a second
+// `src/gz` line under the same name, and opkg keeps the first and skips the
+// rest ("Duplicate src declaration ... Skipping.", measured on 24.10.8). The
+// earlier line has to go, or a corrected URL is never read.
+func TestAddFeedReplacesAnEarlierOpkgLineOfTheSameName(t *testing.T) {
+	got := AddFeed(config.OPKG, "demo", "'https://example.org/x'", "/tmp/k")
+	del := strings.Index(got, `sed -i '/^src\/gz demo /d' /etc/opkg/customfeeds.conf`)
+	add := strings.Index(got, ">> /etc/opkg/customfeeds.conf")
+	if del < 0 || add < 0 || del > add {
+		t.Errorf("earlier demo line is not removed before the new one is appended:\n%s", got)
+	}
+}
+
+// Measured on openwrt/rootfs:x86-64-25.12.4 (2026-09-14) with a probe feed at
+// 127.0.0.1:8080 beside the eight distribution feeds, trimmed to one of them.
+const (
+	apkFeedURL = "http://127.0.0.1:8080/apk/good/packages.adb"
+
+	// The full refresh, feed under test 404s.
+	apkFeed404 = `ERROR: wget: exited with error 8
+WARNING: updating and opening http://127.0.0.1:8080/apk/good/packages.adb: unexpected end of file
+ [https://downloads.openwrt.org/releases/25.12.4/packages/x86_64/packages/packages.adb]
+1 unavailable, 0 stale; 11274 distinct packages available`
+
+	// The full refresh, the feed's index gone on a second run: apk still prints
+	// the bracketed line, from its cache. A check that grepped for it passed here.
+	apkFeedStale = `ERROR: wget: exited with error 8
+WARNING: updating http://127.0.0.1:8080/apk/good/packages.adb: unexpected end of file
+ [https://downloads.openwrt.org/releases/25.12.4/packages/x86_64/packages/packages.adb]
+ [http://127.0.0.1:8080/apk/good/packages.adb]
+0 unavailable, 1 stale; 11275 distinct packages available`
+
+	// The full refresh, a distribution sub-index 404s and the feed under test is read.
+	apkOtherFailed = `ERROR: wget: exited with error 8
+WARNING: updating and opening https://downloads.openwrt.org/releases/25.12.4/targets/x86/64/kmods/6.12.99-1-dead/packages.adb: unexpected end of file
+ [https://downloads.openwrt.org/releases/25.12.4/packages/x86_64/packages/packages.adb]
+ [http://127.0.0.1:8080/apk/good/packages.adb]
+1 unavailable, 0 stale; 11275 distinct packages available`
+
+	apkAllGood = ` [https://downloads.openwrt.org/releases/25.12.4/packages/x86_64/packages/packages.adb]
+ [http://127.0.0.1:8080/apk/good/packages.adb]
+OK: 11275 distinct packages available`
+
+	// `apk update --repositories-file /dev/null -X <feed>`: rc 0, 1, 1, 1.
+	apkSingleGood      = " [http://127.0.0.1:8080/apk/good/packages.adb]\nOK: 137 distinct packages available"
+	apkSingle404       = "ERROR: wget: exited with error 8\nWARNING: updating and opening http://127.0.0.1:8080/apk/good/packages.adb: unexpected end of file\n1 unavailable, 0 stale; 136 distinct packages available"
+	apkSingleUntrusted = "WARNING: updating and opening http://127.0.0.1:8080/apk/good/packages.adb: UNTRUSTED signature\n1 unavailable, 0 stale; 136 distinct packages available"
+	apkSingleStale     = "ERROR: wget: exited with error 8\nWARNING: updating http://127.0.0.1:8080/apk/good/packages.adb: unexpected end of file\n [http://127.0.0.1:8080/apk/good/packages.adb]\n0 unavailable, 1 stale; 137 distinct packages available"
+)
+
+// Measured on openwrt/rootfs:x86-64-24.10.8 the same day.
+const (
+	opkgFeedURL = "http://127.0.0.1:8080/opkg/good"
+
+	opkgFeed404 = `*** Failed to download the package list from http://127.0.0.1:8080/opkg/good/Packages.gz
+
+Updated list of available packages in /var/opkg-lists/openwrt_packages
+Collected errors:
+ * opkg_download: Failed to download http://127.0.0.1:8080/opkg/good/Packages.gz, wget returned 8.`
+
+	// Signed by a key the router does not have. Note the marker line for the
+	// feed, and the exit code: 0.
+	opkgFeedUntrusted = `Updated list of available packages in /var/opkg-lists/demo
+Signature check failed.
+Remove wrong Signature file.
+Updated list of available packages in /var/opkg-lists/openwrt_packages`
+
+	opkgAllGood = `Updated list of available packages in /var/opkg-lists/demo
+Updated list of available packages in /var/opkg-lists/openwrt_packages`
+)
+
+// feedStub is what the stub package manager does during one install.
+type feedStub struct {
+	update   string // the full refresh's output
+	updateRC int
+	single   string // apk: the refresh of the feed under test alone
+	singleRC int
+	writes   bool // opkg: the refresh writes the feed's list file
+	stale    bool // opkg: a list file from an earlier run is already there
+}
+
+// runFeedInstall runs Install with Feed set through a real shell, against a stub
+// apk or opkg, with and without errexit — `owlab test` runs it through a plain
+// `sh -c`, and the text has to stop in both. It reports the exit code and output
+// of each mode.
+func runFeedInstall(t *testing.T, pm config.PackageManager, st feedStub) map[string]struct {
+	code int
+	out  string
+} {
+	t.Helper()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("no POSIX shell on this host, so the generated shell cannot be run: %v", err)
+	}
+	// Forward slashes, because these paths are pasted unquoted into shell text:
+	// on a Windows runner Git's sh ate the backslashes of C:\Users\..., the
+	// check read no repository file, and every case failed for that reason.
+	dir := filepath.ToSlash(t.TempDir())
+	oldRepos, oldLists, oldConf := apkReposDir, opkgListsDir, opkgFeedsConf
+	t.Cleanup(func() { apkReposDir, opkgListsDir, opkgFeedsConf = oldRepos, oldLists, oldConf })
+	apkReposDir = dir + "/repositories.d"
+	opkgListsDir = dir + "/opkg-lists"
+	opkgFeedsConf = dir + "/customfeeds.conf"
+	for _, d := range []string{apkReposDir, opkgListsDir, filepath.Join(dir, "bin")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(path, body string, mode fs.FileMode) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(apkReposDir, "demo.list"), apkFeedURL+"\n", 0o644)
+	write(opkgFeedsConf, "src/gz demo "+opkgFeedURL+"\n", 0o644)
+	write(filepath.Join(dir, "update"), st.update+"\n", 0o644)
+	write(filepath.Join(dir, "single"), st.single+"\n", 0o644)
+
+	var stub string
+	if pm == config.APK {
+		stub = "#!/bin/sh\ncase \"$1\" in\n" +
+			"update) if [ \"$2\" = --repositories-file ]; then cat '" + dir + "/single'; exit " + strconv.Itoa(st.singleRC) + "; fi\n" +
+			"  cat '" + dir + "/update'; exit " + strconv.Itoa(st.updateRC) + ";;\n" +
+			"add) echo owlab-reached-install; exit 0;;\nesac\nexit 99\n"
+	} else {
+		writeList := ""
+		if st.writes {
+			writeList = "echo 'Package: tree' > '" + opkgListsDir + "/demo'; "
+		}
+		stub = "#!/bin/sh\ncase \"$1\" in\n" +
+			"update) " + writeList + "cat '" + dir + "/update'; exit " + strconv.Itoa(st.updateRC) + ";;\n" +
+			"install) echo owlab-reached-install; exit 0;;\nesac\nexit 99\n"
+	}
+	write(filepath.Join(dir, "bin", string(pm)), stub, 0o755)
+
+	res := map[string]struct {
+		code int
+		out  string
+	}{}
+	for mode, prefix := range map[string]string{"sh -c": "", "set -eu": "set -eu\n"} {
+		// Recreated per mode: the check removes it, and each mode starts from
+		// the router state the case describes.
+		if st.stale {
+			write(filepath.Join(opkgListsDir, "demo"), "Package: tree\n", 0o644)
+		}
+		cmd := exec.Command(sh, "-c", prefix+Install(pm, []string{"tree"}, Options{Update: true, Feed: "demo"}))
+		cmd.Env = append(os.Environ(), "PATH="+filepath.Join(dir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
+		got, err := cmd.CombinedOutput()
+		code := 0
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			code = ee.ExitCode()
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		res[mode] = struct {
+			code int
+			out  string
+		}{code, string(got)}
+		_ = os.Remove(filepath.Join(opkgListsDir, "demo"))
+	}
+	return res
+}
+
+// The bug: the feed under test did not answer, the refresh counted that as one
+// dead feed among many, and the install by name took the distribution's
+// same-named package. Every way the feed can fail to be read has to stop the
+// install, including the two that look like success from the outside — apk's
+// cached index, and opkg's exit 0 over a signature it rejected.
+func TestFeedUnderTestNotReadStopsTheInstall(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pm   config.PackageManager
+		st   feedStub
+		want string // a line of the manager's own output that must be shown
+	}{
+		{"apk 404", config.APK, feedStub{update: apkFeed404, updateRC: 1, single: apkSingle404, singleRC: 1}, "unexpected end of file"},
+		{"apk untrusted key", config.APK, feedStub{update: apkFeed404, updateRC: 1, single: apkSingleUntrusted, singleRC: 1}, "UNTRUSTED signature"},
+		{"apk stale cache", config.APK, feedStub{update: apkFeedStale, updateRC: 1, single: apkSingleStale, singleRC: 1}, "1 stale"},
+		{"opkg 404", config.OPKG, feedStub{update: opkgFeed404, updateRC: 1}, "Failed to download"},
+		{"opkg untrusted key", config.OPKG, feedStub{update: opkgFeedUntrusted, updateRC: 0}, "Signature check failed"},
+		{"opkg stale list", config.OPKG, feedStub{update: opkgFeed404, updateRC: 1, stale: true}, "Failed to download"},
+	} {
+		for mode, r := range runFeedInstall(t, tc.pm, tc.st) {
+			if r.code == 0 {
+				t.Errorf("%s (%s): exit 0, want non-zero:\n%s", tc.name, mode, r.out)
+			}
+			if strings.Contains(r.out, "owlab-reached-install") {
+				t.Errorf("%s (%s): installed by name anyway:\n%s", tc.name, mode, r.out)
+			}
+			if !strings.Contains(r.out, "owlab: the feed under test (demo: ") {
+				t.Errorf("%s (%s): the failure does not name the feed:\n%s", tc.name, mode, r.out)
+			}
+			if !strings.Contains(r.out, tc.want) {
+				t.Errorf("%s (%s): the manager's own reason %q is not shown:\n%s", tc.name, mode, tc.want, r.out)
+			}
+		}
+	}
+}
+
+// A distribution feed dying is routine and must stay a warning, and a clean
+// run stays as quiet as it was. The feed check only speaks about its own feed.
+func TestFeedUnderTestReadLetsTheInstallProceed(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		pm      config.PackageManager
+		st      feedStub
+		partial bool
+	}{
+		{"apk other feed failed", config.APK, feedStub{update: apkOtherFailed, updateRC: 1, single: apkSingleGood}, true},
+		{"apk all good", config.APK, feedStub{update: apkAllGood, single: apkSingleGood}, false},
+		{"opkg other feed failed", config.OPKG, feedStub{update: opkgPartial, updateRC: 1, writes: true}, true},
+		{"opkg all good", config.OPKG, feedStub{update: opkgAllGood, writes: true}, false},
+	} {
+		for mode, r := range runFeedInstall(t, tc.pm, tc.st) {
+			if r.code != 0 || !strings.Contains(r.out, "owlab-reached-install") {
+				t.Errorf("%s (%s): exit %d, want the install to run:\n%s", tc.name, mode, r.code, r.out)
+			}
+			if strings.Contains(r.out, "feed under test") {
+				t.Errorf("%s (%s): blamed a feed that was read:\n%s", tc.name, mode, r.out)
+			}
+			if got := strings.Contains(r.out, "partial refresh"); got != tc.partial {
+				t.Errorf("%s (%s): partial-refresh warning shown=%v, want %v:\n%s", tc.name, mode, got, tc.partial, r.out)
+			}
+		}
+	}
+}
+
+// Without a feed under test the text is exactly what it was: the check costs an
+// install from a file or the distribution nothing.
+func TestNoFeedMeansNoFeedCheck(t *testing.T) {
+	for _, pm := range []config.PackageManager{config.APK, config.OPKG} {
+		got := Install(pm, []string{"luci"}, Options{Update: true})
+		if strings.Contains(got, "feed under test") || strings.Contains(got, "--repositories-file") || strings.Contains(got, opkgListsDir) {
+			t.Errorf("%s: feed check without a feed:\n%s", pm, got)
+		}
+	}
+}
