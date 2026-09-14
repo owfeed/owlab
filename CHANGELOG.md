@@ -41,6 +41,17 @@ one waits for a major.
   for in every argument, so `owlab exec r -- grep -c root /etc/passwd` failed with
   `--config: stat root: no such file or directory`. Arguments after `--` are no longer
   scanned.
+- **`owlab exec` keeps the quoting of a multi-word command.** The words after `--` were
+  joined with spaces and handed to a shell after the user's own shell had removed the
+  quotes, so they were split again: measured on `main` at `14b4a9a` against a 25.12.5
+  container, `owlab exec r -- sh -c 'exit 3'` exited 0 instead of 3, `-- printf '%s\n'
+  'a b'` printed `anbn`, and `-- printf '%s\n' "it's"` failed with `unterminated quoted
+  string`. Now one word after `--` is a shell script and passes through unchanged
+  (`-- 'ps | grep uhttpd'`, `-- 'cat > /tmp/f'`), and two or more words are an argv:
+  each is single-quoted before joining, the way `docker exec` and `kubectl exec` treat
+  them. Container and VM tiers alike. **Behaviour change:** a shell operator typed as a
+  word of its own is now a literal argument — `owlab exec r -- cat /etc/passwd '|' grep
+  root` passes `|` to `cat`. Quote the whole pipeline as one word instead.
 
 ## [0.6.1] - 2026-09-07
 
