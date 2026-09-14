@@ -20,6 +20,18 @@ one waits for a major.
   composite action's steps, measured. A branch, a SHA or a local `./action` still
   installs the latest release, with a warning. An explicit `version:` wins as
   before.
+- **`owlab test --feed` and `owlab install --feed` stop when the feed cannot be
+  added.** A key that did not copy or a repository line that did not write (a
+  full overlay) used to be ignored, and the install by name then took a
+  same-named package from the distribution feed, so the test passed against a
+  package the feed never served.
+- **A vm router no longer enables extroot on a partial overlay copy.** A failing
+  `tar -c` was hidden by the pipeline; provisioning now stops with extroot off.
+- **One dead opkg feed no longer fails an image build that has `extra`
+  packages.** The extras layer refreshes the index with the same tolerant logic
+  as the package layer instead of a bare `opkg update`.
+- **A failed `kmod-mac80211-hwsim` install is reported** instead of provisioning
+  a vm router with no radios and no message; the router is still provisioned.
 
 ### Documentation
 

@@ -76,7 +76,11 @@ func (v *VM) Provision(ctx context.Context, progress io.Writer) error {
 	if v.Router.VM.Radios > 0 {
 		say("adding %d mac80211_hwsim radios", v.Router.VM.Radios)
 		if err := v.setupRadios(ctx); err != nil {
-			return err
+			// Not fatal: a target whose kmods feed has no hwsim should cost the
+			// router its radios, not its existence. Said out loud, because the
+			// wifi fixture then falls back to invented radios and nothing later
+			// names the cause.
+			say("no radios on this router: %v", err)
 		}
 	}
 
@@ -126,12 +130,13 @@ func (v *VM) Provision(ctx context.Context, progress io.Writer) error {
 // the module's own parameter, so two radios here are two phys — a dual-band
 // router — rather than one phy pretending to be two bands.
 func (v *VM) setupRadios(ctx context.Context) error {
-	script := v.install([]string{"kmod-mac80211-hwsim"}, pkgmgr.Options{Update: true}) + `
+	// set -e, because nothing else here notices a failed install: without it
+	// the script's status was the printf's, so an `apk add` that failed still
+	// wrote a module file for a module that is not there and reported success.
+	script := "set -e\n" + v.install([]string{"kmod-mac80211-hwsim"}, pkgmgr.Options{Update: true}) + `
 printf 'mac80211_hwsim radios=%d\n' ` + fmt.Sprint(v.Router.VM.Radios) + ` > /etc/modules.d/mac80211-hwsim
 `
 	if out, err := v.SSH().Output(ctx, script); err != nil {
-		// Not fatal: a target whose kmods feed has no hwsim should cost the
-		// router its radios, not its existence.
 		return fmt.Errorf("installing mac80211_hwsim: %s", strings.TrimSpace(out))
 	}
 	return nil
@@ -146,11 +151,23 @@ printf 'mac80211_hwsim radios=%d\n' ` + fmt.Sprint(v.Router.VM.Radios) + ` > /et
 // system stops after one block group: measured, an online resize2fs on a
 // 900 MB partition yielded 122 MB. A separate disk has no such history.
 func (v *VM) setupExtroot(ctx context.Context) error {
+	// The reader's status is kept by hand. `set -e` sees only the last command
+	// of a pipeline, so a `tar -c` that failed partway left a partial copy on
+	// /dev/vdb, extroot was enabled anyway, and the VM rebooted onto an overlay
+	// missing whatever had not been copied. Not `set -o pipefail`: busybox ash
+	// has it only when built with bash compatibility, and a fork's image that
+	// lacks it would fail here on the option instead of on a copy.
 	script := `set -e
 ` + v.install([]string{"block-mount", "e2fsprogs"}, pkgmgr.Options{Update: true}) + `
 mkfs.ext4 -q -F -L owlab-overlay /dev/vdb
 mount /dev/vdb /mnt
-tar -C /overlay -cf - . | tar -C /mnt -xf -
+rm -f /tmp/owlab-overlay-copy-failed
+( tar -C /overlay -cf - . || touch /tmp/owlab-overlay-copy-failed ) | tar -C /mnt -xf -
+if [ -e /tmp/owlab-overlay-copy-failed ]; then
+	umount /mnt
+	echo "owlab: copying /overlay onto /dev/vdb failed (tar -C /overlay -cf -); extroot not enabled, the router keeps its own overlay" >&2
+	exit 1
+fi
 umount /mnt
 uci -q delete fstab.owlab_overlay || true
 uci set fstab.owlab_overlay=mount

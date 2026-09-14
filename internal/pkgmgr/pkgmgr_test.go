@@ -113,6 +113,52 @@ func TestAddFeedSpeaksEachManagersDialect(t *testing.T) {
 	}
 }
 
+// AddFeed runs in front of an install by name through a plain `sh -c` with no
+// errexit (docker exec, ssh). A step that fails there has to stop the script by
+// itself: carrying on installs a same-named package from the distribution feed,
+// and the test passes against bytes the feed under test never served.
+//
+// Run through a real shell, with mkdir and cp replaced by functions, so nothing
+// is written into the host's /etc; asserting on the string would pass while the
+// shell still ran on past the failure.
+func TestAddFeedStopsWhenAStepFails(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skipf("no POSIX shell on this host, so the generated shell cannot be run: %v", err)
+	}
+	for _, pm := range []config.PackageManager{config.APK, config.OPKG} {
+		confDir := "/etc/opkg"
+		if pm == config.APK {
+			confDir = "/etc/apk/repositories.d"
+		}
+		for _, tc := range []struct{ step, stubs string }{
+			{"the key does not copy", "mkdir() { :; }; cp() { return 1; }"},
+			// mkdir is a no-op, so the directory is missing and the redirection
+			// fails, the way a full overlay makes it fail.
+			{"the repository line does not write", "mkdir() { :; }; cp() { :; }"},
+		} {
+			if _, err := os.Stat(confDir); err == nil && strings.Contains(tc.step, "repository") {
+				t.Logf("%s: %s exists on this host, so the redirection would succeed; not run", pm, confDir)
+				continue
+			}
+			script := tc.stubs + "\n" +
+				AddFeed(pm, "demo", "'https://example.invalid/demo'", "/tmp/demo.pem") +
+				"echo owlab-reached-install\n"
+			got, err := exec.Command(sh, "-c", script).CombinedOutput()
+			var ee *exec.ExitError
+			if !errors.As(err, &ee) {
+				t.Errorf("%s, %s: script exited 0 (err %v), want non-zero:\n%s", pm, tc.step, err, got)
+			}
+			if strings.Contains(string(got), "owlab-reached-install") {
+				t.Errorf("%s, %s: the install after AddFeed still ran:\n%s", pm, tc.step, got)
+			}
+			if !strings.Contains(string(got), "owlab: adding feed demo:") {
+				t.Errorf("%s, %s: the failure does not name the feed:\n%s", pm, tc.step, got)
+			}
+		}
+	}
+}
+
 // The two tiers reach the host by completely different means, and the token
 // exists so that one command line works on both. A regression here is a feed
 // URL that resolves on a laptop and 404s in CI, or the reverse.
@@ -409,10 +455,27 @@ func TestDockerfileRefreshesTheIndexTheSameWay(t *testing.T) {
 	// Unwrap the RUN line continuations, so a `\` + newline + tabs reads as
 	// the single space that separates two commands joined by "; ".
 	flat := shellWords(strings.ReplaceAll(string(b), "\\\n", " "))
+	// The same text without comment lines, for counting commands: the comments
+	// quote `opkg update` in prose.
+	var code []string
+	for _, line := range strings.Split(string(b), "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			code = append(code, line)
+		}
+	}
+	codeFlat := shellWords(strings.ReplaceAll(strings.Join(code, "\n"), "\\\n", " "))
 	for _, pm := range []config.PackageManager{config.APK, config.OPKG} {
 		want := shellWords(strings.ReplaceAll(strings.TrimSuffix(UpdateShell(pm), "\n"), "\n", "; "))
 		if !strings.Contains(flat, want) {
 			t.Errorf("images/Dockerfile does not run the %s refresh this package generates.\nwant:\n%s", pm, want)
+		}
+		// Every refresh in the file, not only one: the extras layer ran a bare
+		// `opkg update` beside the tolerant copy, so one dead feed failed that
+		// layer and buildkit cancelled every other router with it.
+		cmd := string(pm) + " update"
+		blocks := strings.Count(codeFlat, want)
+		if extra := strings.Count(codeFlat, cmd) - blocks*strings.Count(want, cmd); extra != 0 {
+			t.Errorf("images/Dockerfile runs %q %d time(s) outside the refresh this package generates; paste UpdateShell(%s) there instead", cmd, extra, pm)
 		}
 	}
 }
