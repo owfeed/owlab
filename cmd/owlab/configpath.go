@@ -23,6 +23,11 @@ func extractConfigFlag(args []string) (rest []string, path string, err error) {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
+		case a == "--":
+			// Everything after -- is a command for the router, verbatim.
+			// Without this, `owlab exec r -- grep -c root /etc/passwd` lost its
+			// -c to this function and failed with `--config: stat root`.
+			return append(rest, args[i:]...), path, nil
 		case a == "--config" || a == "-c":
 			if i+1 >= len(args) {
 				return nil, "", fmt.Errorf("%s needs a path", a)

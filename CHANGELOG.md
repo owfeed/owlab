@@ -24,6 +24,23 @@ one waits for a major.
 - **`tools/pins.sh check` refuses any release literal in a workflow**, not only a
   stale one, because a literal that matches the pin today is still one `pins.yml`
   cannot move. `images/Dockerfile` keeps the old rule: its literal must equal a pin.
+- **`owlab exec` passes piped stdin to the command.** It ran `docker exec` without `-i`
+  and ssh with the null device as stdin, so `printf 'hello-stdin\n' | owlab exec r -- cat`
+  printed nothing and exited 0, and a script piping a file in saw success over a file that
+  was never written: measured on 0.6.1, a 1 MiB file redirected into `cat > /tmp/r.bin`
+  arrived as the empty file (`e3b0c442…`). stdin is now attached when it is a pipe or a
+  file, and streamed rather than buffered, so `yes | owlab exec r -- head -1` prints `y`
+  and ends. When stdin is a terminal nothing changes: no stdin and no tty, as before. A
+  command that does not read stdin now consumes it when stdin is a pipe, the same as
+  `docker exec -i` and `ssh`; redirect from `/dev/null` inside a `while read` loop.
+  Container and VM tiers alike (`Stream` on the tier interface).
+- **`owlab exec` writes the command's stderr to stderr.** Both streams went to stdout, so
+  `owlab exec r -- cmd > out` wrote error messages into the data file. The exit status was
+  already the command's own and is unchanged.
+- **`-c` after `--` belongs to the command.** The global `--config`/`-c` flag was looked
+  for in every argument, so `owlab exec r -- grep -c root /etc/passwd` failed with
+  `--config: stat root: no such file or directory`. Arguments after `--` are no longer
+  scanned.
 
 ## [0.6.1] - 2026-09-07
 

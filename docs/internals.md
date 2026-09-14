@@ -87,7 +87,7 @@ defines what differs per router:
 
 ```go
 type tier interface {
-	Exec() (sync.Exec, error)                                 // run a script, maybe with a tar on stdin
+	Stream() (stream, error)                                  // run a script; stdin, stdout, stderr apart
 	Interactive(ctx context.Context, command ...string) error // hand over the terminal
 	State(ctx context.Context) string                         // one word, for `owlab status`
 }
@@ -97,6 +97,14 @@ with a `containerTier` over `docker exec` and a `vmTier` over ssh. Sync,
 `post_sync`, `install`, the LuCI cache drop, `shell` and the status table are
 written against that interface, and only the two implementations know which
 kind of router is on the other end.
+
+`Stream` takes stdin as a reader and keeps stdout and stderr apart, because
+`owlab exec` passes its own stdin through and that has no length (`yes |
+owlab exec r -- head -1`). The byte-buffer `sync.Exec` that sync, install and
+the assertions use is built from it in `execFor`, so there is still one way
+each tier runs a script. A tier adds `docker exec -i` (or gives ssh a stdin)
+only when stdin is non-nil, and never allocates a tty: a tty rewrites LF as
+CRLF in piped data.
 
 The batch operations are deliberately **not** on it. Compose acts on a whole
 project at once and gets its network teardown from doing so, while the VM tier

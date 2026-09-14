@@ -29,9 +29,12 @@ import (
 // host process per router. Pretending those are the same shape would turn one
 // build into N and cost `owlab down` the thing that makes it a teardown.
 type tier interface {
-	// Exec returns the way to run a shell script on this router, optionally
-	// feeding it a tar on stdin.
-	Exec() (syncpkg.Exec, error)
+	// Stream returns the way to run a shell script on this router, with stdin,
+	// stdout and stderr as three separate streams. It is the only way either
+	// tier runs a script: the byte-buffer Exec that sync, install and the
+	// assertions use is derived from it in execFor, so `owlab exec` and those
+	// callers cannot drift onto two different paths to the same router.
+	Stream() (stream, error)
 	// Interactive hands the terminal to a shell on this router.
 	Interactive(ctx context.Context, command ...string) error
 	// State is the one-word status `owlab status` prints.
@@ -61,21 +64,34 @@ type containerTier struct {
 	docker dockercli.Runner
 }
 
-func (c containerTier) Exec() (syncpkg.Exec, error) {
-	return func(ctx context.Context, script string, stdin []byte, out io.Writer) error {
-		args := []string{"exec"}
-		if stdin != nil {
-			args = append(args, "-i")
-		}
-		args = append(args, c.name, "/bin/sh", "-c", script)
-		cmd := exec.CommandContext(ctx, "docker", args...)
-		if stdin != nil {
-			cmd.Stdin = bytes.NewReader(stdin)
-		}
-		cmd.Stdout = out
-		cmd.Stderr = out
-		return cmd.Run()
+func (c containerTier) Stream() (stream, error) {
+	return func(ctx context.Context, script string, stdin io.Reader, stdout, stderr io.Writer) error {
+		return containerCommand(ctx, c.name, script, stdin, stdout, stderr).Run()
 	}, nil
+}
+
+// containerCommand builds the `docker exec` a container router's script runs
+// under, apart from running it, so the wiring can be tested without Docker.
+//
+// -i only when there is a stdin to give. Without -i docker does not forward
+// its own stdin at all, which is how `printf x | owlab exec r -- cat` printed
+// nothing and exited 0 (#21); with it and nothing attached, the command would
+// wait on a stdin nobody closes. Never -t: a pseudo-terminal rewrites LF as
+// CRLF and merges stderr into stdout, which breaks every pipe and every
+// binary stream through exec — interactive use is `owlab shell`.
+func containerCommand(ctx context.Context, name, script string, stdin io.Reader, stdout, stderr io.Writer) *exec.Cmd {
+	args := []string{"exec"}
+	if stdin != nil {
+		args = append(args, "-i")
+	}
+	args = append(args, name, "/bin/sh", "-c", script)
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	if stdin != nil {
+		cmd.Stdin = stdin
+	}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd
 }
 
 func (c containerTier) Interactive(ctx context.Context, command ...string) error {
@@ -118,14 +134,11 @@ func (v vmTier) notRunning() error {
 	return fmt.Errorf("%s is not running (start it with `owlab up %s`)", v.router.ID, v.router.ID)
 }
 
-func (v vmTier) Exec() (syncpkg.Exec, error) {
+func (v vmTier) Stream() (stream, error) {
 	if !v.vm.Running() {
 		return nil, v.notRunning()
 	}
-	target := v.vm.SSH()
-	return func(ctx context.Context, script string, stdin []byte, out io.Writer) error {
-		return target.Run(ctx, script, stdin, out, out)
-	}, nil
+	return v.vm.SSH().Stream, nil
 }
 
 func (v vmTier) Interactive(ctx context.Context, command ...string) error {
@@ -139,9 +152,63 @@ func (v vmTier) State(context.Context) string { return v.vm.State() }
 
 // ---------------------------------------------------------------------------
 
-// execFor returns the way to run a shell script on a router.
+// stream runs a shell script on a router with its streams kept apart.
+//
+// stdin is a reader rather than bytes because `owlab exec` passes its own
+// stdin through, and that has no length: `yes | owlab exec r -- head -1` must
+// end when head does, not after reading an endless input into memory. A nil
+// stdin means none — the command reads the null device.
+type stream func(ctx context.Context, script string, stdin io.Reader, stdout, stderr io.Writer) error
+
+// execFor returns the way to run a shell script on a router, with stdin as a
+// buffer and both output streams into one writer — the shape sync, install
+// and the assertions were written against, and still get unchanged.
 func (a *app) execFor(r *config.Router) (syncpkg.Exec, error) {
-	return a.tierFor(r).Exec()
+	s, err := a.tierFor(r).Stream()
+	if err != nil {
+		return nil, err
+	}
+	return bufferedExec(s), nil
+}
+
+// bufferedExec adapts a stream to the byte-buffer Exec.
+//
+// A nil slice stays a nil reader, and only a nil slice does: the tiers add
+// `docker exec -i` exactly when stdin is non-nil, as they did when they took
+// bytes, so an empty tar still gets -i and a plain script still does not. A
+// nil *bytes.Reader inside a non-nil io.Reader would be attached as stdin and
+// panic on the first read.
+func bufferedExec(s stream) syncpkg.Exec {
+	return func(ctx context.Context, script string, stdin []byte, out io.Writer) error {
+		var in io.Reader
+		if stdin != nil {
+			in = bytes.NewReader(stdin)
+		}
+		return s(ctx, script, in, out, out)
+	}
+}
+
+// execStdin is what `owlab exec` hands the command as stdin: its own stdin
+// when that is a pipe or a file, and nothing when it is a terminal.
+//
+// A terminal is left out because exec has no pseudo-terminal on the other end:
+// a shell there would read keystrokes with no echo and no line editing, and a
+// command that never reads stdin — the common case, `owlab exec r -- uname` —
+// would change nothing, so there is no gain to offset it. Before #21 exec never
+// attached stdin, so for a terminal this is exactly the old behaviour.
+//
+// os.ModeCharDevice rather than a terminal library: the null device is a
+// character device too, and treating it as "no stdin" is also correct.
+func execStdin(f *os.File) io.Reader {
+	st, err := f.Stat()
+	if err != nil {
+		// A closed stdin (`owlab exec r -- cmd <&-`) has nothing to give.
+		return nil
+	}
+	if st.Mode()&os.ModeCharDevice != 0 {
+		return nil
+	}
+	return f
 }
 
 // interactive hands the terminal to a shell on a router.
