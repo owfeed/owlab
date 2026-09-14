@@ -7,6 +7,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [0.6.3] - 2026-09-14
+
+### Changed
+
+- **ImmortalWrt 25.12 routers are pinned to 25.12.2** (was 25.12.1), on both
+  x86_64 and aarch64. Proposed by `pins.yml` — its first bump to land since the
+  0.6.2 fix — and merged on a green e2e run against the new release.
+
+### Documentation
+
+- `docs/runbook.md` names the repository setting `pins.yml` needs, **Allow GitHub
+  Actions to create and approve pull requests**, and quotes the error a run
+  stops at without it: `GitHub Actions is not permitted to create or approve pull
+  requests`. A new repository or fork starts with the setting off.
+- Changelog comparison links point at `github.com/owfeed/owlab`, where the
+  repository lives, rather than relying on the redirect from its old account.
+
 ## [0.6.2] - 2026-09-14
 
 ### Fixed
@@ -346,7 +363,7 @@ first half true rather than merely intended.
 ### Changed
 
 - **owlab lives at `github.com/owfeed/owlab`, and its module path is
-  `owfeed.org/owlab`.** `go install github.com/VizzleTF/owlab/...` stops working;
+  `owfeed.org/owlab`.** `go install github.com/owfeed/owlab/...` stops working;
   `go install owfeed.org/owlab/cmd/owlab@latest` replaces it. The path names a
   host rather than a forge so that this is the last move that breaks anyone's
   install: Go module paths have no redirect, and neither does `uses:` in Actions.
@@ -535,15 +552,16 @@ First release.
 - `images.yml` can stamp a release tag on a manual run, so a publish that has
   to be re-run still leaves the immutable tags behind.
 
-[artifact-contract]: https://github.com/VizzleTF/owfeed/blob/main/docs/artifact-contract.md
-[Unreleased]: https://github.com/VizzleTF/owlab/compare/v0.6.2...HEAD
-[0.6.2]: https://github.com/VizzleTF/owlab/compare/v0.6.1...v0.6.2
-[0.6.1]: https://github.com/VizzleTF/owlab/compare/v0.6.0...v0.6.1
-[0.6.0]: https://github.com/VizzleTF/owlab/compare/v0.5.6...v0.6.0
-[0.5.6]: https://github.com/VizzleTF/owlab/compare/v0.5.5...v0.5.6
-[0.5.5]: https://github.com/VizzleTF/owlab/compare/v0.5.4...v0.5.5
-[0.4.1]: https://github.com/VizzleTF/owlab/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/VizzleTF/owlab/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/VizzleTF/owlab/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/VizzleTF/owlab/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/VizzleTF/owlab/releases/tag/v0.1.0
+[artifact-contract]: https://github.com/owfeed/owfeed/blob/main/docs/artifact-contract.md
+[Unreleased]: https://github.com/owfeed/owlab/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/owfeed/owlab/compare/v0.6.2...v0.6.3
+[0.6.2]: https://github.com/owfeed/owlab/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/owfeed/owlab/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/owfeed/owlab/compare/v0.5.6...v0.6.0
+[0.5.6]: https://github.com/owfeed/owlab/compare/v0.5.5...v0.5.6
+[0.5.5]: https://github.com/owfeed/owlab/compare/v0.5.4...v0.5.5
+[0.4.1]: https://github.com/owfeed/owlab/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/owfeed/owlab/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/owfeed/owlab/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/owfeed/owlab/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/owfeed/owlab/releases/tag/v0.1.0
