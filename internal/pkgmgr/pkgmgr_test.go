@@ -578,12 +578,15 @@ func runFeedInstall(t *testing.T, pm config.PackageManager, st feedStub) map[str
 	if err != nil {
 		t.Skipf("no POSIX shell on this host, so the generated shell cannot be run: %v", err)
 	}
-	dir := t.TempDir()
+	// Forward slashes, because these paths are pasted unquoted into shell text:
+	// on a Windows runner Git's sh ate the backslashes of C:\Users\..., the
+	// check read no repository file, and every case failed for that reason.
+	dir := filepath.ToSlash(t.TempDir())
 	oldRepos, oldLists, oldConf := apkReposDir, opkgListsDir, opkgFeedsConf
 	t.Cleanup(func() { apkReposDir, opkgListsDir, opkgFeedsConf = oldRepos, oldLists, oldConf })
-	apkReposDir = filepath.Join(dir, "repositories.d")
-	opkgListsDir = filepath.Join(dir, "opkg-lists")
-	opkgFeedsConf = filepath.Join(dir, "customfeeds.conf")
+	apkReposDir = dir + "/repositories.d"
+	opkgListsDir = dir + "/opkg-lists"
+	opkgFeedsConf = dir + "/customfeeds.conf"
 	for _, d := range []string{apkReposDir, opkgListsDir, filepath.Join(dir, "bin")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
