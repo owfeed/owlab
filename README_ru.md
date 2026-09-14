@@ -247,7 +247,7 @@ dist/
 ### Проверять в CI
 
 ```yaml
-- uses: owfeed/owlab/action@v0.6.1
+- uses: owfeed/owlab/action@v0.6.2
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*
