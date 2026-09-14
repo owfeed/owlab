@@ -68,11 +68,11 @@ routers:
   # in immortalwrt/rootfs is labelled linux/amd64, including the aarch64 ones.
   - id: immortalwrt-2512-x86-64
     distro: immortalwrt
-    release: "25.12.1"
+    release: "25.12.2"
     arch: x86_64
   - id: immortalwrt-2512-aarch64
     distro: immortalwrt
-    release: "25.12.1"
+    release: "25.12.2"
     arch: aarch64_generic
 
   # ImmortalWrt 24.10 — opkg
