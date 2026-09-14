@@ -213,6 +213,11 @@ COPY extra/ /tmp/owlab-extra/
 # Inside the `if`, so a build with no out-of-feed package fetches nothing, and
 # in this layer only, so nothing that cached before still caches.
 #
+# The refresh is the tolerant one the package layer runs, pasted from
+# internal/pkgmgr.UpdateShell for the same reason and held to it by the same
+# test. A bare `opkg update` here failed this layer on one dead feed, and
+# buildkit cancelled every other router in the build with it.
+#
 # The retry installs the files in staged order, which is the order the
 # developer wrote them in — see fetchExtraPackages. That is what makes a
 # one-at-a-time pass usable at all: a dependent package staged after the
@@ -232,7 +237,11 @@ RUN set -eu; \
 		if [ "$PKG_MANAGER" = "apk" ]; then \
 			install_extras() { apk add --allow-untrusted --force-overwrite "$@"; }; \
 		else \
-			opkg update; \
+			owlab_upd=$(opkg update 2>&1) && owlab_rc=0 || owlab_rc=$?; \
+			owlab_read=$(printf '%s\n' "$owlab_upd" | grep -c '^Updated list of available packages') || true; \
+			if [ "$owlab_rc" -ne 0 ]; then printf '%s\n' "$owlab_upd" >&2; fi; \
+			if [ "$owlab_rc" -ne 0 ] && { [ "$owlab_read" -eq 0 ]; }; then echo "owlab: opkg update failed: no feed answered. Check the router's network and the feeds in /etc/opkg/distfeeds.conf and /etc/opkg/customfeeds.conf" >&2; exit "$owlab_rc"; fi; \
+			if [ "$owlab_rc" -ne 0 ]; then echo "owlab: opkg update: partial refresh, $owlab_read feed(s) read; the feed above did not answer and its packages will be missing" >&2; fi; \
 			install_extras() { opkg install --force-overwrite "$@"; }; \
 		fi; \
 		if ! install_extras "$@"; then \

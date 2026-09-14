@@ -105,26 +105,46 @@ type Options struct {
 // index FILE, opkg the URL of the DIRECTORY containing it — which is exactly the
 // sort of difference that belongs in this package rather than at a call site.
 func AddFeed(pm config.PackageManager, name, url, keyFile string) string {
+	// Every step stops the script by itself instead of relying on the caller
+	// for errexit. `owlab test` and `owlab install` run this through a plain
+	// `sh -c` (docker exec) or ssh with no `set -e`, in front of an install BY
+	// NAME: a key that did not copy or a repository line that did not write — a
+	// full overlay is enough — left the feed missing or untrusted, the tolerant
+	// refresh carried on, and `apk add <name>` installed the same-named package
+	// from the distribution feed. The test then passed against a package the
+	// feed under test never served.
+	//
+	// `|| { ...; exit 1; }` per line rather than `set -e` at the top, because
+	// callers append further commands to this text and a `set -e` would change
+	// how every one of those behaves too.
+	stop := func(what string) string {
+		return ` || { echo "owlab: adding feed ` + name + `: ` + what + ` failed (is the router's overlay full? df /overlay); stopping, because an install by name would fall back to a same-named package from another feed" >&2; exit 1; }` + "\n"
+	}
 	var b strings.Builder
 	if pm == config.APK {
-		b.WriteString("mkdir -p /etc/apk/keys /etc/apk/repositories.d\n")
-		b.WriteString("cp " + keyFile + " /etc/apk/keys/\n")
-		b.WriteString("printf '%s\\n' " + url + " > /etc/apk/repositories.d/" + name + ".list\n")
+		b.WriteString("mkdir -p /etc/apk/keys /etc/apk/repositories.d" + stop("creating /etc/apk/keys"))
+		b.WriteString("cp " + keyFile + " /etc/apk/keys/" + stop("installing its key into /etc/apk/keys"))
+		b.WriteString("printf '%s\\n' " + url + " > /etc/apk/repositories.d/" + name + ".list" + stop("writing /etc/apk/repositories.d/"+name+".list"))
 		return b.String()
 	}
-	b.WriteString("mkdir -p /etc/opkg/keys\n")
-	b.WriteString("cp " + keyFile + " /etc/opkg/keys/\n")
+	b.WriteString("mkdir -p /etc/opkg/keys" + stop("creating /etc/opkg/keys"))
+	b.WriteString("cp " + keyFile + " /etc/opkg/keys/" + stop("installing its key into /etc/opkg/keys"))
 	// Appended, not written: customfeeds.conf is where a router's own extra
 	// feeds live, and replacing it would take them with it.
-	b.WriteString("printf 'src/gz %s %s\\n' " + name + " " + url + " >> /etc/opkg/customfeeds.conf\n")
+	b.WriteString("printf 'src/gz %s %s\\n' " + name + " " + url + " >> /etc/opkg/customfeeds.conf" + stop("appending to /etc/opkg/customfeeds.conf"))
 	return b.String()
 }
 
 // UpdateShell is the shell that refreshes the package index, and the reason
 // this package has an opinion about a feed that does not answer.
 //
+// The text is correct with and without errexit, and has to be: the Dockerfile
+// and VM provisioning run it under `set -eu`, while `owlab test` and `owlab
+// install` run it through a plain `sh -c`. The one failure that must stop the
+// script — no feed answered — stops it with an explicit `exit`.
+//
 // Both managers exit non-zero when one configured feed is unreachable, and
-// every caller runs them under `set -eu`, so a single dead feed took the whole
+// under `set -eu` a single dead feed took the whole
 // install down before the per-package loop below it ever ran — the loop that
 // is deliberately written to tolerate a package this release's feed does not
 // carry. The condition is routine rather than exotic: a rootfs image pins its
