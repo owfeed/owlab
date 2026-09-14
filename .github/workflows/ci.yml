@@ -146,17 +146,82 @@ jobs:
       - name: The installer the actions share parses
         run: bash -n setup/install.sh
 
-      # The release number is copied out of images/owlab.yaml into everything
-      # that starts a router, and a stale copy fails nothing: an old release
-      # still builds, it just stops being the one anybody runs. This is the only
-      # way that ever goes red. Measured on 2026-09-04 -- `ARG BASE_IMAGE` and
-      # both release literals here still said 25.12.4 while the config had been
-      # on 25.12.5 the whole time, and every job was green.
-      #
-      # Scoped to the workflows and images/Dockerfile on purpose; the list and
-      # the reasons for what is left out are in tools/pins.sh.
-      - name: Every release literal names a release images/owlab.yaml pins
+      # Two rules, one script. A workflow may not name a release at all -- the
+      # `routers` job below reads them from images/owlab.yaml -- because
+      # GITHUB_TOKEN cannot push a change to .github/workflows/, so a literal
+      # here is a pin `pins.yml` can never move (the refusal is quoted in
+      # tools/pins.sh). images/Dockerfile still carries one, and it must equal a
+      # pin: a stale copy fails nothing, an old release still builds. Measured on
+      # 2026-09-04 -- `ARG BASE_IMAGE` still said 25.12.4 while the config had
+      # been on 25.12.5 the whole time, and every job was green.
+      - name: No workflow names a release, and images/Dockerfile names a pinned one
         run: sh tools/pins.sh check
+
+  # The releases e2e and the action run against, read out of images/owlab.yaml
+  # at run time rather than written into this file.
+  #
+  # Not a literal, because a literal here cannot be moved by `pins.yml`: its
+  # push on 2026-09-09 was refused with
+  #
+  #   ! [remote rejected] pins/25.12.2 -> pins/25.12.2 (refusing to allow a
+  #   GitHub App to create or update workflow `.github/workflows/ci.yml`
+  #   without `workflows` permission)
+  #
+  # and no `permissions:` block can grant GITHUB_TOKEN that scope. The same
+  # shape as the matrix job in images.yml, and the same code path: `owlab
+  # context --list --keep 1` emits one row per router at the release the config
+  # pins, without consulting the download server for newer ones.
+  #
+  # Selected by router id, not "every x86_64 router": the config also pins
+  # ImmortalWrt 24.10, which e2e has never run, and quietly adding a fourth real
+  # router to every push would be new load rather than a refactor. An id is not
+  # a release number, so a bump leaves this list alone; an id that disappears
+  # from the config fails here instead of shrinking the matrix.
+  routers:
+    runs-on: ubuntu-24.04
+    outputs:
+      e2e: ${{ steps.gen.outputs.e2e }}
+      action_release: ${{ steps.gen.outputs.action_release }}
+    env:
+      E2E_ROUTERS: openwrt-2512-x86-64 openwrt-2410-x86-64 immortalwrt-2512-x86-64
+      ACTION_ROUTER: openwrt-2512-x86-64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - id: gen
+        working-directory: images
+        run: |
+          set -eu
+          go build -o "$RUNNER_TEMP/owlab" ../cmd/owlab
+          "$RUNNER_TEMP/owlab" context --list --keep 1 > "$RUNNER_TEMP/routers.json"
+
+          # Checked before it is used: a missing id would otherwise drop a
+          # router from e2e without a word, and an empty action release means
+          # "every router in owlab.yaml" to the action -- a green run that
+          # tested something else.
+          missing="$(jq -r --arg want "$E2E_ROUTERS $ACTION_ROUTER" \
+            '($want | split(" ") | map(select(. != ""))) - [.include[].id] | .[]' \
+            "$RUNNER_TEMP/routers.json")"
+          if [ -n "$missing" ]; then
+            echo "images/owlab.yaml has no router with id: $(echo $missing)" >&2
+            echo "  a router was renamed or removed; update E2E_ROUTERS / ACTION_ROUTER in ci.yml" >&2
+            exit 1
+          fi
+
+          e2e="$(jq -c --arg want "$E2E_ROUTERS" '
+            . as $all
+            | {include: [$want | split(" ") | .[] | select(. != "") as $id
+                         | $all.include[] | select(.id == $id)
+                         | {distro, release}]}' "$RUNNER_TEMP/routers.json")"
+          action_release="$(jq -r --arg id "$ACTION_ROUTER" \
+            '.include[] | select(.id == $id) | .release' "$RUNNER_TEMP/routers.json")"
+
+          echo "e2e: $e2e"
+          echo "action: $action_release"
+          echo "e2e=$e2e" >> "$GITHUB_OUTPUT"
+          echo "action_release=$action_release" >> "$GITHUB_OUTPUT"
 
   # Dogfooding, and the only test here that runs against OpenWrt rather than
   # against a description of how OpenWrt behaves.
@@ -172,15 +237,14 @@ jobs:
   # assertions could pass — LuCI answers a logged-in request, the dispatcher
   # renders a config-driven page without an exception, and the fixtures those
   # pages need are really there.
+  #
+  # The routers and their releases come from the `routers` job above.
   e2e:
+    needs: routers
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - {distro: openwrt, release: "25.12.5"}
-          - {distro: openwrt, release: "24.10.8"}
-          - {distro: immortalwrt, release: "25.12.1"}
+      matrix: ${{ fromJson(needs.routers.outputs.e2e) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -210,7 +274,10 @@ jobs:
 
   # The action is shell, and shell that only runs in other people's
   # repositories is shell nobody tests.
+  #
+  # One release, OpenWrt's current apk line, from the `routers` job.
   action:
+    needs: routers
     runs-on: ubuntu-24.04
     env:
       # Recognised by the installer: use the owlab already on PATH instead of
@@ -230,7 +297,7 @@ jobs:
 
       - uses: ./action
         with:
-          releases: "25.12.5"
+          releases: ${{ needs.routers.outputs.action_release }}
           fixtures: "none"
           assert: |
             http 200 /cgi-bin/luci/admin/status/overview

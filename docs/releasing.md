@@ -102,11 +102,15 @@ not moved yet. `keep` defaults to 2 and is an input on both the manual and the
 called runs.
 
 Moving the pin itself is not a one-line edit: the same release number is copied
-into `images/Dockerfile` and the CI workflows, and `ci.yml` fails a copy that
-names a release `images/owlab.yaml` does not pin. Use `sh tools/pins.sh bump
-<old> <new>`, which moves every copy at once. `pins.yml` proposes that bump as
-a pull request daily. Both are in the
-[runbook](runbook.md#check-the-copies-of-the-pin).
+into `images/Dockerfile`, and `ci.yml` fails a copy that names a release
+`images/owlab.yaml` does not pin. Use `sh tools/pins.sh bump <old> <new>`,
+which moves every copy at once. `pins.yml` proposes that bump as a pull request
+daily. Both are in the [runbook](runbook.md#check-the-copies-of-the-pin).
+
+The workflows name no release. `ci.yml` reads its e2e releases from
+`images/owlab.yaml` at run time, because `pins.yml` pushes with `GITHUB_TOKEN`
+and GitHub refuses any such push that changes a file in `.github/workflows/`.
+Do not write a release number into a workflow: `tools/pins.sh check` fails it.
 
 Two things the resolver checks that a listing alone does not tell you:
 

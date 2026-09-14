@@ -7,6 +7,24 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+### Fixed
+
+- **`pins.yml` can push the bump it proposes again.** It had failed daily since
+  2026-09-09, the first real bump (`25.12.1 -> 25.12.2`, ImmortalWrt): `tools/pins.sh
+  bump` rewrote the release literals in `.github/workflows/ci.yml`, and GitHub refused
+  the push with `refusing to allow a GitHub App to create or update workflow
+  .github/workflows/ci.yml without workflows permission`. `GITHUB_TOKEN` cannot be
+  granted that scope. The workflows now name no release: a `routers` job in `ci.yml`
+  reads them from `images/owlab.yaml` with `owlab context --list --keep 1` and hands
+  the e2e matrix and the action's release to the jobs that need them — the same three
+  routers as before, selected by id. `bump` rewrites only `images/owlab.yaml` and
+  `images/Dockerfile`.
+- **`tools/pins.sh check` refuses any release literal in a workflow**, not only a
+  stale one, because a literal that matches the pin today is still one `pins.yml`
+  cannot move. `images/Dockerfile` keeps the old rule: its literal must equal a pin.
+
 ## [0.6.1] - 2026-09-07
 
 ### Fixed

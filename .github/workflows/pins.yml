@@ -116,6 +116,18 @@ jobs:
             exit 1
           fi
 
+          # `bump` rewrites images/owlab.yaml and images/Dockerfile, never a
+          # workflow. It used to rewrite ci.yml as well, and on 2026-09-09 the
+          # push below was refused:
+          #
+          #   ! [remote rejected] pins/25.12.2 -> pins/25.12.2 (refusing to allow
+          #   a GitHub App to create or update workflow `.github/workflows/ci.yml`
+          #   without `workflows` permission)
+          #
+          # GITHUB_TOKEN cannot be given that scope, so the workflows read the
+          # releases out of images/owlab.yaml instead and `tools/pins.sh check`
+          # refuses any release literal in them. Do not put one back.
+          #
           # Redirected from a file rather than piped: a `while read` on the right
           # of a pipe runs in a subshell, and everything it changed about this
           # shell — including whether it ran at all — is gone by the next line.
@@ -173,8 +185,9 @@ jobs:
             echo '```'
             echo
             echo "Rewritten by \`tools/pins.sh bump\`, which moves a release literal only where"
-            echo "this repository runs one: \`images/owlab.yaml\`, \`images/Dockerfile\` and the"
-            echo "workflows. Prose, \`examples/\` and the READMEs keep the release they name."
+            echo "this repository runs one: \`images/owlab.yaml\` and \`images/Dockerfile\`. The"
+            echo "workflows name no release; \`ci.yml\` reads them from \`images/owlab.yaml\`."
+            echo "Prose, \`examples/\` and the READMEs keep the release they name."
             echo
             echo "What this does not prove is that the new release still builds a router. That is"
             echo "what the CI run on this branch is for: the e2e job installs on both package"

@@ -258,19 +258,26 @@ $ owlab exec owrt2512 -- 'ubus call system board | grep version'
 ### Проверить копии пина
 
 `images/owlab.yaml` — пин, который правит человек. Тот же номер релиза
-скопирован ещё в `images/Dockerfile` и в CI-воркфлоу: они поднимают роутер, не
-читая этот конфиг.
+скопирован ещё в `images/Dockerfile`: он поднимает роутер, не читая этот
+конфиг. В воркфлоу копий нет: `ci.yml` читает релизы из `images/owlab.yaml` во
+время прогона.
 
 ```console
 $ sh tools/pins.sh check
 images/owlab.yaml pins: 24.10.6 24.10.8 25.12.1 25.12.5
-every release literal in the pin files is one images/owlab.yaml pins
+no workflow names a release; every release literal in the pin files is one images/owlab.yaml pins
 ```
 
-Команда падает, когда воркфлоу или `images/Dockerfile` называют релиз, которого
-нет среди пинов `images/owlab.yaml`; `ci.yml` запускает её на каждый push.
-Больше это не ловит ничто: старый релиз всё ещё собирается, поэтому забытая
-копия остаётся зелёной, а CI тестирует релиз, на котором никто не работает.
+Команда падает в двух случаях; `ci.yml` запускает её на каждый push:
+
+- **Воркфлоу называет любой релиз**, даже запиненный. `pins.yml` пушит с
+  `GITHUB_TOKEN`, а GitHub отклоняет от него push, меняющий
+  `.github/workflows/`, поэтому литерал там — пин, который ничто автоматическое
+  не сдвинет. Берите релиз из джобы `routers` в `ci.yml`.
+- **`images/Dockerfile` называет релиз, которого нет среди пинов
+  `images/owlab.yaml`.** Больше это не ловит ничто: старый релиз всё ещё
+  собирается, поэтому забытая копия остаётся зелёной, а CI тестирует релиз, на
+  котором никто не работает.
 
 Сдвинуть все копии одного релиза сразу:
 

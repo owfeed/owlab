@@ -21,7 +21,7 @@ somebody has to edit in the same pull request that made it untrue.
 | `owlab releases` without a project | Asking a download server what it publishes needs neither an `owlab.yaml` nor a container engine, and no longer demands either |
 | `--install` gives each router only its own format | `pkgmgr.FilterFiles` splits by extension before the push, so one glob over `dist/` covers both release lines; what a router did not get is named on its install line, and a router left with nothing is reported as a skip rather than a green install |
 | A router built without an `extra_packages` file says so | The image records the failures in `/etc/owlab/extras-failed`; `owlab up` prints them after its table and exits non-zero, `owlab test` fails that router on an `extra_packages` step |
-| The release pins cannot go stale unnoticed | `sh tools/pins.sh check` in `ci.yml` fails a release literal in `images/Dockerfile` or a workflow that `images/owlab.yaml` does not pin; `pins.yml` proposes the bump as a pull request |
+| The release pins cannot go stale unnoticed | `sh tools/pins.sh check` in `ci.yml` fails any release literal in a workflow (they read `images/owlab.yaml` at run time) and one in `images/Dockerfile` that `images/owlab.yaml` does not pin; `pins.yml` proposes the bump as a pull request |
 | The unit tests pass on Linux, macOS and Windows | `ci.yml` runs `go test` on `ubuntu-24.04`, `macos-15` and `windows-2025`, and `owlab doctor` and `owlab version` on the bare macOS and Windows runners. Until this was added, "runs everywhere" rested on a cross-compile, and two Windows bugs were living in the gap — permissions derived from a filesystem that has none, and `project.build` run by a shell that is not there |
 
 ## Working, and verified on one platform
