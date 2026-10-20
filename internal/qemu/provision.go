@@ -209,6 +209,7 @@ func (v *VM) reboot(ctx context.Context) error {
 // install is the shell that installs packages with this router's own package
 // manager.
 func (v *VM) install(pkgs []string, opts pkgmgr.Options) string {
+	opts.Rolling = v.Router.Rolling()
 	return pkgmgr.Install(v.Router.PackageManager(), pkgs, opts)
 }
 

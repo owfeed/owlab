@@ -472,7 +472,8 @@ func (a *app) testInstall(ctx context.Context, r *config.Router, run syncpkg.Exe
 		// The same name AddFeed registered: the install stops unless that
 		// feed was read, instead of passing on a same-named package from the
 		// distribution feed.
-		Feed: feedUnderTest,
+		Feed:    feedUnderTest,
+		Rolling: r.Rolling(),
 	})
 	var log strings.Builder
 	if err := run(ctx, cmd, nil, &log); err != nil {

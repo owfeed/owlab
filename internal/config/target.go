@@ -311,6 +311,10 @@ func PackageManagerFor(release string) PackageManager {
 	return OPKG
 }
 
+// Rolling reports whether this router's release is rebuilt in place, so its
+// feed moves under a fixed rootfs. See pkgmgr.UpgradeShell.
+func (r *Router) Rolling() bool { return isSnapshot(r.Release) }
+
 func isSnapshot(release string) bool {
 	r := strings.ToLower(release)
 	return r == "snapshot" || r == "master" || r == "main" || strings.HasSuffix(r, "-snapshot")

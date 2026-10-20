@@ -81,8 +81,91 @@ func TestTolerantInstallsOneAtATimeAndReportsSkips(t *testing.T) {
 	if !strings.Contains(got, "owlab: skip (not in this feed): $p") {
 		t.Errorf("a skipped package is not reported:\n%s", got)
 	}
-	if !strings.Contains(got, "||") {
-		t.Errorf("a failed package would abort the loop:\n%s", got)
+}
+
+// Measured 2026-10-20: apk 3.0.5 on openwrt/rootfs:x86-64-25.12.5 (exit 1) and
+// opkg on openwrt/rootfs:x86-64-24.10.8 (exit 255).
+const (
+	apkNoSuch = `ERROR: unable to select packages:
+  owlab-no-such-pkg (no such package):
+    required by: world[owlab-no-such-pkg]`
+	opkgNoSuch = `Unknown package 'owlab-no-such-pkg'.
+Collected errors:
+ * opkg_install_cmd: Cannot install package owlab-no-such-pkg.`
+	opkgClash = ` * check_data_file_clashes: Package dnsmasq-full wants to install file /usr/share/dnsmasq/rfc6761.conf
+	But that file is already provided by package  * dnsmasq
+ * opkg_install_cmd: Cannot install package dnsmasq-full.`
+)
+
+// Only a name the feed lacks is a skip. A file clash, or a dependency the feed
+// lacks, used to be reported as "not in this feed" with the manager's stderr
+// thrown away; now it is named as a failure with the manager's own words, and
+// the loop still goes on to the next package.
+func TestEachSkipsOnlyANameTheFeedLacks(t *testing.T) {
+	cases := []struct {
+		pm             config.PackageManager
+		add, pkgs, out string
+		rc             int
+		want           []string
+		not            string
+	}{
+		{config.APK, "apk add", "owlab-no-such-pkg", apkNoSuch, 1,
+			[]string{"owlab: skip (not in this feed): owlab-no-such-pkg"}, "FAILED"},
+		{config.OPKG, "opkg install", "owlab-no-such-pkg", opkgNoSuch, 255,
+			[]string{"owlab: skip (not in this feed): owlab-no-such-pkg"}, "FAILED"},
+		// Constructed from the message the Dockerfile quotes: the package is in
+		// the feed, a dependency of it is not.
+		{config.APK, "apk add", "luci-app-sqm", "ERROR: unable to select packages:\n  kmod-ifb (no such package):\n    required by: luci-app-sqm[kmod-ifb]", 1,
+			[]string{"kmod-ifb (no such package)", "owlab: FAILED to install luci-app-sqm"}, "skip"},
+		{config.OPKG, "opkg install", "dnsmasq-full ttyd", opkgClash, 255,
+			[]string{"check_data_file_clashes", "owlab: FAILED to install dnsmasq-full", "owlab: FAILED to install ttyd"}, "skip"},
+		{config.APK, "apk add", "luci", "OK: 12.6 MiB in 141 packages", 0, nil, "owlab"},
+	}
+	for _, c := range cases {
+		code, got := runStubbed(t, c.pm, c.out, c.rc, EachShell(c.pm, c.add, c.pkgs))
+		if code != 0 {
+			t.Errorf("%s %s: one package ended the loop with %d:\n%s", c.add, c.pkgs, code, got)
+		}
+		for _, w := range c.want {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s %s: no %q in:\n%s", c.add, c.pkgs, w, got)
+			}
+		}
+		if strings.Contains(got, c.not) {
+			t.Errorf("%s %s: %q in:\n%s", c.add, c.pkgs, c.not, got)
+		}
+	}
+}
+
+// A rolling release upgrades the base between the refresh and the first
+// install; a point release never does, because its ABI does not move inside
+// the branch and a real user of it installs without upgrading.
+func TestRollingUpgradesTheBaseFirstAndReleasesDoNot(t *testing.T) {
+	got := Install(config.APK, []string{"luci"}, Options{Update: true, Tolerant: true, Rolling: true})
+	upd, up, add := strings.Index(got, "apk update"), strings.Index(got, "apk upgrade"), strings.Index(got, "for p in luci;")
+	if up < 0 || upd > up || up > add {
+		t.Errorf("rolling: want apk update, then apk upgrade, then the installs:\n%s", got)
+	}
+	for _, o := range []Options{
+		{Update: true, Tolerant: true},
+		// A local file alone refreshes nothing, so there is no index to upgrade to.
+		{Untrusted: true, Rolling: true},
+	} {
+		if got := Install(config.APK, []string{"luci"}, o); strings.Contains(got, "upgrade") {
+			t.Errorf("%+v upgraded the base:\n%s", o, got)
+		}
+	}
+	if got := Install(config.OPKG, []string{"luci"}, Options{Update: true, Rolling: true}); strings.Contains(got, "upgrade") {
+		t.Errorf("opkg has no rolling upgrade:\n%s", got)
+	}
+}
+
+// A failed upgrade is said, with apk's own output, and does not end the
+// script: the Dockerfile builds every router in one buildkit solve.
+func TestFailedUpgradeIsReportedNotFatal(t *testing.T) {
+	code, got := runStubbed(t, config.APK, "ERROR: unable to select packages:\n  base-files-1718 breaks: world[base-files=1707]", 1, UpgradeShell(config.APK))
+	if code != 0 || !strings.Contains(got, "breaks: world") || !strings.Contains(got, "owlab: apk upgrade failed") {
+		t.Errorf("exit %d:\n%s", code, got)
 	}
 }
 
@@ -322,6 +405,13 @@ const opkgDead = `Downloading https://downloads.openwrt.org/releases/24.10.8/pac
 // runs it — against a stub manager that replays measured output and exits rc.
 func runUpdate(t *testing.T, pm config.PackageManager, out string, rc int) (int, string) {
 	t.Helper()
+	return runStubbed(t, pm, out, rc, UpdateShell(pm))
+}
+
+// runStubbed runs script under `set -eu` with the manager replaced by a stub
+// that prints out and exits rc.
+func runStubbed(t *testing.T, pm config.PackageManager, out string, rc int, script string) (int, string) {
+	t.Helper()
 	bin := t.TempDir()
 	stub := "#!/bin/sh\ncat <<'OUT'\n" + out + "\nOUT\nexit " + strconv.Itoa(rc) + "\n"
 	name := "opkg"
@@ -344,7 +434,7 @@ func runUpdate(t *testing.T, pm config.PackageManager, out string, rc int) (int,
 	if err != nil {
 		t.Skipf("no POSIX shell on this host, so the generated shell cannot be run: %v", err)
 	}
-	cmd := exec.Command(sh, "-c", "set -eu\n"+UpdateShell(pm))
+	cmd := exec.Command(sh, "-c", "set -eu\n"+script)
 	// Prepended, not replaced: the shell still needs grep, sed and printf.
 	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	got, err := cmd.CombinedOutput()
@@ -477,6 +567,18 @@ func TestDockerfileRefreshesTheIndexTheSameWay(t *testing.T) {
 		if extra := strings.Count(codeFlat, cmd) - blocks*strings.Count(want, cmd); extra != 0 {
 			t.Errorf("images/Dockerfile runs %q %d time(s) outside the refresh this package generates; paste UpdateShell(%s) there instead", cmd, extra, pm)
 		}
+		// Compared unflattened: the loop's missing-name line is matched with
+		// grep -x, so a space lost inside its quotes would turn every skip
+		// into a failure while shellWords still saw the same text.
+		add := map[config.PackageManager]string{config.APK: "apk add", config.OPKG: "opkg install"}[pm]
+		if loop := strings.TrimSuffix(EachShell(pm, add, "$PACKAGES"), "\n"); !strings.Contains(string(b), loop) {
+			t.Errorf("images/Dockerfile does not run the %s install loop this package generates.\nwant:\n%s", pm, loop)
+		}
+	}
+	// Both apk install layers, the package set and the extras.
+	up := `if [ -n "$ROLLING" ]; then ` + strings.TrimSuffix(UpgradeShell(config.APK), "\n") + `; fi;`
+	if n := strings.Count(string(b), up); n != 2 {
+		t.Errorf("images/Dockerfile runs the rolling upgrade this package generates %d time(s), want 2.\nwant:\n%s", n, up)
 	}
 }
 

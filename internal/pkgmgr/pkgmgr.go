@@ -99,6 +99,12 @@ type Options struct {
 	// 25.12.4 and 24.10.8 with a probe feed shadowing `tree`: both managers
 	// installed the distribution's tree-2.2.1 and exited 0.
 	Feed string
+
+	// Rolling runs UpgradeShell after the refresh, so the installed base
+	// matches the index before anything is installed from it. Set for a
+	// release rebuilt in place (config.Router.Rolling) and never for a point
+	// release, whose ABI does not move.
+	Rolling bool
 }
 
 // Where the feed check looks. Variables rather than literals only so the tests
@@ -289,6 +295,59 @@ func UpdateShell(pm config.PackageManager) string {
 		`if [ "$owlab_rc" -ne 0 ]; then ` + partial + `; fi` + "\n"
 }
 
+// UpgradeShell is the shell that moves every installed package to the index the
+// refresh just read, on a release whose feed is rebuilt in place.
+//
+// A snapshot feed changes a library's ABI under a rootfs that still carries the
+// old one, and installing by name into that rootfs is a partial upgrade.
+// Measured 2026-10-20, openwrt/rootfs:x86_64-master built 2026-10-19 against
+// that day's feed: ucode 2026.10.18 moved libucode to ABI 20261009, `apk add
+// luci` installed the rebuilt ucode-mod-html beside the image's ucode
+// 2026.07.09, still linked to libucode.so.20230711, and LuCI answered 502:
+//
+//	Error relocating /usr/lib/ucode/html.so: ucv_metamethod_lookup: symbol not found
+//
+// One `apk upgrade` before the installs left `apk version -l '<'` empty and
+// LuCI rendering. `apk add --upgrade` per package fixed ucode as well, but left
+// procd-ujail behind: it reaches only what the named packages depend on.
+//
+// Reported rather than fatal, like a package missing from the feed: every router
+// in a lab is built in one buildkit solve, and one failing layer cancels them all.
+//
+// images/Dockerfile runs this text when ROLLING is set, held to it by
+// TestDockerfileRefreshesTheIndexTheSameWay.
+//
+// shortcut: apk only, because OpenWrt's rolling line has used apk since
+// November 2024; add an opkg branch when a distribution ships a rolling opkg feed.
+func UpgradeShell(pm config.PackageManager) string {
+	if pm != config.APK {
+		return ""
+	}
+	return `owlab_upg=$(apk upgrade 2>&1) || { printf '%s\n' "$owlab_upg" >&2; echo "owlab: apk upgrade failed on a rolling release; packages installed next may need a newer library than this router has" >&2; }` + "\n"
+}
+
+// EachShell is the loop that installs the packages in list one at a time, with
+// add being the manager's install command: what Options.Tolerant generates, and
+// what images/Dockerfile runs over "$PACKAGES".
+//
+// Only a name the feed does not carry is a skip. Any other refusal used to be
+// called one too, with the manager's stderr thrown away: on 24.10.8 `opkg
+// install dnsmasq-full` beside the stock dnsmasq exits 255 on
+// check_data_file_clashes, and the log said "not in this feed". The manager's
+// output is now replayed and the package named as failed. The missing-name
+// lines are each manager's own, matched whole: apk 3.0.5 prints
+// `  <name> (no such package):` and exits 1, opkg prints
+// `Unknown package '<name>'.` and exits 255.
+func EachShell(pm config.PackageManager, add, list string) string {
+	missing := `Unknown package '$p'.`
+	if pm == config.APK {
+		missing = `  $p (no such package):`
+	}
+	return `for p in ` + list + `; do owlab_out=$(` + add + ` "$p" 2>&1) && continue; ` +
+		`if printf '%s\n' "$owlab_out" | grep -qxF "` + missing + `"; then echo "owlab: skip (not in this feed): $p"; ` +
+		`else printf '%s\n' "$owlab_out" >&2; echo "owlab: FAILED to install $p, for the reason above; this router is built without it" >&2; fi; done` + "\n"
+}
+
 // Install is the shell that installs pkgs, or "true" when there is nothing to
 // install — a script fragment that is always safe to concatenate.
 //
@@ -323,11 +382,12 @@ func Install(pm config.PackageManager, pkgs []string, o Options) string {
 		b.WriteString(before)
 		b.WriteString(UpdateShell(pm))
 		b.WriteString(after)
+		if o.Rolling {
+			b.WriteString(UpgradeShell(pm))
+		}
 	}
 	if o.Tolerant {
-		b.WriteString("for p in " + strings.Join(pkgs, " ") + "; do\n")
-		b.WriteString("  " + add + " \"$p\" >/dev/null 2>&1 || echo \"owlab: skip (not in this feed): $p\"\n")
-		b.WriteString("done\n")
+		b.WriteString(EachShell(pm, add, strings.Join(pkgs, " ")))
 		return b.String()
 	}
 	b.WriteString(add + " " + strings.Join(pkgs, " ") + "\n")
