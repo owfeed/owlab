@@ -178,6 +178,9 @@ func BuildArgsFor(cfg *config.Config, r *config.Router) map[string]string {
 		"THEME":         cfg.Project.Theme,
 		"ROOT_PASSWORD": RootPassword(),
 	}
+	if r.Rolling() {
+		args["ROLLING"] = "1"
+	}
 	if base := r.BaseImage(); base != "" {
 		args["BASE_STAGE"] = "upstream"
 		args["BASE_IMAGE"] = base

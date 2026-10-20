@@ -621,7 +621,8 @@ func (a *app) install(ctx context.Context, args []string) error {
 			// A name given alongside --feed is meant to come out of it; when
 			// that feed was not read, stop rather than install the same name
 			// from the distribution feed.
-			Feed: feedUnderTest,
+			Feed:    feedUnderTest,
+			Rolling: r.Rolling(),
 		})
 		fmt.Printf("== %s (%s)\n", r.ID, pm)
 		if err := run(ctx, cmd, nil, os.Stdout); err != nil {

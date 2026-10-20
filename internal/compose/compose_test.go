@@ -95,6 +95,26 @@ routers:
 	if _, ok := args["ROOTFS_URL"]; ok {
 		t.Error("ROOTFS_URL must not be set when building from a published image")
 	}
+	if _, ok := args["ROLLING"]; ok {
+		t.Error("ROLLING must not be set for a point release: its base is not upgraded")
+	}
+}
+
+// A snapshot's feed changes ABI under its rootfs, so its image upgrades the
+// base before installing; see pkgmgr.UpgradeShell.
+func TestBuildArgsForSnapshotIsRolling(t *testing.T) {
+	cfg := load(t, `
+version: 1
+project:
+  name: demo
+routers:
+  - id: snap
+    release: snapshot
+    arch: x86_64
+`)
+	if got := BuildArgsFor(cfg, &cfg.Routers[0])["ROLLING"]; got != "1" {
+		t.Errorf("ROLLING = %q, want 1", got)
+	}
 }
 
 func TestBuildArgsForTarball(t *testing.T) {

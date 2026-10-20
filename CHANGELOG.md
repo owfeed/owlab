@@ -7,6 +7,25 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+### Fixed
+
+- **A `snapshot` router no longer mixes the image's libraries with the feed's.**
+  A snapshot feed can move a library to a new ABI under a rootfs that still
+  carries the old one, and installing by name then upgraded half of it: on
+  2026-10-20 a rebuilt `ucode-mod-html` landed beside the image's older `ucode`
+  and LuCI answered 502. On a rolling release (`snapshot`, `master`, a branch
+  snapshot) owlab now runs `apk upgrade` after the index refresh and before
+  installing, in the image build, `owlab install`, `owlab test` and vm
+  provisioning. Point releases install exactly as before.
+- **A package that fails to install for a reason other than a missing name is
+  reported as a failure.** The per-package loop called every failure
+  "skip (not in this feed)" and threw the package manager's output away, so a
+  file clash or a missing dependency read as an absent package. A name the feed
+  does not carry is still a one-line skip; anything else prints the manager's
+  output and `owlab: FAILED to install <name>`. The build still carries on.
+
 ## [0.6.5] - 2026-09-14
 
 ### Fixed

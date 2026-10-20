@@ -430,11 +430,13 @@ fork and upstream, so a name missing on 24.10 costs that one package rather
 than the whole image:
 
 ```
-owlab: skip (not in this feed): dnsmasq
+owlab: skip (not in this feed): luci-app-openvpn
 ```
 
-That exact line appears on ImmortalWrt 24.10, which ships `dnsmasq-full` and
-refuses the plain variant. It is the intended shape of the message.
+That line is for a name the feed does not carry, as the 2026-10-20 snapshot
+feed did not carry `luci-app-openvpn`. Any other refusal — a file clash, a
+dependency the feed lacks — prints the package manager's own output and then
+`owlab: FAILED to install <name>`, and the build carries on without it.
 
 ### `extra_packages` — anything not in a feed
 
@@ -523,8 +525,14 @@ any rewriting risks breaking it.
 
 The practical consequence for a project: **pin an exact point release.** A
 snapshot rootfs and a snapshot feed are rebuilt daily and independently, so
-they drift apart within a day and installs start failing. `owlab doctor` warns
-when a router names `snapshot`.
+they drift apart within a day, and a library can move to a new ABI in between.
+On 2026-10-20 the feed's `ucode-mod-html` needed a `libucode` the image's
+`ucode` was not linked against, and installing it by name left LuCI answering
+502. So on a rolling release owlab runs `apk upgrade` after the index refresh
+and before installing anything, which brings the whole image up to the feed it
+is about to install from. A point release is never upgraded: its ABI does not
+move, and a user of it installs without upgrading. A snapshot router is still
+not repeatable, and `owlab doctor` warns when a router names `snapshot`.
 
 ### apk and opkg
 
