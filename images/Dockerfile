@@ -34,7 +34,7 @@ ARG BASE_STAGE=upstream
 # server, not yet mirrored to Docker Hub. A bare `docker build images/` with
 # these defaults would have failed on the pull while every owlab build of the
 # same release succeeded.
-ARG BASE_IMAGE=openwrt/rootfs:x86_64-25.12.5
+ARG BASE_IMAGE=openwrt/rootfs:x86_64-25.12.6
 ARG ROOTFS_URL=
 ARG ALPINE_TAG=3.22
 
