@@ -132,6 +132,43 @@ from `wifi-scripts`, and builds the encryption matrix by asking `hostapd` what
 it supports. With both present the pages render from config, with no radio
 present anywhere.
 
+#### When a package does not install
+
+Each name is installed on its own, so a failure costs that package and not the
+router. A name the release's feeds do not carry is a one-line skip, not an
+error:
+
+```
+owlab: skip (not in this feed): luci-app-example
+```
+
+On opkg, a name that a package already on the router provides is a skip too.
+ImmortalWrt ships `dnsmasq-full`, which provides `dnsmasq`, and opkg would
+otherwise install the real `dnsmasq` beside it and refuse on a file clash. apk
+counts the provider as the name by itself:
+
+```
+owlab: skip (provided by dnsmasq-full, already installed): dnsmasq
+```
+
+Anything else is a failure: a file clash, a dependency the feeds lack, or a
+download that still fails after 4 attempts, 2, 4 and 8 s apart (the retries
+owlab's own downloads use). A name that is not found after a refresh in which a
+feed did not answer is a failure too, because that feed may carry it. The
+exception is a kmods index alone: it carries only `kmod-*` packages.
+
+A failure prints the package manager's output, and the build carries on. The
+name is recorded on the router in `/etc/owlab/packages-failed`. `owlab up`
+names it after its table and exits 1, and `owlab test` fails that router on its
+`packages` step:
+
+```
+! owrt2410 is running WITHOUT luci-app-example
+```
+
+A plain `owlab up` reuses the cached build and reports the same names again.
+`owlab up --rebuild <router>` builds that router from scratch.
+
 ### Packages that are in no feed
 
 Most of what a router needs is in OpenWrt's own feeds and goes in `packages:`.
