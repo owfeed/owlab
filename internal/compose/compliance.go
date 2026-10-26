@@ -9,7 +9,8 @@ import (
 	"owfeed.org/owlab/internal/config"
 )
 
-// fetchCompliance stages the GPL compliance material for each router.
+// fetchCompliance stages the GPL compliance material for each router being
+// built.
 //
 // Publishing an image built from an OpenWrt rootfs redistributes GPL'd
 // binaries, which triggers GPLv2 §3: the corresponding source has to be
@@ -26,17 +27,14 @@ import (
 // Best effort by design: a fork that publishes no buildinfo, or a snapshot
 // whose files moved, must not fail a developer's build. What is missing is
 // recorded in the bundle's own README rather than silently omitted.
-func fetchCompliance(cfg *config.Config, ctxDir, cacheDir string) error {
+func fetchCompliance(routers []*config.Router, ctxDir, cacheDir string) error {
 	root := filepath.Join(ctxDir, "compliance")
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		return err
-	}
-
-	for i := range cfg.Routers {
-		r := &cfg.Routers[i]
+	for _, r := range routers {
 		if r.Fidelity == config.VM {
 			continue
 		}
+		// Created even when nothing below downloads: the Dockerfile COPYs
+		// this router's directory unconditionally.
 		dst := filepath.Join(root, r.ID)
 		if err := os.MkdirAll(dst, 0o755); err != nil {
 			return err
@@ -44,18 +42,8 @@ func fetchCompliance(cfg *config.Config, ctxDir, cacheDir string) error {
 
 		base := r.ReleaseDir()
 		stem := artifactStem(r)
-		want := []string{
-			stem + ".manifest",
-			stem + ".bom.cdx.json",
-			"config.buildinfo",
-			"feeds.buildinfo",
-			"version.buildinfo",
-			"sha256sums",
-			"sha256sums.asc",
-		}
-
 		var got, missing []string
-		for _, name := range want {
+		for _, name := range complianceFiles(r) {
 			body, err := fetchSmall(base+"/"+name, cacheDir)
 			if err != nil {
 				missing = append(missing, name)
@@ -78,6 +66,20 @@ func fetchCompliance(cfg *config.Config, ctxDir, cacheDir string) error {
 		}
 	}
 	return nil
+}
+
+// complianceFiles names what fetchCompliance asks for beside the rootfs.
+func complianceFiles(r *config.Router) []string {
+	stem := artifactStem(r)
+	return []string{
+		stem + ".manifest",
+		stem + ".bom.cdx.json",
+		"config.buildinfo",
+		"feeds.buildinfo",
+		"version.buildinfo",
+		"sha256sums",
+		"sha256sums.asc",
+	}
 }
 
 // artifactStem is the filename prefix upstream uses for this release/target,

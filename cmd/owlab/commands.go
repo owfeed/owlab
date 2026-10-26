@@ -69,7 +69,7 @@ func (a *app) up(ctx context.Context, args []string) error {
 	resolveBaseImages(ctx, containers)
 
 	if len(containers) > 0 {
-		proj, err := compose.Prepare(a.cfg, a.eng)
+		proj, err := compose.Prepare(a.cfg, a.eng, containers)
 		if err != nil {
 			return err
 		}

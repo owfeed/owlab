@@ -570,7 +570,10 @@ VM не грузится или виснет на середине, тогда �
 позже. Для GitHub загляните на [githubstatus.com](https://www.githubstatus.com).
 
 То же относится к `unreachable after 4 attempts (a network or server outage …)`: так
-выглядят таймауты, сбои DNS и отказы в соединении.
+выглядят таймауты, сбои DNS и отказы в соединении. Пакет не из фидов или
+комплаенс-файл, сервер которого замолчал, пишет `the server sent nothing for 1m0s`,
+а оборвавшийся — `reading the body: unexpected EOF`: каждая попытка качает файл
+целиком заново.
 
 ### `404 Not Found` на образ, rootfs или пакет
 
@@ -581,9 +584,11 @@ VM не грузится или виснет на середине, тогда �
 ### Шаг `setup`: `Upstream outage (safe to rerun)`, код выхода 8
 
 `gh release download`, `gh release view` или `gh attestation verify` не достучались до
-GitHub или Sigstore за 4 попытки. Бинарник не проверялся — это не то же самое, что
-провал проверки. Перезапустите job. Настоящий отказ — `does not verify as built by
-owfeed/owlab's release workflow` с кодом выхода 1.
+GitHub или Sigstore за 4 попытки. Вызов, который не закончился за 120 секунд, считается
+одной из них, и в логе стоит `no answer from GitHub within 120s`. Бинарник не
+проверялся — это не то же самое, что провал проверки. Перезапустите job. Настоящий
+отказ — `does not verify as built by owfeed/owlab's release workflow` с кодом
+выхода 1.
 
 ---
 
