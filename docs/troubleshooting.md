@@ -165,8 +165,9 @@ is a failure.
 In 0.6.6 and earlier the same router started with exit 0, and the only trace
 was an `owlab: FAILED to install` line in the build log.
 
-**Cause.** The package layer installs each name on its own and records the
-ones that did not install in `/etc/owlab/packages-failed`. The build log gives
+**Cause.** The package layer installs the set in one call; when that fails, it
+installs each name on its own and records the ones that did not install in
+`/etc/owlab/packages-failed`. The build log gives
 the reason above `owlab: FAILED to install <name>`:
 
 - `owlab: <name> did not download in 4 attempts`: a download server or network

@@ -85,15 +85,18 @@ func TestOfflineIsAPKsNoNetwork(t *testing.T) {
 
 // Tolerant is what keeps one name missing on 24.10 from costing the whole
 // router: each package is tried alone and the skips are reported.
-func TestTolerantInstallsOneAtATimeAndReportsSkips(t *testing.T) {
+func TestTolerantInstallsInOneCallThenOneAtATime(t *testing.T) {
 	got := Install(config.OPKG, []string{"luci", "luci-app-sqm"}, Options{Update: true, Tolerant: true})
-	if !strings.Contains(got, "for p in luci luci-app-sqm; do") {
-		t.Errorf("not a per-package loop:\n%s", got)
+	if !strings.Contains(got, "owlab_out=$(opkg install luci luci-app-sqm 2>&1)") {
+		t.Errorf("not one call for the set:\n%s", got)
+	}
+	if !strings.Contains(got, "for p in $owlab_rest; do") {
+		t.Errorf("no per-package fallback:\n%s", got)
 	}
 	if !strings.Contains(got, `opkg install "$p"`) {
 		t.Errorf("loop does not install the loop variable:\n%s", got)
 	}
-	if !strings.Contains(got, "owlab: skip (not in this feed): $p") {
+	if !strings.Contains(got, "owlab: skip (not in this feed): $1") {
 		t.Errorf("a skipped package is not reported:\n%s", got)
 	}
 }
@@ -236,15 +239,19 @@ Collected errors:
 // runCounting runs script under `set -eu` against a stub manager that fails the
 // first `fails` installs of each package with out and exit rc, then installs
 // it. It returns the exit code, the output, and how often each package was
-// asked for.
+// asked for on its own; calls["batch"] counts the calls naming more than one,
+// which fail with out whenever fails is above zero.
 func runCounting(t *testing.T, pm config.PackageManager, out string, rc, fails int, script string) (int, string, map[string]int) {
 	t.Helper()
 	dir := filepath.ToSlash(t.TempDir())
 	if err := os.WriteFile(dir+"/out", []byte(out+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// $2 is the package for both `apk add <p>` and `opkg install <p>`.
-	body := `n=$(cat '` + dir + `/calls.'"$2" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > '` + dir + `/calls.'"$2"
+	// $2 is the package for both `apk add <p>` and `opkg install <p>`, and a
+	// third argument makes it the call for the whole set.
+	body := `k=$2; [ "$#" -gt 2 ] && k=batch
+n=$(cat '` + dir + `/calls.'"$k" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > '` + dir + `/calls.'"$k"
+if [ "$k" = batch ] && [ ` + strconv.Itoa(fails) + ` -gt 0 ]; then cat '` + dir + `/out'; exit ` + strconv.Itoa(rc) + `; fi
 if [ "$n" -le ` + strconv.Itoa(fails) + ` ]; then cat '` + dir + `/out'; exit ` + strconv.Itoa(rc) + `; fi
 echo "installed $2"`
 	code, got := runStub(t, pm, body, script)
@@ -278,9 +285,9 @@ func TestEachAsksAgainAfterAFailedDownload(t *testing.T) {
 		{config.OPKG, "opkg install", opkgFetchFailed, 255},
 	} {
 		rec := tempRecord(t)
-		code, got, calls := runCounting(t, c.pm, c.out, c.rc, 2, EachShell(c.pm, c.add, "tree"))
-		if code != 0 || calls["tree"] != 3 {
-			t.Errorf("%s: exit %d after %d attempts, want 0 after 3:\n%s", c.pm, code, calls["tree"], got)
+		code, got, calls := runCounting(t, c.pm, c.out, c.rc, 2, EachShell(c.pm, c.add, "tree nano"))
+		if code != 0 || calls["batch"] != 1 || calls["tree"] != 3 || calls["nano"] != 3 {
+			t.Errorf("%s: exit %d after %d calls for the set, %d and %d attempts, want 0 after 1, 3 and 3:\n%s", c.pm, code, calls["batch"], calls["tree"], calls["nano"], got)
 		}
 		if !strings.Contains(got, "owlab: downloading tree failed (a download server or network outage); asking again") {
 			t.Errorf("%s: the retry is not said:\n%s", c.pm, got)
@@ -344,42 +351,69 @@ Status: install ok installed
 Architecture: x86_64
 Installed-Time: 1776821074
 `
-	opkgProvidedClash = ` * check_data_file_clashes: Package dnsmasq wants to install file /usr/sbin/dnsmasq
-	But that file is already provided by package  * dnsmasq-full
- * opkg_install_cmd: Cannot install package dnsmasq.`
 )
 
 // ImmortalWrt 24.10 ships dnsmasq-full, the stock set asks for dnsmasq, and
 // opkg refuses the real dnsmasq beside it: every ImmortalWrt 24.10 router was
 // recorded as built without a name it had, and `owlab up` exited 1 on it. The
-// other direction matters as much: a provider that is not installed, or an
-// installed package that provides some other name, is no excuse.
+// name is dropped from the one call as a missing one is, so the rest is asked
+// for again in one call rather than one at a time. The other direction matters
+// as much: a provider that is not installed, or an installed package that
+// provides some other name, is no excuse.
 func TestEachSkipsANameAnInstalledPackageProvides(t *testing.T) {
 	notInstalled := strings.Replace(immortalwrtStatus, "Status: install ok installed", "Status: install user not-installed", 1)
+	openwrtStatus := "Package: dnsmasq\nVersion: 2.90-r4\nStatus: install ok installed\n"
+	// What opkg prints for bad, in the call for the set and in one of its own:
+	// the clash, or a download that did not happen; both end on opkg's own
+	// `Cannot install package` line, which a call that only failed does not.
+	clash := func(bad string) string {
+		return " * check_data_file_clashes: Package " + bad + " wants to install file /usr/sbin/dnsmasq\n" +
+			"\tBut that file is already provided by package  * dnsmasq-full\n" +
+			" * opkg_install_cmd: Cannot install package " + bad + "."
+	}
+	fetch := func(bad string) string {
+		return " * opkg_download: Failed to download https://downloads.openwrt.org/" + bad + ".ipk, wget returned 4.\n" +
+			" * opkg_install_cmd: Cannot install package " + bad + "."
+	}
 	for _, c := range []struct {
-		name, status, pkg, out string
-		calls                  int
-		skip                   string
+		name, status, bad, batchOut, singleOut string
+		calls                                  string
+		skip                                   string
 	}{
-		{"provider installed", immortalwrtStatus, "dnsmasq", opkgProvidedClash, 1, "dnsmasq-full"},
-		{"provider installed, one of several names", immortalwrtStatus, "wpa-supplicant", opkgProvidedClash, 1, "wpad-basic-mbedtls"},
+		{"provider installed", immortalwrtStatus, "dnsmasq", clash("dnsmasq"), clash("dnsmasq"), "dnsmasq nano|nano", "dnsmasq-full"},
+		{"provider installed, one of several names", immortalwrtStatus, "wpa-supplicant", clash("wpa-supplicant"), clash("wpa-supplicant"), "wpa-supplicant nano|nano", "wpad-basic-mbedtls"},
 		// Nothing to download for a name the router already has.
-		{"provider installed, download refused", immortalwrtStatus, "dnsmasq", opkgFetchFailed, 1, "dnsmasq-full"},
-		{"provider not installed", notInstalled, "dnsmasq", opkgProvidedClash, 1, ""},
+		{"provider installed, download refused", immortalwrtStatus, "dnsmasq", fetch("dnsmasq"), fetch("dnsmasq"), "dnsmasq nano|nano", "dnsmasq-full"},
+		// A call that failed without naming it: one at a time finds it.
+		{"provider installed, not named by the call", immortalwrtStatus, "dnsmasq", "Collected errors:", clash("dnsmasq"), "dnsmasq nano|dnsmasq|nano", "dnsmasq-full"},
+		{"provider not installed", notInstalled, "dnsmasq", clash("dnsmasq"), clash("dnsmasq"), "dnsmasq nano|dnsmasq|nano", ""},
 		// OpenWrt 24.10: the stock dnsmasq provides no dnsmasq-full.
-		{"installed package provides another name", "Package: dnsmasq\nVersion: 2.90-r4\nStatus: install ok installed\n", "dnsmasq-full", opkgClash, 1, ""},
+		{"installed package provides another name", openwrtStatus, "dnsmasq-full", clash("dnsmasq-full"), clash("dnsmasq-full"), "dnsmasq-full nano|dnsmasq-full|nano", ""},
 	} {
 		tempRecord(t)
 		if err := os.WriteFile(opkgStatus, []byte(c.status), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		code, got, calls := runCounting(t, config.OPKG, c.out, 255, 99, EachShell(config.OPKG, "opkg install", c.pkg))
-		if code != 0 || calls[c.pkg] != c.calls {
-			t.Errorf("%s: exit %d after %d attempts, want 0 after %d:\n%s", c.name, code, calls[c.pkg], c.calls, got)
+		dir := filepath.ToSlash(t.TempDir())
+		for name, body := range map[string]string{"batch": c.batchOut, "single": c.singleOut} {
+			if err := os.WriteFile(dir+"/"+name, []byte(body+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
 		}
-		want, record := "owlab: skip (provided by "+c.skip+", already installed): "+c.pkg, ""
+		// opkg installs the rest of a call and exits 255 on the one it refused.
+		body := `shift; echo "$*" >> '` + dir + `/calls'; out=single; [ "$#" -gt 1 ] && out=batch
+for p in "$@"; do if [ "$p" = '` + c.bad + `' ]; then cat '` + dir + `/'"$out"; exit 255; fi; done`
+		code, got := runStub(t, config.OPKG, body, EachShell(config.OPKG, "opkg install", c.bad+" nano"))
+		b, err := os.ReadFile(dir + "/calls")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if calls := strings.Join(strings.Split(strings.TrimSpace(string(b)), "\n"), "|"); code != 0 || calls != c.calls {
+			t.Errorf("%s: exit %d, calls %q; want 0 and %q:\n%s", c.name, code, calls, c.calls, got)
+		}
+		want, record := "owlab: skip (provided by "+c.skip+", already installed): "+c.bad, ""
 		if c.skip == "" {
-			want, record = "owlab: FAILED to install "+c.pkg, c.pkg
+			want, record = "owlab: FAILED to install "+c.bad, c.bad
 		}
 		if !strings.Contains(got, want) {
 			t.Errorf("%s: no %q in:\n%s", c.name, want, got)
@@ -394,12 +428,12 @@ func TestEachSkipsANameAnInstalledPackageProvides(t *testing.T) {
 // the same answer every time, so it is asked once.
 func TestEachDoesNotAskARefusalAgain(t *testing.T) {
 	rec := tempRecord(t)
-	code, got, calls := runCounting(t, config.OPKG, opkgClash, 255, 99, EachShell(config.OPKG, "opkg install", "dnsmasq-full"))
-	if code != 0 || calls["dnsmasq-full"] != 1 || strings.Contains(got, "asking again") {
-		t.Errorf("exit %d, %d attempts, want 0 and 1:\n%s", code, calls["dnsmasq-full"], got)
+	code, got, calls := runCounting(t, config.OPKG, opkgClash, 255, 99, EachShell(config.OPKG, "opkg install", "dnsmasq-full ttyd"))
+	if code != 0 || calls["dnsmasq-full"] != 1 || calls["ttyd"] != 1 || strings.Contains(got, "asking again") {
+		t.Errorf("exit %d, %d and %d attempts, want 0 and 1 each:\n%s", code, calls["dnsmasq-full"], calls["ttyd"], got)
 	}
-	if got := readRecord(t, rec); got != "dnsmasq-full" {
-		t.Errorf("recorded %q, want dnsmasq-full", got)
+	if got := readRecord(t, rec); got != "dnsmasq-full ttyd" {
+		t.Errorf("recorded %q, want dnsmasq-full ttyd", got)
 	}
 }
 
@@ -526,10 +560,89 @@ WARNING: updating and opening https://downloads.openwrt.org/releases/25.12.5/pac
 		{"package fetch", index + apkFetchFailed, 1, 4},
 	} {
 		tempRecord(t)
-		_, got, calls := runCounting(t, config.APK, c.out, c.rc, 99, EachShell(config.APK, "apk add", "tree"))
+		_, got, calls := runCounting(t, config.APK, c.out, c.rc, 99, EachShell(config.APK, "apk add", "tree nano"))
 		if calls["tree"] != c.calls {
 			t.Errorf("%s: asked %d times, want %d:\n%s", c.name, calls["tree"], c.calls, got)
 		}
+	}
+}
+
+// runCallLog runs script under `set -eu` against a stub manager that knows
+// every name except those in missing, and answers for those as the real one
+// does: apk refuses the whole call, opkg names them and exits 255. It returns
+// the exit code, the output, and the arguments of every call in order.
+func runCallLog(t *testing.T, pm config.PackageManager, missing []string, script string) (int, string, []string) {
+	t.Helper()
+	dir := filepath.ToSlash(t.TempDir())
+	line, rc := `printf 'Unknown package '"'"'%s'"'"'.\n' "$p"`, "255"
+	if pm == config.APK {
+		line, rc = `printf '  %s (no such package):\n    required by: world[%s]\n' "$p" "$p"`, "1"
+	}
+	body := `shift; echo "$*" >> '` + dir + `/calls'; rc=0
+for p in "$@"; do case " ` + strings.Join(missing, " ") + ` " in *" $p "*) ` + line + `; rc=` + rc + ` ;; esac; done
+exit $rc`
+	code, got := runStub(t, pm, body, script)
+	b, err := os.ReadFile(dir + "/calls")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return code, got, strings.Split(strings.TrimSpace(string(b)), "\n")
+}
+
+// One call for the whole set: 73 calls of the manager on 24.10.8 cost 27 s
+// with every package already installed, against under one for a single call.
+func TestEachInstallsTheSetInOneCall(t *testing.T) {
+	for _, c := range []struct {
+		pm  config.PackageManager
+		add string
+	}{{config.APK, "apk add"}, {config.OPKG, "opkg install"}} {
+		rec := tempRecord(t)
+		code, got, calls := runCallLog(t, c.pm, nil, EachShell(c.pm, c.add, "luci tree nano"))
+		if code != 0 || got != "" || strings.Join(calls, "|") != "luci tree nano" {
+			t.Errorf("%s: exit %d, calls %q, output %q; want 0, one call, silence", c.pm, code, calls, got)
+		}
+		if got := readRecord(t, rec); got != "" {
+			t.Errorf("%s: recorded %q after a clean install", c.pm, got)
+		}
+	}
+}
+
+// A name one release lacks fails the call for the set, and a fallback to one
+// call per package would cost every build of that release the 27 s saved. The
+// names the call reports missing are dropped and the rest asked for in one
+// call again; nothing is installed one at a time.
+func TestEachDropsAMissingNameAndAsksAgainInOneCall(t *testing.T) {
+	for _, c := range []struct {
+		pm  config.PackageManager
+		add string
+	}{{config.APK, "apk add"}, {config.OPKG, "opkg install"}} {
+		for _, partial := range []string{"", "all"} {
+			rec := tempRecord(t)
+			script := "owlab_partial=" + partial + "\n" + EachShell(c.pm, c.add, "tree owlab-no-such-pkg nano")
+			code, got, calls := runCallLog(t, c.pm, []string{"owlab-no-such-pkg"}, script)
+			if code != 0 || strings.Join(calls, "|") != "tree owlab-no-such-pkg nano|tree nano" {
+				t.Errorf("%s partial=%q: exit %d, calls %q; want 0, the set and then the set without the missing name:\n%s", c.pm, partial, code, calls, got)
+			}
+			want, record := "owlab: skip (not in this feed): owlab-no-such-pkg", ""
+			if partial != "" {
+				want, record = "owlab: FAILED to install owlab-no-such-pkg: no feed that answered the refresh above carries it", "owlab-no-such-pkg"
+			}
+			if !strings.Contains(got, want) || strings.Contains(got, "one at a time") {
+				t.Errorf("%s partial=%q: want %q and no fallback in:\n%s", c.pm, partial, want, got)
+			}
+			if got := readRecord(t, rec); got != record {
+				t.Errorf("%s partial=%q: recorded %q, want %q", c.pm, partial, got, record)
+			}
+		}
+	}
+}
+
+// A set made only of missing names leaves nothing to ask for again.
+func TestEachAllMissingAsksNothingMore(t *testing.T) {
+	tempRecord(t)
+	code, got, calls := runCallLog(t, config.APK, []string{"a-missing", "b-missing"}, EachShell(config.APK, "apk add", "a-missing b-missing"))
+	if code != 0 || len(calls) != 1 || strings.Count(got, "owlab: skip (not in this feed)") != 2 {
+		t.Errorf("exit %d, calls %q, want 0, one call and two skips:\n%s", code, calls, got)
 	}
 }
 

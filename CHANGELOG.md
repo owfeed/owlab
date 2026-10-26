@@ -9,6 +9,16 @@ one waits for a major.
 
 ## [Unreleased]
 
+### Changed
+
+- **The image build installs the feed packages in one call.** One call per
+  package spent the package manager's own start-up on each: for
+  luci-theme-footstrap's 74 names, 81 s against 58 s on 24.10.8 (opkg) and
+  48 s against 45 s on 25.12.5 (apk), with the same packages installed. A name
+  the feeds lack, and on opkg a name an installed package provides, is dropped
+  and the rest installed in one call again; only when that fails is each
+  package installed on its own, to name the ones that do not install.
+
 ### Fixed
 
 - **`owlab up` exits non-zero when a router is missing a package from
