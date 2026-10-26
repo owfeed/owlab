@@ -89,11 +89,14 @@ RUN mkdir -p /var/lock /var/run /var/log /var/state
 
 # The package set, chosen in owlab.yaml.
 #
-# Each package is installed on its own and a failure is reported rather than
+# The set is installed in one call, and a failure is reported rather than
 # fatal. Feeds differ between releases and between OpenWrt and its forks, and
 # a package list that is valid on 25.12 but has one name missing on 24.10
 # should cost the developer that one package, not the whole image. A name the
-# feed lacks is a one-line skip; any other refusal replays the manager's output.
+# feed lacks is a one-line skip, dropped from the set before it is asked for
+# again in one call. Only when that fails too is each package installed on its
+# own, which names the ones that do not install and replays the manager's
+# output for each. One call per package cost 81 s against 58 s on 24.10.8.
 #
 # A refusal does not end this layer, and it is not left in the log either: the
 # name goes into /etc/owlab/packages-failed, and `owlab up` reports it and exits
@@ -134,19 +137,22 @@ RUN set -eu; \
 			if printf '%s\n' "$owlab_upd" | grep -q '^WARNING: updating and opening ' && ! printf '%s\n' "$owlab_upd" | grep '^WARNING: updating and opening ' | grep -qv '/kmods/'; then owlab_partial=kmods; fi; fi; \
 		if [ -n "$ROLLING" ]; then owlab_upg=$(apk upgrade 2>&1) || { printf '%s\n' "$owlab_upg" >&2; echo "owlab: apk upgrade failed on a rolling release; packages installed next may need a newer library than this router has" >&2; }; fi; \
 		rm -f /etc/owlab/packages-failed || { echo "owlab: cannot remove /etc/owlab/packages-failed, so the packages an earlier build could not install would be reported for this one; stopping" >&2; exit 1; }; owlab_waits='2 4 8'; \
-		for p in $PACKAGES; do owlab_out=$(apk add "$p" 2>&1) && continue; \
+			owlab_failed() { { mkdir -p /etc/owlab && echo "$1" >> /etc/owlab/packages-failed; } || { echo "owlab: cannot record $1 in /etc/owlab/packages-failed (is the overlay full? df /overlay); stopping, because owlab up would report this router as complete" >&2; exit 1; }; }; \
+			owlab_absent() { case "${owlab_partial:-}:$1" in all:*|kmods:kmod-*) echo "owlab: FAILED to install $1: no feed that answered the refresh above carries it, and one that did not answer may; this router is built without it" >&2; owlab_failed "$1" ;; \
+			*) echo "owlab: skip (not in this feed): $1" ;; esac; }; \
+			if ! owlab_out=$(apk add $PACKAGES 2>&1); then owlab_rest=; owlab_dropped=; \
+			for p in $PACKAGES; do \
+			if printf '%s\n' "$owlab_out" | grep -qxF "  $p (no such package):"; then owlab_absent "$p"; owlab_dropped=1; else owlab_rest="$owlab_rest $p"; fi; done; \
+			if [ -z "$owlab_dropped" ] || [ -z "$owlab_rest" ] || ! owlab_out=$(apk add $owlab_rest 2>&1); then \
+			[ -z "$owlab_rest" ] || echo "owlab: installing the packages in one call failed; installing them one at a time to name the ones that do not install" >&2; \
+			for p in $owlab_rest; do owlab_out=$(apk add "$p" 2>&1) && continue; \
 			for owlab_wait in $owlab_waits; do printf '%s\n' "$owlab_out" | awk '/^ERROR: wget: exited with error/ { w = 1; next } w && !/^WARNING: updating and opening / { f = 1 } { w = 0 } END { exit !(f || w) }' || break; \
 			echo "owlab: downloading $p failed (a download server or network outage); asking again in ${owlab_wait}s" >&2; \
 			sleep "$owlab_wait"; owlab_out=$(apk add "$p" 2>&1) && continue 2; done; \
 			if [ -n "$owlab_waits" ] && printf '%s\n' "$owlab_out" | awk '/^ERROR: wget: exited with error/ { w = 1; next } w && !/^WARNING: updating and opening / { f = 1 } { w = 0 } END { exit !(f || w) }'; then owlab_waits=; \
 			echo "owlab: $p did not download in 4 attempts; the packages after it are asked once each" >&2; fi; \
-			if printf '%s\n' "$owlab_out" | grep -qxF "  $p (no such package):"; then \
-			case "${owlab_partial:-}:$p" in all:*|kmods:kmod-*) \
-			echo "owlab: FAILED to install $p: no feed that answered the refresh above carries it, and one that did not answer may; this router is built without it" >&2 ;; \
-			*) echo "owlab: skip (not in this feed): $p"; continue ;; esac; \
-			else printf '%s\n' "$owlab_out" >&2; echo "owlab: FAILED to install $p, for the reason above; this router is built without it" >&2; fi; \
-			{ mkdir -p /etc/owlab && echo "$p" >> /etc/owlab/packages-failed; } || \
-			{ echo "owlab: cannot record $p in /etc/owlab/packages-failed (is the overlay full? df /overlay); stopping, because owlab up would report this router as complete" >&2; exit 1; }; done; \
+			if printf '%s\n' "$owlab_out" | grep -qxF "  $p (no such package):"; then owlab_absent "$p"; continue; fi; \
+			printf '%s\n' "$owlab_out" >&2; echo "owlab: FAILED to install $p, for the reason above; this router is built without it" >&2; owlab_failed "$p"; done; fi; fi; \
 	else \
 		owlab_upd=$(opkg update 2>&1) && owlab_rc=0 || owlab_rc=$?; \
 		owlab_read=$(printf '%s\n' "$owlab_upd" | grep -c '^Updated list of available packages') || true; \
@@ -155,19 +161,22 @@ RUN set -eu; \
 		if [ "$owlab_rc" -ne 0 ]; then echo "owlab: opkg update: partial refresh, $owlab_read feed(s) read; the feed above did not answer and its packages will be missing" >&2; owlab_partial=all; \
 			if printf '%s\n' "$owlab_upd" | grep -q '^\*\*\* Failed to download the package list from ' && ! printf '%s\n' "$owlab_upd" | grep '^\*\*\* Failed to download the package list from ' | grep -qv '/kmods/'; then owlab_partial=kmods; fi; fi; \
 		rm -f /etc/owlab/packages-failed || { echo "owlab: cannot remove /etc/owlab/packages-failed, so the packages an earlier build could not install would be reported for this one; stopping" >&2; exit 1; }; owlab_waits='2 4 8'; \
-		for p in $PACKAGES; do owlab_out=$(opkg install "$p" 2>&1) && continue; \
+			owlab_failed() { { mkdir -p /etc/owlab && echo "$1" >> /etc/owlab/packages-failed; } || { echo "owlab: cannot record $1 in /etc/owlab/packages-failed (is the overlay full? df /overlay); stopping, because owlab up would report this router as complete" >&2; exit 1; }; }; \
+			owlab_absent() { case "${owlab_partial:-}:$1" in all:*|kmods:kmod-*) echo "owlab: FAILED to install $1: no feed that answered the refresh above carries it, and one that did not answer may; this router is built without it" >&2; owlab_failed "$1" ;; \
+			*) echo "owlab: skip (not in this feed): $1" ;; esac; }; \
+			if ! owlab_out=$(opkg install $PACKAGES 2>&1); then owlab_rest=; owlab_dropped=; \
+			for p in $PACKAGES; do \
+			if printf '%s\n' "$owlab_out" | grep -qxF "Unknown package '$p'."; then owlab_absent "$p"; owlab_dropped=1; else owlab_rest="$owlab_rest $p"; fi; done; \
+			if [ -z "$owlab_dropped" ] || [ -z "$owlab_rest" ] || ! owlab_out=$(opkg install $owlab_rest 2>&1); then \
+			[ -z "$owlab_rest" ] || echo "owlab: installing the packages in one call failed; installing them one at a time to name the ones that do not install" >&2; \
+			for p in $owlab_rest; do owlab_out=$(opkg install "$p" 2>&1) && continue; \
 			for owlab_wait in $owlab_waits; do printf '%s\n' "$owlab_out" | grep -qF 'opkg_download: Failed to download' || break; \
 			echo "owlab: downloading $p failed (a download server or network outage); asking again in ${owlab_wait}s" >&2; \
 			sleep "$owlab_wait"; owlab_out=$(opkg install "$p" 2>&1) && continue 2; done; \
 			if [ -n "$owlab_waits" ] && printf '%s\n' "$owlab_out" | grep -qF 'opkg_download: Failed to download'; then owlab_waits=; \
 			echo "owlab: $p did not download in 4 attempts; the packages after it are asked once each" >&2; fi; \
-			if printf '%s\n' "$owlab_out" | grep -qxF "Unknown package '$p'."; then \
-			case "${owlab_partial:-}:$p" in all:*|kmods:kmod-*) \
-			echo "owlab: FAILED to install $p: no feed that answered the refresh above carries it, and one that did not answer may; this router is built without it" >&2 ;; \
-			*) echo "owlab: skip (not in this feed): $p"; continue ;; esac; \
-			else printf '%s\n' "$owlab_out" >&2; echo "owlab: FAILED to install $p, for the reason above; this router is built without it" >&2; fi; \
-			{ mkdir -p /etc/owlab && echo "$p" >> /etc/owlab/packages-failed; } || \
-			{ echo "owlab: cannot record $p in /etc/owlab/packages-failed (is the overlay full? df /overlay); stopping, because owlab up would report this router as complete" >&2; exit 1; }; done; \
+			if printf '%s\n' "$owlab_out" | grep -qxF "Unknown package '$p'."; then owlab_absent "$p"; continue; fi; \
+			printf '%s\n' "$owlab_out" >&2; echo "owlab: FAILED to install $p, for the reason above; this router is built without it" >&2; owlab_failed "$p"; done; fi; fi; \
 	fi
 
 # Packages that do not live in any feed — the developer's own package, or

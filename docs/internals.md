@@ -425,6 +425,12 @@ routers:
 A list with no prefix at all replaces the set outright — an explicit list is
 someone saying they know what they want.
 
+The set is installed in one call: one call per package cost 81 s against 58 s
+for luci-theme-footstrap's 74 names on 24.10.8, and 27 s against under one for
+a second pass with everything installed. A name the feeds lack is dropped and
+the rest asked for again in one call; only when that fails too is each package
+installed on its own, to name the ones that do not install.
+
 Failures are reported, not fatal. Feeds differ between releases and between a
 fork and upstream, so a name missing on 24.10 costs that one package rather
 than the whole image:

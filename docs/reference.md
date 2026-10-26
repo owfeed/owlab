@@ -134,15 +134,17 @@ present anywhere.
 
 #### When a package does not install
 
-Each name is installed on its own, so a failure costs that package and not the
-router. A name the release's feeds do not carry is a one-line skip, not an
-error:
+The set is installed in one call. A name the release's feeds do not carry is
+dropped from it, the rest is asked for again in one call, and the name is a
+one-line skip, not an error:
 
 ```
 owlab: skip (not in this feed): luci-app-example
 ```
 
-Anything else is a failure: a file clash, a dependency the feeds lack, or a
+When the call fails for any other reason, each package is installed on its
+own, so a failure costs that package and not the router. Anything that still
+does not install is a failure: a file clash, a dependency the feeds lack, or a
 download that still fails after 4 attempts, 2, 4 and 8 s apart (the retries
 owlab's own downloads use). A name that is not found after a refresh in which a
 feed did not answer is a failure too, because that feed may carry it. The
