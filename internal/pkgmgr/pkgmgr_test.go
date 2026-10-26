@@ -459,7 +459,9 @@ WARNING: updating and opening https://downloads.openwrt.org/releases/25.12.5/pac
 }
 
 // A record that cannot be written would let `owlab up` call a short router
-// complete, so the loop stops instead of carrying on without it.
+// complete, so the loop stops instead of carrying on without it. A file where
+// the record's directory should be fails mkdir -p, and on macOS the rm -f that
+// clears the old record before it: BSD rm reports ENOTDIR even with -f.
 func TestEachStopsWhenTheRecordCannotBeWritten(t *testing.T) {
 	tempRecord(t)
 	// A file where the record's directory should be: mkdir -p fails on it.
@@ -472,7 +474,7 @@ func TestEachStopsWhenTheRecordCannotBeWritten(t *testing.T) {
 	if code == 0 || strings.Contains(got, "ttyd") {
 		t.Errorf("exit %d, want non-zero before ttyd:\n%s", code, got)
 	}
-	if !strings.Contains(got, "owlab: cannot record dnsmasq-full in "+packagesFailed) {
+	if !strings.Contains(got, "owlab: cannot record dnsmasq-full in "+packagesFailed) && !strings.Contains(got, "owlab: cannot remove "+packagesFailed) {
 		t.Errorf("the failure does not name the record:\n%s", got)
 	}
 }

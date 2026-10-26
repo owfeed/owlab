@@ -399,7 +399,8 @@ func UpgradeShell(pm config.PackageManager) string {
 // exited 0, and a router built while downloads.openwrt.org dropped one fetch
 // was handed to a test run without the app it was meant to test. The record
 // is cleared first, because this loop also runs on top of an already-built
-// owlab image, whose own failures are not this build's.
+// owlab image, whose own failures are not this build's; a record that cannot
+// be cleared stops the build for the same reason.
 //
 // Not a skip after a partial refresh (owlab_partial, set by UpdateShell): with
 // a feed that did not answer, "no such package" may mean that feed carries it.
@@ -426,7 +427,8 @@ func EachShell(pm config.PackageManager, add, list string) string {
 		fetchFailed = `printf '%s\n' "$owlab_out" | awk '/^ERROR: wget: exited with error/ { w = 1; next } w && !/^WARNING: updating and opening / { f = 1 } { w = 0 } END { exit !(f || w) }'`
 	}
 	attempts := strconv.Itoa(len(strings.Fields(retryWaits)) + 1)
-	return `rm -f ` + packagesFailed + `; owlab_waits='` + retryWaits + `'; ` +
+	return `rm -f ` + packagesFailed + ` || { echo "owlab: cannot remove ` + packagesFailed + `, so the packages an earlier build could not install would be reported for this one; stopping" >&2; exit 1; }; ` +
+		`owlab_waits='` + retryWaits + `'; ` +
 		`for p in ` + list + `; do owlab_out=$(` + add + ` "$p" 2>&1) && continue; ` +
 		`for owlab_wait in $owlab_waits; do ` + fetchFailed + ` || break; ` +
 		`echo "owlab: downloading $p failed (a download server or network outage); asking again in ${owlab_wait}s" >&2; ` +

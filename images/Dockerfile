@@ -133,7 +133,7 @@ RUN set -eu; \
 		if [ "$owlab_rc" -ne 0 ]; then echo "owlab: apk update: partial refresh, $owlab_read feed(s) read, $owlab_have packages available; the feed above did not answer and its packages will be missing" >&2; owlab_partial=all; \
 			if printf '%s\n' "$owlab_upd" | grep -q '^WARNING: updating and opening ' && ! printf '%s\n' "$owlab_upd" | grep '^WARNING: updating and opening ' | grep -qv '/kmods/'; then owlab_partial=kmods; fi; fi; \
 		if [ -n "$ROLLING" ]; then owlab_upg=$(apk upgrade 2>&1) || { printf '%s\n' "$owlab_upg" >&2; echo "owlab: apk upgrade failed on a rolling release; packages installed next may need a newer library than this router has" >&2; }; fi; \
-		rm -f /etc/owlab/packages-failed; owlab_waits='2 4 8'; \
+		rm -f /etc/owlab/packages-failed || { echo "owlab: cannot remove /etc/owlab/packages-failed, so the packages an earlier build could not install would be reported for this one; stopping" >&2; exit 1; }; owlab_waits='2 4 8'; \
 		for p in $PACKAGES; do owlab_out=$(apk add "$p" 2>&1) && continue; \
 			for owlab_wait in $owlab_waits; do printf '%s\n' "$owlab_out" | awk '/^ERROR: wget: exited with error/ { w = 1; next } w && !/^WARNING: updating and opening / { f = 1 } { w = 0 } END { exit !(f || w) }' || break; \
 			echo "owlab: downloading $p failed (a download server or network outage); asking again in ${owlab_wait}s" >&2; \
@@ -154,7 +154,7 @@ RUN set -eu; \
 		if [ "$owlab_rc" -ne 0 ] && { [ "$owlab_read" -eq 0 ]; }; then echo "owlab: opkg update failed: no feed answered. Check the router's network and the feeds in /etc/opkg/distfeeds.conf and /etc/opkg/customfeeds.conf" >&2; exit "$owlab_rc"; fi; \
 		if [ "$owlab_rc" -ne 0 ]; then echo "owlab: opkg update: partial refresh, $owlab_read feed(s) read; the feed above did not answer and its packages will be missing" >&2; owlab_partial=all; \
 			if printf '%s\n' "$owlab_upd" | grep -q '^\*\*\* Failed to download the package list from ' && ! printf '%s\n' "$owlab_upd" | grep '^\*\*\* Failed to download the package list from ' | grep -qv '/kmods/'; then owlab_partial=kmods; fi; fi; \
-		rm -f /etc/owlab/packages-failed; owlab_waits='2 4 8'; \
+		rm -f /etc/owlab/packages-failed || { echo "owlab: cannot remove /etc/owlab/packages-failed, so the packages an earlier build could not install would be reported for this one; stopping" >&2; exit 1; }; owlab_waits='2 4 8'; \
 		for p in $PACKAGES; do owlab_out=$(opkg install "$p" 2>&1) && continue; \
 			for owlab_wait in $owlab_waits; do printf '%s\n' "$owlab_out" | grep -qF 'opkg_download: Failed to download' || break; \
 			echo "owlab: downloading $p failed (a download server or network outage); asking again in ${owlab_wait}s" >&2; \
