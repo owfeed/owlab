@@ -72,6 +72,23 @@ one waits for a major.
   stall printed nothing the outage check could match, so the step waited for
   the job's own timeout. Each call now has 120 seconds; one that runs out is
   retried as an outage and ends in exit 8 if that persists.
+- **A registry that does not answer no longer fails the build.** Every
+  container router's base image came from a registry, so a Docker Hub outage
+  failed `owlab up` and `owlab test`, and the tarball path owlab already took
+  for a release with no image unpacked the rootfs in an `alpine` image pulled
+  from Docker Hub as well. owlab now asks the image's registry before building
+  (a manifest `HEAD`, for the default image and for `image:` alike). When the
+  registry refuses, times out, or answers 5xx or 429 through 4 attempts, the
+  router is built from its release's rootfs tarball on the download server, and
+  owlab says so. The tarball is downloaded on the host and unpacked onto
+  `scratch` by `ADD`, so that path pulls nothing from any registry; `owlab
+  context` stages it at `tarball/<id>.tar.gz` and no longer emits `ROOTFS_URL`.
+  A missing tag on an explicit `image:` still fails the build. When the
+  download server does not answer either (an offline machine, or one that
+  reaches the internet only through the engine's proxy), the image stays, as it
+  did before. `owlab context`, which prepares the images owlab publishes, keeps
+  the image through an outage too: an `aarch64_generic` tag built from the
+  tarball would carry `linux/arm64` and fail every `image:` that names it.
 
 ## [0.6.6] - 2026-10-20
 

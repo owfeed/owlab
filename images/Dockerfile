@@ -12,11 +12,14 @@
 #   upstream  FROM openwrt/rootfs:<arch>-<version>. Fast, and the only images
 #             upstream publishes are for the 8 targets that build a rootfs
 #             tarball.
-#   tarball   unpack ROOTFS_URL onto scratch. Needed for ImmortalWrt — every
-#             tag in immortalwrt/rootfs is labelled linux/amd64, including the
-#             ones whose contents are aarch64, so their metadata cannot be
-#             used to select an image. Unpacking the tarball ourselves lets us
-#             stamp honest platform metadata.
+#   tarball   unpack the release's rootfs tarball onto scratch; owlab downloads
+#             it on the host into tarball/<router-id>.tar.gz. Needed for
+#             ImmortalWrt — every tag in immortalwrt/rootfs is labelled
+#             linux/amd64, including the ones whose contents are aarch64, so
+#             their metadata cannot be used to select an image. Unpacking the
+#             tarball ourselves lets us stamp honest platform metadata. Also
+#             the way in when the release has no image yet or the registry
+#             does not answer, which is why it pulls from no registry at all.
 #
 # Built by owlab, which pins every ARG below from owlab.yaml.
 
@@ -29,14 +32,12 @@ ARG BASE_STAGE=upstream
 # invocation -- but it is read as documentation, so it is held to the pin in
 # owlab.yaml by `tools/pins.sh check`. It is also the one place the tarball
 # fallback does not reach: `owlab context` asks the registry first and switches
-# to ROOTFS_URL when the release has no container image yet, and on 2026-09-04
+# to the tarball when the release has no container image yet, and on 2026-09-04
 # `openwrt/rootfs:x86_64-25.12.5` was exactly that -- tagged on the download
 # server, not yet mirrored to Docker Hub. A bare `docker build images/` with
 # these defaults would have failed on the pull while every owlab build of the
 # same release succeeded.
 ARG BASE_IMAGE=openwrt/rootfs:x86_64-25.12.5
-ARG ROOTFS_URL=
-ARG ALPINE_TAG=3.22
 
 # BASE_IMAGE is set to `scratch` on the tarball path, and that is not cosmetic:
 # buildkit resolves the metadata for every FROM in this file before it prunes
@@ -44,20 +45,20 @@ ARG ALPINE_TAG=3.22
 # on an image it never intends to pull.
 FROM ${BASE_IMAGE} AS upstream
 
-# Unreachable, and therefore never even fetched, unless BASE_STAGE=tarball:
-# buildkit builds only the stages the target depends on. That is what lets
-# ROOTFS_URL default to empty (an `ADD ""` is a hard error) without the
-# upstream path ever pulling alpine.
-FROM alpine:${ALPINE_TAG} AS unpack
-ARG ROOTFS_URL
-ADD ${ROOTFS_URL} /tmp/rootfs.tar.gz
-RUN mkdir -p /rootfs && tar -xzf /tmp/rootfs.tar.gz -C /rootfs
-
-# COPY rather than letting ADD unpack: `ADD <url>` does not extract a remote
-# archive. A faithful copy is only possible because these rootfs tarballs
-# carry no device nodes — procd mounts devtmpfs on /dev at boot anyway.
+# Unreachable, and therefore never evaluated, unless BASE_STAGE=tarball:
+# buildkit builds only the stages the target depends on, so the upstream path
+# never looks for a tarball owlab did not stage.
+#
+# ADD unpacks a local archive, which is why owlab downloads it on the host:
+# `ADD <url>` does not extract a remote one, and the stage that used to do it
+# ran tar in alpine pulled from Docker Hub, so the tarball path still needed a
+# registry. Now it needs none, which is what lets owlab take it when the
+# registry does not answer. A faithful copy is only
+# possible because these rootfs tarballs carry no device nodes — procd mounts
+# devtmpfs on /dev at boot anyway.
 FROM scratch AS tarball
-COPY --from=unpack /rootfs/ /
+ARG ROUTER_ID
+ADD tarball/${ROUTER_ID}.tar.gz /
 # scratch carries no metadata, so the PATH the RUNs below rely on must be
 # stated explicitly.
 ENV PATH=/usr/sbin:/usr/bin:/sbin:/bin

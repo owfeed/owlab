@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 
 	"owfeed.org/owlab/internal/compose"
 	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/netx"
 	"owfeed.org/owlab/internal/pkgmgr"
 	"owfeed.org/owlab/internal/qemu"
 	syncpkg "owfeed.org/owlab/internal/sync"
@@ -66,7 +68,7 @@ func (a *app) up(ctx context.Context, args []string) error {
 		return err
 	}
 	containers, vms := splitTiers(routers)
-	resolveBaseImages(ctx, containers)
+	resolveBaseImages(ctx, containers, false)
 
 	if len(containers) > 0 {
 		proj, err := compose.Prepare(a.cfg, a.eng, containers)
@@ -196,25 +198,109 @@ var errPackagesMissing = errors.New("packages missing")
 // LuCI never answered. Printed already, under the table.
 var errNotReady = errors.New("router not ready")
 
-// resolveBaseImages asks the registry whether each router's upstream image
-// exists, and switches the ones that do not onto the rootfs tarball.
+// resolveBaseImages asks the registry about each router's base image, and
+// switches the router onto the rootfs tarball when the image is not there or
+// the registry does not answer.
 //
 // Only on a build path. The two are published on different schedules — the
 // tarball when the release is built, the container image whenever the job that
 // mirrors it runs — so a freshly pinned release can have one and not the
 // other, and owlab can build from either.
-func resolveBaseImages(ctx context.Context, routers []*config.Router) {
+//
+// A registry that does not answer used to leave the image in place, on the
+// reasoning that a 250 MB tarball download was the worse trade. OpenWrt's is
+// 3.4-4.8 MB (25.12.5 and 24.10.8 on x86, armsr and mvebu, measured
+// 2026-10-26; ImmortalWrt's about 10 MB), and it sits on the download server
+// the image's own package installs need anyway, so the registry outage that
+// used to fail the build now costs one small download. The same holds for
+// `image:`, which is an accelerator over the same rootfs, but not for its 404:
+// an explicit image that does not exist is the config's mistake, and the build
+// says so.
+//
+// Only when the tarball answers, though. A machine that reaches neither is
+// offline, or reaches the internet only through the engine's own proxy or
+// mirror, and there the image is what can still work: the engine may pull it
+// its own way, or build entirely from images and layers it already holds.
+// Switching would trade that for a download that cannot succeed.
+//
+// publish is for `owlab context`, which prepares the images owlab pushes, and
+// keeps the image through an outage. A tag built from the tarball carries the
+// honest platform (linux/arm64) instead of upstream's (linux/aarch64_generic),
+// and every router whose `image:` names that tag asks for upstream's and fails
+// to pull it until the next rebuild. A publish that fails is run again.
+func resolveBaseImages(ctx context.Context, routers []*config.Router, publish bool) {
+	// Asked once per host: each probe of a dead host costs netx's attempts,
+	// and a lab is usually several routers on one registry and one download
+	// server. Holds the router the host did not answer for.
+	down := map[string]string{}
 	for _, r := range routers {
-		if r.FromTarball() || r.Image != "" {
+		image := r.BaseImage()
+		if image == "" {
 			continue
 		}
-		if !upstream.HasContainerImage(ctx, r) {
+		host := upstream.RegistryHost(image)
+		var state upstream.ImageState
+		var err error
+		if first, ok := down[host]; ok {
+			state, err = upstream.RegistryDown, fmt.Errorf("not asked again after %s", first)
+		} else {
+			state, err = upstream.ProbeImage(ctx, image)
+		}
+		switch state {
+		case upstream.ImageMissing:
+			if r.Image != "" {
+				continue
+			}
 			fmt.Fprintf(os.Stderr,
 				"owlab: %s has no published container image yet; building %s from the rootfs tarball\n",
-				r.BaseImage(), r.ID)
+				image, r.ID)
+			r.UseTarball()
+		case upstream.RegistryDown:
+			if _, ok := down[host]; !ok {
+				down[host] = r.ID
+			}
+			if publish {
+				fmt.Fprintf(os.Stderr,
+					"owlab: %s did not answer (%v); %s stays on %s, because a published tag built from the rootfs tarball would change its platform; run this again once the registry answers\n",
+					host, err, r.ID, image)
+				continue
+			}
+			tarball := r.RootfsTarballURL()
+			if terr := tarballOutage(ctx, r, down); terr != nil {
+				fmt.Fprintf(os.Stderr,
+					"owlab: %s did not answer (%v), and neither did the rootfs tarball (%v); leaving %s on %s for the engine, which may reach it through its own proxy or mirror, or hold it already\n",
+					host, err, terr, r.ID, image)
+				continue
+			}
+			fmt.Fprintf(os.Stderr,
+				"owlab: %s did not answer (%v); building %s from the rootfs tarball %s instead of %s\n",
+				host, err, r.ID, tarball, image)
 			r.UseTarball()
 		}
 	}
+}
+
+// headTarball asks whether the download server serves a rootfs tarball. A
+// variable so tests answer for a server they cannot reach.
+var headTarball = upstream.HeadFile
+
+// tarballOutage is why r's rootfs tarball cannot be downloaded now, or nil if
+// it can. A download server that did not answer is recorded in down and not
+// asked again for the next router; a 404 is about one file and is not.
+func tarballOutage(ctx context.Context, r *config.Router, down map[string]string) error {
+	tarball := r.RootfsTarballURL()
+	u, err := url.Parse(tarball)
+	if err != nil {
+		return err
+	}
+	if first, ok := down[u.Host]; ok {
+		return fmt.Errorf("%s not asked again after %s", u.Host, first)
+	}
+	err = headTarball(ctx, tarball)
+	if err != nil && netx.Transient(err) {
+		down[u.Host] = r.ID
+	}
+	return err
 }
 
 // startVM boots one fidelity-vm router and sets it up if it is new.

@@ -138,18 +138,25 @@ func Render(cfg *config.Config, eng engine.Info) (*Project, error) {
 // routers about to be built.
 //
 // This is the expensive half — the embedded context is wiped and rewritten,
-// and the out-of-feed packages and compliance bundle are downloaded — so it is
-// called only by the commands that are about to build an image.
+// and the rootfs tarballs, out-of-feed packages and compliance bundle are
+// downloaded — so it is called only by the commands that are about to build an
+// image.
 //
 // Only the routers named, not every router in the config: `owlab up owrt2410`
 // used to download the 25.12 .apk files and the snapshot's compliance files as
-// well, and a GitHub 5xx on a package that router never installs failed it.
+// well, and a GitHub 5xx on a package that router never installs failed it. A
+// tarball is a hard requirement of the router built from it, so `owlab up
+// owrt2512` must not download, or fail on, the tarball of an ImmortalWrt router
+// in the same owlab.yaml either.
 func Materialize(cfg *config.Config, p *Project, routers []*config.Router) error {
 	if err := extractContext(p.ContextDir); err != nil {
 		return fmt.Errorf("writing build context: %w", err)
 	}
-	// Both after extractContext, which wipes the directory first.
+	// All after extractContext, which wipes the directory first.
 	cacheDir := filepath.Join(cfg.Dir, WorkDirName, "cache")
+	if err := fetchRootfs(routers, p.ContextDir, cacheDir); err != nil {
+		return err
+	}
 	if err := fetchExtraPackages(routers, p.ContextDir, cacheDir); err != nil {
 		return err
 	}
@@ -190,8 +197,8 @@ func BuildArgsFor(cfg *config.Config, r *config.Router) map[string]string {
 		args["BASE_STAGE"] = "upstream"
 		args["BASE_IMAGE"] = base
 	} else {
+		// The tarball itself is staged in the context by fetchRootfs.
 		args["BASE_STAGE"] = "tarball"
-		args["ROOTFS_URL"] = r.RootfsTarballURL()
 		// BASE_IMAGE still has to name something that resolves. buildkit reads
 		// the metadata for every FROM in the file before it works out which
 		// stages the target depends on, so leaving the default here makes a
