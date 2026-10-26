@@ -141,8 +141,10 @@ routers:
 	if args["BASE_IMAGE"] != "scratch" {
 		t.Errorf("BASE_IMAGE = %q, want scratch", args["BASE_IMAGE"])
 	}
-	if !strings.HasSuffix(args["ROOTFS_URL"], "immortalwrt-24.10.1-x86-64-rootfs.tar.gz") {
-		t.Errorf("ROOTFS_URL = %q", args["ROOTFS_URL"])
+	// The tarball travels in the build context (fetchRootfs), not as a URL
+	// for the image to download.
+	if _, ok := args["ROOTFS_URL"]; ok {
+		t.Errorf("ROOTFS_URL = %q, want none", args["ROOTFS_URL"])
 	}
 	// 24.10 predates the switch to apk.
 	if args["PKG_MANAGER"] != "opkg" {

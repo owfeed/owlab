@@ -180,22 +180,58 @@ func (a *app) reportMissingExtras(ctx context.Context, routers []*config.Router)
 // "owlab: extra_packages missing" summary on top would bury which is which.
 var errExtrasMissing = errors.New("extra_packages missing")
 
-// resolveBaseImages asks the registry whether each router's upstream image
-// exists, and switches the ones that do not onto the rootfs tarball.
+// resolveBaseImages asks the registry about each router's base image, and
+// switches the router onto the rootfs tarball when the image is not there or
+// the registry does not answer.
 //
 // Only on a build path. The two are published on different schedules — the
 // tarball when the release is built, the container image whenever the job that
 // mirrors it runs — so a freshly pinned release can have one and not the
 // other, and owlab can build from either.
+//
+// A registry that does not answer used to leave the image in place, on the
+// reasoning that a 250 MB tarball download was the worse trade. OpenWrt's is
+// 3.4-4.8 MB (25.12.5 and 24.10.8 on x86, armsr and mvebu, measured
+// 2026-10-26; ImmortalWrt's about 10 MB), and it sits on the download server
+// the image's own package installs need anyway, so the registry outage that
+// used to fail the build now costs one small download. The same holds for
+// `image:`, which is an accelerator over the same rootfs, but not for its 404:
+// an explicit image that does not exist is the config's mistake, and the build
+// says so.
 func resolveBaseImages(ctx context.Context, routers []*config.Router) {
+	// Asked once per registry: each probe of a dead host costs netx's
+	// attempts, and a lab is usually several routers on one registry. Holds
+	// the router the registry did not answer for.
+	down := map[string]string{}
 	for _, r := range routers {
-		if r.FromTarball() || r.Image != "" {
+		image := r.BaseImage()
+		if image == "" {
 			continue
 		}
-		if !upstream.HasContainerImage(ctx, r) {
+		host := upstream.RegistryHost(image)
+		var state upstream.ImageState
+		var err error
+		if first, ok := down[host]; ok {
+			state, err = upstream.RegistryDown, fmt.Errorf("not asked again after %s", first)
+		} else {
+			state, err = upstream.ProbeImage(ctx, image)
+		}
+		switch state {
+		case upstream.ImageMissing:
+			if r.Image != "" {
+				continue
+			}
 			fmt.Fprintf(os.Stderr,
 				"owlab: %s has no published container image yet; building %s from the rootfs tarball\n",
-				r.BaseImage(), r.ID)
+				image, r.ID)
+			r.UseTarball()
+		case upstream.RegistryDown:
+			if _, ok := down[host]; !ok {
+				down[host] = r.ID
+			}
+			fmt.Fprintf(os.Stderr,
+				"owlab: %s did not answer (%v); building %s from the rootfs tarball %s instead of %s\n",
+				host, err, r.ID, r.RootfsTarballURL(), image)
 			r.UseTarball()
 		}
 	}

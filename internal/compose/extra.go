@@ -79,9 +79,7 @@ func fetchExtraPackages(cfg *config.Config, ctxDir, cacheDir string) error {
 // ssh instead of through a build context, and both paths should share one
 // cache rather than each keeping their own copy of the same file.
 func Fetch(url, cacheDir string) (string, error) {
-	sum := sha256.Sum256([]byte(url))
-	name := hex.EncodeToString(sum[:8]) + "-" + path.Base(url)
-	dst := filepath.Join(cacheDir, name)
+	dst := cachePath(url, cacheDir)
 
 	if st, err := os.Stat(dst); err == nil && st.Size() > 0 {
 		return dst, nil
@@ -122,6 +120,14 @@ func Fetch(url, cacheDir string) (string, error) {
 		return "", err
 	}
 	return dst, nil
+}
+
+// cachePath is where Fetch keeps url: the base name for whoever reads the
+// directory, and a hash of the whole URL so two releases' files of the same
+// name do not collide.
+func cachePath(url, cacheDir string) string {
+	sum := sha256.Sum256([]byte(url))
+	return filepath.Join(cacheDir, hex.EncodeToString(sum[:8])+"-"+path.Base(url))
 }
 
 func copyFile(src, dst string) error {

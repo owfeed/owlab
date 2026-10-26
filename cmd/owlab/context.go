@@ -132,7 +132,8 @@ func (a *app) printMatrix(ctx context.Context, keep int) error {
 			// honest linux/arm64, while one inherited from upstream must
 			// repeat that image's own non-standard string. Emitting the
 			// upstream platform for a router that then falls back to the
-			// tarball asks buildx for a platform alpine does not publish:
+			// tarball asked buildx, while that path still unpacked in alpine,
+			// for a platform alpine does not publish:
 			//
 			//   alpine:3.22: no match for platform in manifest
 			resolveBaseImages(ctx, []*config.Router{&build})

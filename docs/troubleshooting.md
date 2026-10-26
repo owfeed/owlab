@@ -580,6 +580,21 @@ The server answered, and the file is not there. owlab asks for a 404 once. Check
 the release number and target in `owlab.yaml`: the release may not publish that
 image yet, or the out-of-feed package URL is wrong.
 
+### `… did not answer (…); building <id> from the rootfs tarball … instead of <image>`
+
+Not an error. The registry that serves the router's base image (Docker Hub for
+the default `openwrt/rootfs`, or the one named in `image:`) refused the
+connection, timed out, or answered 5xx or 429 through 4 attempts. owlab built
+the router from its release's rootfs tarball instead, which is the same rootfs.
+The build takes longer, because no layer from a build on the image can be
+reused, and the image carries the target's honest platform (`linux/arm64`
+rather than `linux/aarch64_generic`). The next run asks the registry again.
+
+A machine that reaches Docker Hub only through the engine's `registry-mirrors`
+sees this on every run: owlab asks `registry-1.docker.io` itself. Point
+`image:` at the mirror to keep the image path. A proxy in `HTTPS_PROXY` is used
+by owlab as well.
+
 ### `setup` step: `Upstream outage (safe to rerun)`, exit code 8
 
 `gh release download`, `gh release view` or `gh attestation verify` could not reach

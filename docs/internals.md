@@ -59,10 +59,13 @@ once.
 3. If any router is a container, Docker is checked and the engine identified.
    A project whose routers are all `fidelity: vm` never touches Docker, and
    demanding it would be a requirement owlab invented.
-4. Routers split by tier. Containers go through `compose.Prepare` — which
+4. Routers split by tier. Containers have their base image checked first:
+   `resolveBaseImages` sends a manifest `HEAD` to the image's registry and
+   moves a router onto its rootfs tarball when the tag is missing or the
+   registry does not answer. Then they go through `compose.Prepare` — which
    writes `authorized_keys` and a Compose file, extracts the build context, and
-   downloads the out-of-feed packages and the compliance bundle — and then
-   `docker compose build` and `up`. VMs go through `qemu.New(...).Start` and,
+   downloads the rootfs tarballs, the out-of-feed packages and the compliance
+   bundle — and then `docker compose build` and `up`. VMs go through `qemu.New(...).Start` and,
    if the disk is new, `Provision`.
 5. Both tiers are then polled on their forwarded HTTP port until LuCI answers.
    A router is "up" when uhttpd serves, not when the process starts: procd has

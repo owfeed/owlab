@@ -281,6 +281,16 @@ package manager reports the ones already there as up to date), fixtures are
 re-applied, the theme is set. A prebuilt image is an accelerator, not a
 different code path, so nothing behaves differently from a locally built one.
 
+Before a build, owlab asks the image's registry whether the image is there: a
+manifest `HEAD`, which Docker Hub does not count as a pull. When the registry
+does not answer — a refused connection, a timeout, or a 5xx or 429 through 4
+attempts — the router is built from its release's rootfs tarball on the
+download server instead, and owlab says so. This holds for the default image
+and for `image:` alike: the tarball is the same rootfs, and the tarball path
+pulls nothing from any registry. A tag the registry reports missing (404) moves
+the default image to the tarball as well. For `image:` it fails the build
+instead, because a name you wrote that does not exist is a mistake to fix.
+
 Published tags are `<distro>-<release>-<arch>`:
 
 ```

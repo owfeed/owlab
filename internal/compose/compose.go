@@ -137,14 +137,18 @@ func Render(cfg *config.Config, eng engine.Info) (*Project, error) {
 // Materialize fills in the build context the compose file points at.
 //
 // This is the expensive half — the embedded context is wiped and rewritten,
-// and the out-of-feed packages and compliance bundle are downloaded — so it is
-// called only by the commands that are about to build an image.
+// and the rootfs tarballs, out-of-feed packages and compliance bundle are
+// downloaded — so it is called only by the commands that are about to build an
+// image.
 func Materialize(cfg *config.Config, p *Project) error {
 	if err := extractContext(p.ContextDir); err != nil {
 		return fmt.Errorf("writing build context: %w", err)
 	}
-	// Both after extractContext, which wipes the directory first.
+	// All after extractContext, which wipes the directory first.
 	cacheDir := filepath.Join(cfg.Dir, WorkDirName, "cache")
+	if err := fetchRootfs(cfg, p.ContextDir, cacheDir); err != nil {
+		return err
+	}
 	if err := fetchExtraPackages(cfg, p.ContextDir, cacheDir); err != nil {
 		return err
 	}
@@ -185,8 +189,8 @@ func BuildArgsFor(cfg *config.Config, r *config.Router) map[string]string {
 		args["BASE_STAGE"] = "upstream"
 		args["BASE_IMAGE"] = base
 	} else {
+		// The tarball itself is staged in the context by fetchRootfs.
 		args["BASE_STAGE"] = "tarball"
-		args["ROOTFS_URL"] = r.RootfsTarballURL()
 		// BASE_IMAGE still has to name something that resolves. buildkit reads
 		// the metadata for every FROM in the file before it works out which
 		// stages the target depends on, so leaving the default here makes a

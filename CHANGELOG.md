@@ -7,6 +7,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+### Fixed
+
+- **A registry that does not answer no longer fails the build.** Every
+  container router's base image came from a registry, so a Docker Hub outage
+  failed `owlab up` and `owlab test`, and the tarball path owlab already took
+  for a release with no image unpacked the rootfs in an `alpine` image pulled
+  from Docker Hub as well. owlab now asks the image's registry before building
+  (a manifest `HEAD`, for the default image and for `image:` alike). When the
+  registry refuses, times out, or answers 5xx or 429 through 4 attempts, the
+  router is built from its release's rootfs tarball on the download server, and
+  owlab says so. The tarball is downloaded on the host and unpacked onto
+  `scratch` by `ADD`, so that path pulls nothing from any registry; `owlab
+  context` stages it at `tarball/<id>.tar.gz` and no longer emits `ROOTFS_URL`.
+  A missing tag on an explicit `image:` still fails the build.
+
 ## [0.6.6] - 2026-10-20
 
 ### Fixed
