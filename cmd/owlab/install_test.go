@@ -24,8 +24,8 @@ func TestInstallOfflineAsksNoFeed(t *testing.T) {
 			return err
 		}
 		var out bytes.Buffer
-		if !installOffline(t.Context(), run, pm, []string{"/tmp/luci-theme-example"}, &out) {
-			t.Errorf("%s: an install that succeeded was handed back:\n%s", pm, out.String())
+		if retry, err := installOffline(t.Context(), run, pm, []string{"/tmp/luci-theme-example"}, &out); retry || err != nil {
+			t.Errorf("%s: an install that succeeded came back as retry=%v, err=%v:\n%s", pm, retry, err, out.String())
 		}
 		if len(scripts) != 1 || strings.Contains(scripts[0], "update") {
 			t.Errorf("%s: want one install and no refresh, ran %q", pm, scripts)
@@ -48,14 +48,46 @@ func TestInstallOfflineHandsBackAFileThatNeedsAFeed(t *testing.T) {
 		return errors.New("exit status 6")
 	}
 	var out bytes.Buffer
-	if installOffline(t.Context(), run, config.APK, []string{"/tmp/luci-app-ttyd.apk"}, &out) {
-		t.Fatal("an install that failed was reported as done")
+	if retry, err := installOffline(t.Context(), run, config.APK, []string{"/tmp/luci-app-ttyd.apk"}, &out); !retry || err != nil {
+		t.Fatalf("a dependency the router lacks came back as retry=%v, err=%v; want a retry with the refresh", retry, err)
 	}
 	if strings.Contains(out.String(), "masked in") {
 		t.Errorf("the offline attempt's own failure was shown: %q", out.String())
 	}
 	if !strings.Contains(out.String(), "refreshing its feeds and trying again") {
 		t.Errorf("does not say what happens next: %q", out.String())
+	}
+}
+
+// A refusal a refresh cannot change is final, and its own words are shown. apk
+// prints a post-install script's error on the first `apk add` alone: asked
+// again with the refresh it said only "1 error;", and `owlab install` pointed
+// at a reason that was printed nowhere. opkg's attempt fetched from lists that
+// may be stale, so any refusal of it goes on to the refresh, and opkg runs a
+// failed postinst again there and says so.
+func TestInstallOfflineKeepsARefusalARefreshCannotChange(t *testing.T) {
+	const postInstall = "(1/1) Installing luci-theme-example (1.0-r1)\n" +
+		"ERROR: lib/apk/exec/luci-theme-example-1.0-r1.post-install: exited with error 1\n" +
+		"1 error; 113.7 MiB in 338 packages\n"
+	for _, c := range []struct {
+		pm    config.PackageManager
+		retry bool
+	}{
+		{config.APK, false},
+		{config.OPKG, true},
+	} {
+		run := func(_ context.Context, _ string, _ []byte, out io.Writer) error {
+			_, _ = io.WriteString(out, postInstall)
+			return errors.New("exit status 1")
+		}
+		var out bytes.Buffer
+		retry, err := installOffline(t.Context(), run, c.pm, []string{"/tmp/luci-theme-example"}, &out)
+		if retry != c.retry || (err != nil) == c.retry {
+			t.Errorf("%s: retry=%v, err=%v; want retry=%v and an error only without one", c.pm, retry, err, c.retry)
+		}
+		if shown := strings.Contains(out.String(), "post-install: exited with error 1"); shown == c.retry {
+			t.Errorf("%s: the script's error shown=%v, want %v:\n%s", c.pm, shown, !c.retry, out.String())
+		}
 	}
 }
 

@@ -38,8 +38,9 @@ one waits for a major.
   names the router. It printed `install failed on` and exited 0.
 - **`owlab install <router> <file>` no longer refreshes every feed index
   first.** A file whose dependencies are already on the router installs
-  without asking a feed (`apk --no-network`, plain `opkg install`). When that
-  fails, owlab refreshes the feeds and installs again, as before.
+  without asking a feed (`apk --no-network`, plain `opkg install`). When a
+  dependency is missing, owlab refreshes the feeds and installs again, as
+  before.
 
 ## [0.6.6] - 2026-10-20
 
