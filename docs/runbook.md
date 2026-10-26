@@ -374,6 +374,10 @@ $ owlab install owrt2512 dist/noarch/luci-app-mine-1.0-r1.apk
 Verify: the file exists under `dist/`, and the router serves the same thing it
 served from a sync.
 
+`owlab install` exits 1 and names the router when the package manager refused
+the file. A file whose dependencies are already on the router is installed
+without asking a feed; otherwise owlab refreshes the feeds and installs again.
+
 Worth doing before every release. A real build minifies JS and CSS where a sync
 does not, and that difference has broken packages that worked on the dev box.
 

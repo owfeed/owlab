@@ -143,8 +143,51 @@ $ owlab exec owrt2410 -- 'opkg update 2>&1 | grep -c "^Updated"'
 ```
 
 Zero is the fatal case and owlab will have said so. Anything above zero with a
-non-zero exit is the partial one, and the packages that live in the feed that
-did not answer are the ones that will be reported as skipped.
+non-zero exit is the partial one. A name the install then does not find is
+reported as a failure, because the feed that did not answer may carry it; see
+the next entry. When only a kmods index did not answer, only a missing `kmod-*`
+is a failure.
+
+### `owlab up` exits 1: a router is running WITHOUT a package from `packages:`
+
+**Symptom.** `owlab up` prints its table, then this, and exits 1:
+
+```
+! owrt2410 is running WITHOUT luci-app-example
+!   Every other router built and started; only these packages are missing.
+!   The package manager said why during the build — one router at a time shows it again,
+!   and downloads what failed to download:
+!     owlab up --rebuild owrt2410
+```
+
+In 0.6.6 and earlier the same router started with exit 0, and the only trace
+was an `owlab: FAILED to install` line in the build log.
+
+**Cause.** The package layer installs each name on its own and records the
+ones that did not install in `/etc/owlab/packages-failed`. The build log gives
+the reason above `owlab: FAILED to install <name>`:
+
+- `owlab: <name> did not download in 4 attempts`: a download server or network
+  outage. The packages after it are asked once each, so one outage costs one
+  round of waiting.
+- The package manager's own lines: a file clash, or a dependency the feeds do
+  not carry.
+- `no feed that answered the refresh above carries it`: the name was not found
+  after a `partial refresh`, and the feed that did not answer may carry it.
+
+**Fix.** After an outage, run `owlab up --rebuild owrt2410`. A plain `owlab up`
+reuses the cached layer and reports the same router again. For a clash or a
+missing dependency, remove the name from that router's `packages:`, or add the
+package it needs.
+
+**Check.** Ask the running router:
+
+```console
+$ owlab exec owrt2410 -- cat /etc/owlab/packages-failed
+luci-app-example
+```
+
+`owlab test` fails that router on its `packages` step with the same names.
 
 ---
 
@@ -152,10 +195,10 @@ did not answer are the ones that will be reported as skipped.
 
 ### The container's interface is in no firewall zone
 
-**Symptom.** `owlab up` reports `did not answer on HTTP in time`. `curl`
-against the published port gets nothing back — exit 52, empty reply — while
-inside the container `uhttpd` is listening on `0.0.0.0:80` and a local request
-is answered. Reported on ImmortalWrt, where two routers were unreachable and
+**Symptom.** `owlab up` reports `did not answer on HTTP in time` and exits 1.
+`curl` against the published port gets nothing back — exit 52, empty reply —
+while inside the container `uhttpd` is listening on `0.0.0.0:80` and a local
+request is answered. Reported on ImmortalWrt, where two routers were unreachable and
 the OpenWrt routers on the same stand were not.
 
 ```console

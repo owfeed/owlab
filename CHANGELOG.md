@@ -7,6 +7,35 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+### Fixed
+
+- **`owlab up` exits non-zero when a router is missing a package from
+  `packages:`.** A package that failed to install was a line in the build log,
+  and `owlab up` exited 0, so a CI job ran its checks against a router without
+  the app under test. The image now records the name in
+  `/etc/owlab/packages-failed`, as it already did for `extra_packages`.
+  `owlab up` names it after its table and exits 1, and `owlab test` fails that
+  router on a `packages` step. A name the release's feeds do not carry is
+  still a skip.
+- **A package download that fails during the image build is asked again.** It
+  gets the retries owlab's own downloads have: 4 attempts, 2, 4 and 8 s apart.
+  The first package that fails every attempt ends the retries for the rest of
+  the build, so an outage costs one round of waiting.
+- **A name not found after a partial index refresh is a failure, not a skip.**
+  The feed that did not answer may carry it. A kmods index alone is the
+  exception, because it carries only `kmod-*` packages, and a snapshot image
+  older than the feed's kernel window loses it on every build.
+- **`owlab up` exits non-zero when a router never answered on HTTP.** It
+  printed `did not answer on HTTP in time` and exited 0.
+- **`owlab install` exits non-zero when a router refused the package,** and
+  names the router. It printed `install failed on` and exited 0.
+- **`owlab install <router> <file>` no longer refreshes every feed index
+  first.** A file whose dependencies are already on the router installs
+  without asking a feed (`apk --no-network`, plain `opkg install`). When that
+  fails, owlab refreshes the feeds and installs again, as before.
+
 ## [0.6.6] - 2026-10-20
 
 ### Fixed

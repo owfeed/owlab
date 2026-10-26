@@ -438,6 +438,21 @@ feed did not carry `luci-app-openvpn`. Any other refusal — a file clash, a
 dependency the feed lacks — prints the package manager's own output and then
 `owlab: FAILED to install <name>`, and the build carries on without it.
 
+Carrying on is not the same as passing it over. The name goes into
+`/etc/owlab/packages-failed`, which `owlab up` reads back off the running
+router and reports before exiting 1, as it does for `extra_packages` below.
+Ending the layer instead would cancel every other router in the build. Two
+kinds of failure are worth a closer look, because each would otherwise be
+cached:
+
+- A download is asked again, 4 attempts 2, 4 and 8 s apart, the schedule of
+  `internal/netx`. Once the layer exits 0, buildkit keeps it, and every
+  `owlab up` after a dropped fetch would hand back the same short router.
+- After a refresh in which a feed did not answer, a name the install does not
+  find is a failure, because that feed may carry it. A kmods index alone is the
+  exception: a snapshot image older than the feed's kernel window loses it on
+  every build, and it carries only `kmod-*` packages.
+
 ### `extra_packages` — anything not in a feed
 
 Your own package, or anything published on GitHub Releases. Two URLs, because
