@@ -142,6 +142,15 @@ error:
 owlab: skip (not in this feed): luci-app-example
 ```
 
+On opkg, a name that a package already on the router provides is a skip too.
+ImmortalWrt ships `dnsmasq-full`, which provides `dnsmasq`, and opkg would
+otherwise install the real `dnsmasq` beside it and refuse on a file clash. apk
+counts the provider as the name by itself:
+
+```
+owlab: skip (provided by dnsmasq-full, already installed): dnsmasq
+```
+
 Anything else is a failure: a file clash, a dependency the feeds lack, or a
 download that still fails after 4 attempts, 2, 4 and 8 s apart (the retries
 owlab's own downloads use). A name that is not found after a refresh in which a

@@ -108,6 +108,10 @@ RUN mkdir -p /var/lock /var/run /var/log /var/state
 # alone, which can only carry a kmod-*: a snapshot image older than the feed's
 # kernel window 404s on it on every build.
 #
+# On opkg, a name an installed package provides is a skip too: ImmortalWrt 24.10
+# ships dnsmasq-full, and opkg refuses the stock set's dnsmasq beside it on a
+# file clash. apk counts the provider as the name.
+#
 # The index refresh is tolerant of a feed that does not answer, and loud about
 # it. Both managers exit non-zero when one configured feed is unreachable, and
 # under `set -eu` that used to end this layer before the loop below it ran —
@@ -156,6 +160,7 @@ RUN set -eu; \
 			if printf '%s\n' "$owlab_upd" | grep -q '^\*\*\* Failed to download the package list from ' && ! printf '%s\n' "$owlab_upd" | grep '^\*\*\* Failed to download the package list from ' | grep -qv '/kmods/'; then owlab_partial=kmods; fi; fi; \
 		rm -f /etc/owlab/packages-failed || { echo "owlab: cannot remove /etc/owlab/packages-failed, so the packages an earlier build could not install would be reported for this one; stopping" >&2; exit 1; }; owlab_waits='2 4 8'; \
 		for p in $PACKAGES; do owlab_out=$(opkg install "$p" 2>&1) && continue; \
+			if owlab_by=$(awk -v p="$p" '/^Package: / { if (v && s) exit; n = $2; v = s = 0 } /^Provides: / { k = split(substr($0, 11), a, /, */); for (i = 1; i <= k; i++) { sub(/[ (=].*/, "", a[i]); if (a[i] == p) v = 1 } } /^Status: .* installed$/ { s = 1 } END { if (v && s) print n; else exit 1 }' /usr/lib/opkg/status); then echo "owlab: skip (provided by $owlab_by, already installed): $p"; continue; fi; \
 			for owlab_wait in $owlab_waits; do printf '%s\n' "$owlab_out" | grep -qF 'opkg_download: Failed to download' || break; \
 			echo "owlab: downloading $p failed (a download server or network outage); asking again in ${owlab_wait}s" >&2; \
 			sleep "$owlab_wait"; owlab_out=$(opkg install "$p" 2>&1) && continue 2; done; \

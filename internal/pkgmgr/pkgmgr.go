@@ -138,10 +138,12 @@ var (
 const PackagesFailedPath = "/etc/owlab/packages-failed"
 
 // Variables rather than literals only so the tests can keep the record in a
-// temporary directory, and keep the attempts while dropping the waiting.
+// temporary directory, keep the attempts while dropping the waiting, and hand
+// opkg a status file of their own.
 var (
 	packagesFailed = PackagesFailedPath
 	retryWaits     = netxWaits()
+	opkgStatus     = "/usr/lib/opkg/status"
 )
 
 // netxWaits is internal/netx's retry schedule as the seconds a shell sleeps
@@ -419,17 +421,29 @@ func UpgradeShell(pm config.PackageManager) string {
 // not a wrong URL: the index the refresh just read named the file. The first
 // package to fail every attempt ends the retries for the rest of the loop, so
 // an outage costs one round of waiting and not one per package.
+//
+// On opkg, a name an installed package provides is a skip, whatever the
+// refusal. ImmortalWrt 24.10 ships dnsmasq-full, which provides dnsmasq, and
+// the stock set asks for dnsmasq: opkg installs the real dnsmasq beside it
+// and refuses on check_data_file_clashes (measured on immortalwrt 24.10.6),
+// so every ImmortalWrt 24.10 router failed `owlab up` on a name it already
+// had. apk counts the provider as the name and installs nothing. Asked only
+// after a refusal, because `opkg install libgcc` resolves to the libgcc1 that
+// provides it and succeeds, and a skip there would be noise.
 func EachShell(pm config.PackageManager, add, list string) string {
 	missing := `Unknown package '$p'.`
 	fetchFailed := `printf '%s\n' "$owlab_out" | grep -qF 'opkg_download: Failed to download'`
+	provided := `if owlab_by=$(awk -v p="$p" '/^Package: / { if (v && s) exit; n = $2; v = s = 0 } /^Provides: / { k = split(substr($0, 11), a, /, */); for (i = 1; i <= k; i++) { sub(/[ (=].*/, "", a[i]); if (a[i] == p) v = 1 } } /^Status: .* installed$/ { s = 1 } END { if (v && s) print n; else exit 1 }' ` + opkgStatus + `); then ` +
+		`echo "owlab: skip (provided by $owlab_by, already installed): $p"; continue; fi; `
 	if pm == config.APK {
 		missing = `  $p (no such package):`
 		fetchFailed = `printf '%s\n' "$owlab_out" | awk '/^ERROR: wget: exited with error/ { w = 1; next } w && !/^WARNING: updating and opening / { f = 1 } { w = 0 } END { exit !(f || w) }'`
+		provided = ""
 	}
 	attempts := strconv.Itoa(len(strings.Fields(retryWaits)) + 1)
 	return `rm -f ` + packagesFailed + ` || { echo "owlab: cannot remove ` + packagesFailed + `, so the packages an earlier build could not install would be reported for this one; stopping" >&2; exit 1; }; ` +
 		`owlab_waits='` + retryWaits + `'; ` +
-		`for p in ` + list + `; do owlab_out=$(` + add + ` "$p" 2>&1) && continue; ` +
+		`for p in ` + list + `; do owlab_out=$(` + add + ` "$p" 2>&1) && continue; ` + provided +
 		`for owlab_wait in $owlab_waits; do ` + fetchFailed + ` || break; ` +
 		`echo "owlab: downloading $p failed (a download server or network outage); asking again in ${owlab_wait}s" >&2; ` +
 		`sleep "$owlab_wait"; owlab_out=$(` + add + ` "$p" 2>&1) && continue 2; done; ` +

@@ -27,6 +27,11 @@ one waits for a major.
   The feed that did not answer may carry it. A kmods index alone is the
   exception, because it carries only `kmod-*` packages, and a snapshot image
   older than the feed's kernel window loses it on every build.
+- **On opkg, a name an installed package provides is a skip.** ImmortalWrt
+  24.10 ships `dnsmasq-full`, which provides `dnsmasq`, and opkg refused the
+  stock set's `dnsmasq` beside it on a file clash: 0.6.6 printed
+  `FAILED to install dnsmasq` for every ImmortalWrt 24.10 router. apk already
+  counts the provider as the name.
 - **`owlab up` exits non-zero when a router never answered on HTTP.** It
   printed `did not answer on HTTP in time` and exited 0.
 - **`owlab install` exits non-zero when a router refused the package,** and
