@@ -206,6 +206,12 @@ Downloads happen on the host and are cached in `.owlab/cache/`, so `up` does
 not re-fetch them. They have to: a stock OpenWrt rootfs has no `curl`, and its
 busybox `wget` cannot do TLS.
 
+Only the routers being built are fetched for. `owlab up owrt2512` downloads
+owrt2512's packages and compliance files and nothing for the other routers in
+`owlab.yaml`, so a package only a 24.10 router installs cannot fail it. A
+download that sends nothing for 60 seconds, or breaks off halfway, is started
+again from the first byte, 4 attempts in all.
+
 A failure here is neither passed over nor fatal, unlike a name in `packages:`
 that a particular feed happens not to carry. These are named by URL — you said
 "install this file" — so owlab will not report success without one. It will

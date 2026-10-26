@@ -58,9 +58,9 @@ func (a *app) buildContext(ctx context.Context, args []string) error {
 
 	resolveBaseImages(ctx, []*config.Router{r})
 
-	// Prepare writes the shared context, the per-router extra packages and
-	// the compliance bundle.
-	proj, err := compose.Prepare(a.cfg, a.eng)
+	// Prepare writes the shared context, and this router's extra packages and
+	// compliance bundle.
+	proj, err := compose.Prepare(a.cfg, a.eng, []*config.Router{r})
 	if err != nil {
 		return err
 	}

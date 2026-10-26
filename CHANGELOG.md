@@ -51,6 +51,27 @@ one waits for a major.
   without asking a feed (`apk --no-network`, plain `opkg install`). When a
   dependency is missing, owlab refreshes the feeds and installs again, as
   before.
+- **`owlab up <id>` downloads only that router's files.** The out-of-feed
+  packages and compliance files of every router in `owlab.yaml` were fetched
+  for any build, so an `owlab up owrt2410` also fetched the 25.12 `.apk` files
+  and the snapshot's sha256sums, and a GitHub 5xx on a package that router never
+  installs failed it. `owlab up`, `owlab test` and `owlab context --router` now
+  stage the routers they build and no others. The image copies only its own
+  router's `extra/` and `compliance/` directory, so a router's layer cache no
+  longer changes with which routers were selected.
+- **A download that stalls or breaks off is started again.** Out-of-feed
+  packages and compliance files had a 5-minute limit on the whole download and
+  no retry once the body had started: a GitHub node that went quiet held the
+  command for 5 minutes and then failed it, and a dropped connection failed it
+  at once. A download now counts as stalled after 60 seconds without a byte,
+  and a stalled or broken-off download is fetched again from the start, 4
+  attempts in all, before it is reported as an outage. A slow download that
+  keeps sending is no longer cut off.
+- **`setup` stops a `gh` call that hangs.** `gh release view`,
+  `gh release download` and `gh attestation verify` had no time limit, and a
+  stall printed nothing the outage check could match, so the step waited for
+  the job's own timeout. Each call now has 120 seconds; one that runs out is
+  retried as an outage and ends in exit 8 if that persists.
 
 ## [0.6.6] - 2026-10-20
 

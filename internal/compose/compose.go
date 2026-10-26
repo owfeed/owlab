@@ -134,31 +134,36 @@ func Render(cfg *config.Config, eng engine.Info) (*Project, error) {
 	return &Project{ComposePath: composePath, ContextDir: ctxDir}, nil
 }
 
-// Materialize fills in the build context the compose file points at.
+// Materialize fills in the build context the compose file points at, for the
+// routers about to be built.
 //
 // This is the expensive half — the embedded context is wiped and rewritten,
 // and the out-of-feed packages and compliance bundle are downloaded — so it is
 // called only by the commands that are about to build an image.
-func Materialize(cfg *config.Config, p *Project) error {
+//
+// Only the routers named, not every router in the config: `owlab up owrt2410`
+// used to download the 25.12 .apk files and the snapshot's compliance files as
+// well, and a GitHub 5xx on a package that router never installs failed it.
+func Materialize(cfg *config.Config, p *Project, routers []*config.Router) error {
 	if err := extractContext(p.ContextDir); err != nil {
 		return fmt.Errorf("writing build context: %w", err)
 	}
 	// Both after extractContext, which wipes the directory first.
 	cacheDir := filepath.Join(cfg.Dir, WorkDirName, "cache")
-	if err := fetchExtraPackages(cfg, p.ContextDir, cacheDir); err != nil {
+	if err := fetchExtraPackages(routers, p.ContextDir, cacheDir); err != nil {
 		return err
 	}
-	return fetchCompliance(cfg, p.ContextDir, cacheDir)
+	return fetchCompliance(routers, p.ContextDir, cacheDir)
 }
 
 // Prepare renders the compose file and materialises the context it refers to,
-// for the commands that are about to build.
-func Prepare(cfg *config.Config, eng engine.Info) (*Project, error) {
+// for the commands that are about to build these routers.
+func Prepare(cfg *config.Config, eng engine.Info, routers []*config.Router) (*Project, error) {
 	p, err := Render(cfg, eng)
 	if err != nil {
 		return nil, err
 	}
-	if err := Materialize(cfg, p); err != nil {
+	if err := Materialize(cfg, p, routers); err != nil {
 		return nil, err
 	}
 	return p, nil

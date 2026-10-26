@@ -618,7 +618,10 @@ Run the command again later. For GitHub, check
 [githubstatus.com](https://www.githubstatus.com).
 
 The same applies to `unreachable after 4 attempts (a network or server outage …)`,
-which covers timeouts, DNS failures and refused connections.
+which covers timeouts, DNS failures and refused connections. An out-of-feed
+package or a compliance file whose server went quiet says `the server sent nothing
+for 1m0s`, and one that broke off says `reading the body: unexpected EOF`: each
+attempt downloads the whole file again.
 
 ### `404 Not Found` on an image, a rootfs or a package
 
@@ -629,9 +632,11 @@ image yet, or the out-of-feed package URL is wrong.
 ### `setup` step: `Upstream outage (safe to rerun)`, exit code 8
 
 `gh release download`, `gh release view` or `gh attestation verify` could not reach
-GitHub or Sigstore after 4 attempts. The binary was not checked, which is different
-from failing verification. Rerun the job. `does not verify as built by
-owfeed/owlab's release workflow`, exit code 1, is the real refusal.
+GitHub or Sigstore after 4 attempts. A call that does not finish within 120 seconds
+counts as one of them, and the log says `no answer from GitHub within 120s`. The
+binary was not checked, which is different from failing verification. Rerun the
+job. `does not verify as built by owfeed/owlab's release workflow`, exit code 1,
+is the real refusal.
 
 ---
 

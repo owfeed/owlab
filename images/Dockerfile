@@ -242,7 +242,11 @@ RUN set -eu; \
 # table, and which `owlab test` fails on. The record is the point: a build log
 # scrolls past and nobody reads it, so the fact has to outlive the build.
 ARG ROUTER_ID=""
-COPY extra/ /tmp/owlab-extra/
+# This router's directory only, so this layer and every one after it hash this
+# router's own files. owlab stages only the routers it is about to build, and a
+# COPY of the whole directory would miss the cache whenever `owlab up A` and
+# `owlab up` alternate, or another router's package changed.
+COPY extra/${ROUTER_ID}/ /tmp/owlab-extra/${ROUTER_ID}/
 #
 # All of them in ONE command, in the order owlab staged them. These packages
 # routinely depend on each other — luci-app-example requires example-daemon — and
@@ -405,7 +409,9 @@ COPY rootfs-extra/ /
 # commit — but none of it INSIDE the rootfs, which carries no licence texts and
 # no copyright notices at all. Staging it here is what makes the image
 # self-documenting rather than leaving every downstream user to reconstruct it.
-COPY compliance/ /tmp/owlab-compliance/
+#
+# This router's directory only, for the reason given at extra/ above.
+COPY compliance/${ROUTER_ID}/ /tmp/owlab-compliance/${ROUTER_ID}/
 RUN set -eu; \
 	src="/tmp/owlab-compliance/$ROUTER_ID"; \
 	if [ -d "$src" ]; then \
