@@ -105,7 +105,7 @@ func (a *app) test(ctx context.Context, args []string) error {
 	}
 
 	containers, vms := splitTiers(routers)
-	resolveBaseImages(ctx, containers)
+	resolveBaseImages(ctx, containers, false)
 
 	// Deferred, and deliberately not conditional on success. A failed CI run
 	// that leaves containers holding 8080 and 2222 makes the *next* run fail
@@ -131,7 +131,7 @@ func (a *app) test(ctx context.Context, args []string) error {
 	}()
 
 	if len(containers) > 0 {
-		proj, err := compose.Prepare(a.cfg, a.eng)
+		proj, err := compose.Prepare(a.cfg, a.eng, containers)
 		if err != nil {
 			return err
 		}

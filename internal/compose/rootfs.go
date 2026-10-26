@@ -15,16 +15,15 @@ import (
 // ADDs it from there.
 const tarballDir = "tarball"
 
-// fetchRootfs stages the rootfs tarball of each router built from one.
+// fetchRootfs stages the rootfs tarball of each router being built from one.
 //
 // On the host rather than with `ADD <url>` in the image. ADD does not unpack a
 // remote archive, so the stage that unpacked it ran tar in alpine, pulled from
 // Docker Hub: the path owlab falls back to when a registry does not answer
 // pulled from a registry itself. A local archive ADD unpacks onto scratch,
 // with no base image at all.
-func fetchRootfs(cfg *config.Config, ctxDir, cacheDir string) error {
-	for i := range cfg.Routers {
-		r := &cfg.Routers[i]
+func fetchRootfs(routers []*config.Router, ctxDir, cacheDir string) error {
+	for _, r := range routers {
 		if r.Fidelity == config.VM || r.BaseImage() != "" {
 			continue
 		}

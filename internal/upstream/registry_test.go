@@ -158,3 +158,31 @@ func TestProbeImageLeavesAPrivateImageToTheEngine(t *testing.T) {
 		t.Errorf("a token refused with 403: got %v; want ImageFound", state)
 	}
 }
+
+// resolveBaseImages falls back to a tarball only when HeadFile says the server
+// has it, and records the server as down only when its error is an outage.
+func TestHeadFileTellsAFileFromAMissingOneFromAnOutage(t *testing.T) {
+	old := netx.DefaultDelay
+	netx.DefaultDelay = time.Millisecond
+	t.Cleanup(func() { netx.DefaultDelay = old })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/rootfs.tar.gz":
+		case "/failing.tar.gz":
+			w.WriteHeader(http.StatusBadGateway)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	if err := HeadFile(t.Context(), srv.URL+"/rootfs.tar.gz"); err != nil {
+		t.Errorf("a file the server has: %v", err)
+	}
+	if err := HeadFile(t.Context(), srv.URL+"/missing.tar.gz"); err == nil || netx.Transient(err) || !strings.Contains(err.Error(), "404") {
+		t.Errorf("a 404 is an answer, not an outage: %v", err)
+	}
+	if err := HeadFile(t.Context(), srv.URL+"/failing.tar.gz"); err == nil || !netx.Transient(err) {
+		t.Errorf("a 502 through netx's attempts is an outage: %v", err)
+	}
+}

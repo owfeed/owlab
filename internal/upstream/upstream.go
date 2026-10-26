@@ -220,15 +220,23 @@ func get(ctx context.Context, url string) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 }
 
-func head(ctx context.Context, url string) bool {
+func head(ctx context.Context, url string) bool { return HeadFile(ctx, url) == nil }
+
+// HeadFile asks a download server, with a HEAD through netx's attempts, whether
+// it serves url. Nil is a 200; anything else is an error that netx.Transient
+// reads as an outage or an answer.
+func HeadFile(ctx context.Context, url string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 	if err != nil {
-		return false
+		return err
 	}
 	resp, err := netx.Client(&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
-		return false
+		return err
 	}
 	resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	if resp.StatusCode != http.StatusOK {
+		return netx.Status(url, resp)
+	}
+	return nil
 }

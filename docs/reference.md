@@ -284,12 +284,19 @@ different code path, so nothing behaves differently from a locally built one.
 Before a build, owlab asks the image's registry whether the image is there: a
 manifest `HEAD`, which Docker Hub does not count as a pull. When the registry
 does not answer — a refused connection, a timeout, or a 5xx or 429 through 4
-attempts — the router is built from its release's rootfs tarball on the
-download server instead, and owlab says so. This holds for the default image
-and for `image:` alike: the tarball is the same rootfs, and the tarball path
-pulls nothing from any registry. A tag the registry reports missing (404) moves
-the default image to the tarball as well. For `image:` it fails the build
-instead, because a name you wrote that does not exist is a mistake to fix.
+attempts — and the download server has the release's rootfs tarball, the router
+is built from that tarball instead, and owlab says so. This holds for the
+default image and for `image:` alike: the tarball is the same rootfs, and the
+tarball path pulls nothing from any registry. A tag the registry reports
+missing (404) moves the default image to the tarball as well. For `image:` it
+fails the build instead, because a name you wrote that does not exist is a
+mistake to fix.
+
+When the download server does not answer either, the image stays. A machine
+that reaches neither is offline, or reaches the internet only through the
+engine's own proxy or mirror, and the engine may still pull the image or build
+from the image and layers it already holds; the tarball could not be
+downloaded at all.
 
 Published tags are `<distro>-<release>-<arch>`:
 

@@ -595,6 +595,14 @@ sees this on every run: owlab asks `registry-1.docker.io` itself. Point
 `image:` at the mirror to keep the image path. A proxy in `HTTPS_PROXY` is used
 by owlab as well.
 
+`… and neither did the rootfs tarball (…); leaving <id> on <image> for the
+engine …` is the same check finding the download server unreachable too, which
+is what an offline machine sees. owlab leaves the image to the engine, as it did
+before it asked: the engine pulls it through its own proxy or mirror, or builds
+from the copy and layers it holds. If it can do neither, the build fails on the
+pull and names the registry. Check the network of the machine running owlab, or
+set `HTTPS_PROXY` for it.
+
 ### `setup` step: `Upstream outage (safe to rerun)`, exit code 8
 
 `gh release download`, `gh release view` or `gh attestation verify` could not reach

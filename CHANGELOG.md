@@ -22,7 +22,12 @@ one waits for a major.
   owlab says so. The tarball is downloaded on the host and unpacked onto
   `scratch` by `ADD`, so that path pulls nothing from any registry; `owlab
   context` stages it at `tarball/<id>.tar.gz` and no longer emits `ROOTFS_URL`.
-  A missing tag on an explicit `image:` still fails the build.
+  A missing tag on an explicit `image:` still fails the build. When the
+  download server does not answer either (an offline machine, or one that
+  reaches the internet only through the engine's proxy), the image stays, as it
+  did before. `owlab context`, which prepares the images owlab publishes, keeps
+  the image through an outage too: an `aarch64_generic` tag built from the
+  tarball would carry `linux/arm64` and fail every `image:` that names it.
 
 ## [0.6.6] - 2026-10-20
 

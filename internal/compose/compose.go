@@ -140,13 +140,18 @@ func Render(cfg *config.Config, eng engine.Info) (*Project, error) {
 // and the rootfs tarballs, out-of-feed packages and compliance bundle are
 // downloaded — so it is called only by the commands that are about to build an
 // image.
-func Materialize(cfg *config.Config, p *Project) error {
+//
+// The tarballs are those of routers, the ones about to be built. A tarball is
+// a hard requirement of the router built from it, and `owlab up owrt2512` must
+// not download, or fail on, the tarball of an ImmortalWrt router in the same
+// owlab.yaml.
+func Materialize(cfg *config.Config, p *Project, routers []*config.Router) error {
 	if err := extractContext(p.ContextDir); err != nil {
 		return fmt.Errorf("writing build context: %w", err)
 	}
 	// All after extractContext, which wipes the directory first.
 	cacheDir := filepath.Join(cfg.Dir, WorkDirName, "cache")
-	if err := fetchRootfs(cfg, p.ContextDir, cacheDir); err != nil {
+	if err := fetchRootfs(routers, p.ContextDir, cacheDir); err != nil {
 		return err
 	}
 	if err := fetchExtraPackages(cfg, p.ContextDir, cacheDir); err != nil {
@@ -156,13 +161,13 @@ func Materialize(cfg *config.Config, p *Project) error {
 }
 
 // Prepare renders the compose file and materialises the context it refers to,
-// for the commands that are about to build.
-func Prepare(cfg *config.Config, eng engine.Info) (*Project, error) {
+// for the commands that are about to build these routers.
+func Prepare(cfg *config.Config, eng engine.Info, routers []*config.Router) (*Project, error) {
 	p, err := Render(cfg, eng)
 	if err != nil {
 		return nil, err
 	}
-	if err := Materialize(cfg, p); err != nil {
+	if err := Materialize(cfg, p, routers); err != nil {
 		return nil, err
 	}
 	return p, nil

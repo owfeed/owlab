@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 
 	"owfeed.org/owlab/internal/compose"
 	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/netx"
 	"owfeed.org/owlab/internal/pkgmgr"
 	"owfeed.org/owlab/internal/qemu"
 	syncpkg "owfeed.org/owlab/internal/sync"
@@ -66,10 +68,10 @@ func (a *app) up(ctx context.Context, args []string) error {
 		return err
 	}
 	containers, vms := splitTiers(routers)
-	resolveBaseImages(ctx, containers)
+	resolveBaseImages(ctx, containers, false)
 
 	if len(containers) > 0 {
-		proj, err := compose.Prepare(a.cfg, a.eng)
+		proj, err := compose.Prepare(a.cfg, a.eng, containers)
 		if err != nil {
 			return err
 		}
@@ -198,10 +200,22 @@ var errExtrasMissing = errors.New("extra_packages missing")
 // `image:`, which is an accelerator over the same rootfs, but not for its 404:
 // an explicit image that does not exist is the config's mistake, and the build
 // says so.
-func resolveBaseImages(ctx context.Context, routers []*config.Router) {
-	// Asked once per registry: each probe of a dead host costs netx's
-	// attempts, and a lab is usually several routers on one registry. Holds
-	// the router the registry did not answer for.
+//
+// Only when the tarball answers, though. A machine that reaches neither is
+// offline, or reaches the internet only through the engine's own proxy or
+// mirror, and there the image is what can still work: the engine may pull it
+// its own way, or build entirely from images and layers it already holds.
+// Switching would trade that for a download that cannot succeed.
+//
+// publish is for `owlab context`, which prepares the images owlab pushes, and
+// keeps the image through an outage. A tag built from the tarball carries the
+// honest platform (linux/arm64) instead of upstream's (linux/aarch64_generic),
+// and every router whose `image:` names that tag asks for upstream's and fails
+// to pull it until the next rebuild. A publish that fails is run again.
+func resolveBaseImages(ctx context.Context, routers []*config.Router, publish bool) {
+	// Asked once per host: each probe of a dead host costs netx's attempts,
+	// and a lab is usually several routers on one registry and one download
+	// server. Holds the router the host did not answer for.
 	down := map[string]string{}
 	for _, r := range routers {
 		image := r.BaseImage()
@@ -229,12 +243,48 @@ func resolveBaseImages(ctx context.Context, routers []*config.Router) {
 			if _, ok := down[host]; !ok {
 				down[host] = r.ID
 			}
+			if publish {
+				fmt.Fprintf(os.Stderr,
+					"owlab: %s did not answer (%v); %s stays on %s, because a published tag built from the rootfs tarball would change its platform; run this again once the registry answers\n",
+					host, err, r.ID, image)
+				continue
+			}
+			tarball := r.RootfsTarballURL()
+			if terr := tarballOutage(ctx, r, down); terr != nil {
+				fmt.Fprintf(os.Stderr,
+					"owlab: %s did not answer (%v), and neither did the rootfs tarball (%v); leaving %s on %s for the engine, which may reach it through its own proxy or mirror, or hold it already\n",
+					host, err, terr, r.ID, image)
+				continue
+			}
 			fmt.Fprintf(os.Stderr,
 				"owlab: %s did not answer (%v); building %s from the rootfs tarball %s instead of %s\n",
-				host, err, r.ID, r.RootfsTarballURL(), image)
+				host, err, r.ID, tarball, image)
 			r.UseTarball()
 		}
 	}
+}
+
+// headTarball asks whether the download server serves a rootfs tarball. A
+// variable so tests answer for a server they cannot reach.
+var headTarball = upstream.HeadFile
+
+// tarballOutage is why r's rootfs tarball cannot be downloaded now, or nil if
+// it can. A download server that did not answer is recorded in down and not
+// asked again for the next router; a 404 is about one file and is not.
+func tarballOutage(ctx context.Context, r *config.Router, down map[string]string) error {
+	tarball := r.RootfsTarballURL()
+	u, err := url.Parse(tarball)
+	if err != nil {
+		return err
+	}
+	if first, ok := down[u.Host]; ok {
+		return fmt.Errorf("%s not asked again after %s", u.Host, first)
+	}
+	err = headTarball(ctx, tarball)
+	if err != nil && netx.Transient(err) {
+		down[u.Host] = r.ID
+	}
+	return err
 }
 
 // startVM boots one fidelity-vm router and sets it up if it is new.

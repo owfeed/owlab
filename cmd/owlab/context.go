@@ -56,11 +56,13 @@ func (a *app) buildContext(ctx context.Context, args []string) error {
 		r.Release = *release
 	}
 
-	resolveBaseImages(ctx, []*config.Router{r})
+	// publish: the image this prepares is pushed under a tag that `image:`
+	// names, and keeps its platform through a registry outage.
+	resolveBaseImages(ctx, []*config.Router{r}, true)
 
 	// Prepare writes the shared context, the per-router extra packages and
 	// the compliance bundle.
-	proj, err := compose.Prepare(a.cfg, a.eng)
+	proj, err := compose.Prepare(a.cfg, a.eng, []*config.Router{r})
 	if err != nil {
 		return err
 	}
@@ -136,7 +138,7 @@ func (a *app) printMatrix(ctx context.Context, keep int) error {
 			// for a platform alpine does not publish:
 			//
 			//   alpine:3.22: no match for platform in manifest
-			resolveBaseImages(ctx, []*config.Router{&build})
+			resolveBaseImages(ctx, []*config.Router{&build}, true)
 			entries = append(entries, matrixEntry{
 				ID:       build.ID,
 				Distro:   string(build.Distro),

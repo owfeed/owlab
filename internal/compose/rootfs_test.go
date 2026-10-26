@@ -9,10 +9,12 @@ import (
 	"testing"
 
 	owlab "owfeed.org/owlab"
+	"owfeed.org/owlab/internal/config"
 )
 
-// A router built from a tarball finds it at the path the Dockerfile ADDs, and
-// a router pulled from a registry gets none staged.
+// A router built from a tarball finds it at the path the Dockerfile ADDs, a
+// router pulled from a registry gets none staged, and neither does a tarball
+// router that is not being built.
 func TestFetchRootfsStagesTheTarballOfARouterBuiltFromOne(t *testing.T) {
 	cfg := load(t, `
 version: 1
@@ -31,6 +33,7 @@ routers:
     arch: x86_64
 `)
 	imm, _ := cfg.Router("imm")
+	owrt, _ := cfg.Router("owrt")
 	down, _ := cfg.Router("down")
 	// What resolveBaseImages does when the registry does not answer.
 	down.UseTarball()
@@ -43,19 +46,35 @@ routers:
 			t.Fatal(err)
 		}
 	}
-	ctxDir := t.TempDir()
-	if err := fetchRootfs(cfg, ctxDir, cacheDir); err != nil {
-		t.Fatal(err)
+	staged := func(ctxDir, id string) (string, error) {
+		got, err := os.ReadFile(filepath.Join(ctxDir, tarballDir, id+".tar.gz"))
+		return string(got), err
 	}
 
-	for _, r := range []struct{ id, url string }{{"imm", imm.RootfsTarballURL()}, {"down", down.RootfsTarballURL()}} {
-		got, err := os.ReadFile(filepath.Join(ctxDir, tarballDir, r.id+".tar.gz"))
-		if err != nil || string(got) != "tarball of "+r.url {
-			t.Errorf("%s: staged %q, %v; want its own tarball", r.id, got, err)
-		}
+	// `owlab up owrt down`: imm is in owlab.yaml and is not being built. Its
+	// tarball is a download that can fail, from a server this build has no
+	// other use for.
+	ctxDir := t.TempDir()
+	if err := fetchRootfs([]*config.Router{owrt, down}, ctxDir, cacheDir); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(ctxDir, tarballDir, "owrt.tar.gz")); err == nil {
+	if got, err := staged(ctxDir, "down"); err != nil || got != "tarball of "+down.RootfsTarballURL() {
+		t.Errorf("down: staged %q, %v; want its own tarball", got, err)
+	}
+	if _, err := staged(ctxDir, "owrt"); err == nil {
 		t.Error("owrt pulls its image, and still had a tarball staged")
+	}
+	if _, err := staged(ctxDir, "imm"); err == nil {
+		t.Error("imm is not being built, and its tarball was staged")
+	}
+
+	// `owlab up imm`.
+	ctxDir = t.TempDir()
+	if err := fetchRootfs([]*config.Router{imm}, ctxDir, cacheDir); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := staged(ctxDir, "imm"); err != nil || got != "tarball of "+imm.RootfsTarballURL() {
+		t.Errorf("imm: staged %q, %v; want its own tarball", got, err)
 	}
 }
 
