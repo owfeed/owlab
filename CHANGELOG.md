@@ -9,8 +9,69 @@ one waits for a major.
 
 ## [Unreleased]
 
+### Changed
+
+- **The image build installs the feed packages in one call.** One call per
+  package spent the package manager's own start-up on each: for
+  luci-theme-footstrap's 74 names, 81 s against 58 s on 24.10.8 (opkg) and
+  48 s against 45 s on 25.12.5 (apk), with the same packages installed. A name
+  the feeds lack, and on opkg a name an installed package provides, is dropped
+  and the rest installed in one call again; only when that fails is each
+  package installed on its own, to name the ones that do not install.
+
 ### Fixed
 
+- **`owlab up` exits non-zero when a router is missing a package from
+  `packages:`.** A package that failed to install was a line in the build log,
+  and `owlab up` exited 0, so a CI job ran its checks against a router without
+  the app under test. The image now records the name in
+  `/etc/owlab/packages-failed`, as it already did for `extra_packages`.
+  `owlab up` names it after its table and exits 1, and `owlab test` fails that
+  router on a `packages` step. A name the release's feeds do not carry is
+  still a skip.
+- **A package download that fails during the image build is asked again.** It
+  gets the retries owlab's own downloads have: 4 attempts, 2, 4 and 8 s apart.
+  The first package that fails every attempt ends the retries for the rest of
+  the build, so an outage costs one round of waiting.
+- **A name not found after a partial index refresh is a failure, not a skip.**
+  The feed that did not answer may carry it. A kmods index alone is the
+  exception, because it carries only `kmod-*` packages, and a snapshot image
+  older than the feed's kernel window loses it on every build.
+- **On opkg, a name an installed package provides is a skip.** ImmortalWrt
+  24.10 ships `dnsmasq-full`, which provides `dnsmasq`, and opkg refused the
+  stock set's `dnsmasq` beside it on a file clash: 0.6.6 printed
+  `FAILED to install dnsmasq` for every ImmortalWrt 24.10 router. apk already
+  counts the provider as the name.
+- **`owlab up` exits non-zero when a router never answered on HTTP.** It
+  printed `did not answer on HTTP in time` and exited 0.
+- **`owlab install` exits non-zero when a router refused the package,** and
+  names the router. It printed `install failed on` and exited 0.
+- **`owlab install <router> <file>` no longer refreshes every feed index
+  first.** A file whose dependencies are already on the router installs
+  without asking a feed (`apk --no-network`, plain `opkg install`). When a
+  dependency is missing, owlab refreshes the feeds and installs again, as
+  before.
+- **`owlab up <id>` downloads only that router's files.** The out-of-feed
+  packages and compliance files of every router in `owlab.yaml` were fetched
+  for any build, so an `owlab up owrt2410` also fetched the 25.12 `.apk` files
+  and the snapshot's sha256sums, and a GitHub 5xx on a package that router never
+  installs failed it. `owlab up`, `owlab test` and `owlab context --router` now
+  stage the routers they build and no others. The image copies only its own
+  router's `extra/` and `compliance/` directory, so a router's layer cache no
+  longer changes with which routers were selected.
+- **A download that stalls or breaks off is started again.** Out-of-feed
+  packages and compliance files had a 5-minute limit on the whole download and
+  no retry once the body had started: a GitHub node that went quiet held the
+  command for 5 minutes and then failed it, and a dropped connection failed it
+  at once. A download now counts as stalled after 60 seconds without a byte,
+  and a stalled or broken-off download is fetched again from the start, 4
+  attempts in all, before it is reported as an outage. A slow download that
+  keeps sending is no longer cut off.
+- **`setup` stops a `gh` call that hangs.** `gh release view`,
+  `gh release download` and `gh attestation verify` had no time limit, and a
+  stall printed nothing the outage check could match, so the step waited for
+  the job's own timeout. Each call now has 120 seconds; one that runs out is
+  retried as an outage and ends in exit 8 if that persists.
 - **A registry that does not answer no longer fails the build.** Every
   container router's base image came from a registry, so a Docker Hub outage
   failed `owlab up` and `owlab test`, and the tarball path owlab already took

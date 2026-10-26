@@ -60,8 +60,8 @@ func (a *app) buildContext(ctx context.Context, args []string) error {
 	// names, and keeps its platform through a registry outage.
 	resolveBaseImages(ctx, []*config.Router{r}, true)
 
-	// Prepare writes the shared context, the per-router extra packages and
-	// the compliance bundle.
+	// Prepare writes the shared context, and this router's rootfs tarball (when
+	// it is built from one), extra packages and compliance bundle.
 	proj, err := compose.Prepare(a.cfg, a.eng, []*config.Router{r})
 	if err != nil {
 		return err

@@ -64,8 +64,8 @@ once.
    moves a router onto its rootfs tarball when the tag is missing, or when the
    registry does not answer and the download server has the tarball. Then they
    go through `compose.Prepare` — which writes `authorized_keys` and a Compose
-   file, extracts the build context, and downloads the rootfs tarballs of the
-   routers being built, the out-of-feed packages and the compliance bundle —
+   file, extracts the build context, and downloads the rootfs tarballs, the
+   out-of-feed packages and the compliance bundle of the routers being built —
    and then `docker compose build` and `up`. VMs go through
    `qemu.New(...).Start` and, if the disk is new, `Provision`.
 5. Both tiers are then polled on their forwarded HTTP port until LuCI answers.
@@ -77,7 +77,9 @@ once.
 - `compose.Render` writes the Compose file and touches nothing else. No
   network, no wipe.
 - `compose.Materialize` wipes and rewrites the build context, then downloads
-  what goes in it.
+  what goes in it for the routers it is given, and only those. The Dockerfile
+  copies `extra/<id>/` and `compliance/<id>/` of the router it builds, so a
+  router's layers hash its own files and do not change with the selection.
 
 `up` and `context` need both. `down` and `logs` need only the first, and that
 is not a micro-optimisation: stopping a router or reading its log would
@@ -429,6 +431,13 @@ routers:
 A list with no prefix at all replaces the set outright — an explicit list is
 someone saying they know what they want.
 
+The set is installed in one call: one call per package cost 81 s against 58 s
+for luci-theme-footstrap's 74 names on 24.10.8, and 27 s against under one for
+a second pass with everything installed. A name the feeds lack, and on opkg a
+name an installed package provides, is dropped and the rest asked for again in
+one call; only when that fails too is each package installed on its own, to
+name the ones that do not install.
+
 Failures are reported, not fatal. Feeds differ between releases and between a
 fork and upstream, so a name missing on 24.10 costs that one package rather
 than the whole image:
@@ -441,6 +450,21 @@ That line is for a name the feed does not carry, as the 2026-10-20 snapshot
 feed did not carry `luci-app-openvpn`. Any other refusal — a file clash, a
 dependency the feed lacks — prints the package manager's own output and then
 `owlab: FAILED to install <name>`, and the build carries on without it.
+
+Carrying on is not the same as passing it over. The name goes into
+`/etc/owlab/packages-failed`, which `owlab up` reads back off the running
+router and reports before exiting 1, as it does for `extra_packages` below.
+Ending the layer instead would cancel every other router in the build. Two
+kinds of failure are worth a closer look, because each would otherwise be
+cached:
+
+- A download is asked again, 4 attempts 2, 4 and 8 s apart, the schedule of
+  `internal/netx`. Once the layer exits 0, buildkit keeps it, and every
+  `owlab up` after a dropped fetch would hand back the same short router.
+- After a refresh in which a feed did not answer, a name the install does not
+  find is a failure, because that feed may carry it. A kmods index alone is the
+  exception: a snapshot image older than the feed's kernel window loses it on
+  every build, and it carries only `kmod-*` packages.
 
 ### `extra_packages` — anything not in a feed
 

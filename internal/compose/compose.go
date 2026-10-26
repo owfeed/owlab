@@ -134,17 +134,20 @@ func Render(cfg *config.Config, eng engine.Info) (*Project, error) {
 	return &Project{ComposePath: composePath, ContextDir: ctxDir}, nil
 }
 
-// Materialize fills in the build context the compose file points at.
+// Materialize fills in the build context the compose file points at, for the
+// routers about to be built.
 //
 // This is the expensive half — the embedded context is wiped and rewritten,
 // and the rootfs tarballs, out-of-feed packages and compliance bundle are
 // downloaded — so it is called only by the commands that are about to build an
 // image.
 //
-// The tarballs are those of routers, the ones about to be built. A tarball is
-// a hard requirement of the router built from it, and `owlab up owrt2512` must
-// not download, or fail on, the tarball of an ImmortalWrt router in the same
-// owlab.yaml.
+// Only the routers named, not every router in the config: `owlab up owrt2410`
+// used to download the 25.12 .apk files and the snapshot's compliance files as
+// well, and a GitHub 5xx on a package that router never installs failed it. A
+// tarball is a hard requirement of the router built from it, so `owlab up
+// owrt2512` must not download, or fail on, the tarball of an ImmortalWrt router
+// in the same owlab.yaml either.
 func Materialize(cfg *config.Config, p *Project, routers []*config.Router) error {
 	if err := extractContext(p.ContextDir); err != nil {
 		return fmt.Errorf("writing build context: %w", err)
@@ -154,10 +157,10 @@ func Materialize(cfg *config.Config, p *Project, routers []*config.Router) error
 	if err := fetchRootfs(routers, p.ContextDir, cacheDir); err != nil {
 		return err
 	}
-	if err := fetchExtraPackages(cfg, p.ContextDir, cacheDir); err != nil {
+	if err := fetchExtraPackages(routers, p.ContextDir, cacheDir); err != nil {
 		return err
 	}
-	return fetchCompliance(cfg, p.ContextDir, cacheDir)
+	return fetchCompliance(routers, p.ContextDir, cacheDir)
 }
 
 // Prepare renders the compose file and materialises the context it refers to,

@@ -215,10 +215,12 @@ func (v *VM) install(pkgs []string, opts pkgmgr.Options) string {
 
 // installPackages installs the router's package list.
 //
-// One at a time, with failures reported rather than fatal — the same rule the
-// Dockerfile uses, and for the same reason: feeds differ between releases and
-// between a fork and upstream, and one name missing on 24.10 should cost that
-// package, not the whole router.
+// In one call, then one at a time if that fails, with failures reported rather
+// than fatal — the same rule the Dockerfile uses, and for the same reason:
+// feeds differ between releases and between a fork and upstream, and one name
+// missing on 24.10 should cost that package, not the whole router. What fails is recorded on the router in
+// pkgmgr.PackagesFailedPath, which `owlab up` reads back as it does for a
+// container.
 func (v *VM) installPackages(ctx context.Context, progress io.Writer) error {
 	script := v.install(v.Router.Packages, pkgmgr.Options{Update: true, Tolerant: true})
 	out, err := v.SSH().Output(ctx, script)

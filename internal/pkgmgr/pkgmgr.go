@@ -10,10 +10,14 @@
 package pkgmgr
 
 import (
+	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/netx"
 )
 
 // HostToken is what a feed URL carries in place of an address when the feed is
@@ -78,8 +82,9 @@ type Options struct {
 	// dnsmasq already in the image over /etc/init.d/dnsmasq.
 	Overwrite bool
 
-	// Tolerant installs one package at a time and reports the ones this
-	// release's feed does not have, instead of failing the lot.
+	// Tolerant reports the packages this release's feed does not have instead
+	// of failing the lot: the set in one call without them, then one at a time
+	// if that fails too (EachShell).
 	//
 	// Feeds differ between releases and between a fork and upstream, so a name
 	// missing on 24.10 should cost that package and not the whole router. The
@@ -105,6 +110,16 @@ type Options struct {
 	// release rebuilt in place (config.Router.Rolling) and never for a point
 	// release, whose ABI does not move.
 	Rolling bool
+
+	// Offline installs files already on the router without asking any feed.
+	//
+	// apk needs --no-network for that: without it apk-tools 3.0.5 revalidates
+	// a cached index older than four hours before installing even a file whose
+	// dependencies are all present, and with every feed unreachable it tried
+	// each one before installing (measured on 25.12.4). A dependency that is
+	// not on the router then fails as "masked in: --no-network", exit 6. opkg
+	// reads only the lists it has, so it gets no flag.
+	Offline bool
 }
 
 // Where the feed check looks. Variables rather than literals only so the tests
@@ -115,6 +130,34 @@ var (
 	opkgListsDir  = "/var/opkg-lists"
 	opkgFeedsConf = "/etc/opkg/customfeeds.conf"
 )
+
+// PackagesFailedPath is where a router records the feed packages it was built
+// without, one name per line. EachShell writes it; `owlab up` and `owlab test`
+// read it back off the running router, as they do the extras' own record,
+// because a build log scrolls past and a router started from a cached image
+// never printed one.
+const PackagesFailedPath = "/etc/owlab/packages-failed"
+
+// Variables rather than literals only so the tests can keep the record in a
+// temporary directory, keep the attempts while dropping the waiting, and hand
+// opkg a status file of their own.
+var (
+	packagesFailed = PackagesFailedPath
+	retryWaits     = netxWaits()
+	opkgStatus     = "/usr/lib/opkg/status"
+)
+
+// netxWaits is internal/netx's retry schedule as the seconds a shell sleeps
+// between attempts: "2 4 8" for its four attempts. A package the router fetches
+// is given the same time to come back as a file owlab fetches itself, and a
+// change to one changes both.
+func netxWaits() string {
+	var w []string
+	for i, d := 1, netx.DefaultDelay; i < netx.DefaultAttempts; i, d = i+1, d*2 {
+		w = append(w, strconv.Itoa(int(d/time.Second)))
+	}
+	return strings.Join(w, " ")
+}
 
 // feedCheck is the shell that proves the feed under test was read by the
 // refresh it surrounds: before goes ahead of UpdateShell, after behind it.
@@ -265,17 +308,31 @@ func AddFeed(pm config.PackageManager, name, url, keyFile string) string {
 // a partial refresh silently would leave the developer to guess why a package
 // went missing.
 //
+// A partial refresh also leaves owlab_partial for EachShell, which can no
+// longer read "no such package" as "this release lacks the name": the feed
+// that did not answer may carry it. The value is "kmods" when every feed the
+// manager names as unread is a kmods index, and "all" otherwise, including
+// when it names none. The kmods case is the routine one above, and that index
+// carries kmod-* packages only, so it says nothing about any other name. Each
+// manager names an unread feed on a line of its own, measured 2026-10-26: apk
+// 3.0.5 `WARNING: updating and opening <url>: unexpected end of file` (a 404,
+// a refused connection, and the kmods index of a snapshot image built five
+// months earlier), opkg on 24.10.8 `*** Failed to download the package list
+// from <url>` (the same three).
+//
 // images/Dockerfile runs this same shell in the container tier and is held to
 // it by TestDockerfileRefreshesTheIndexTheSameWay — Docker cannot call Go, so
 // the text is duplicated there, and the two must not drift.
 func UpdateShell(pm config.PackageManager) string {
 	cmd, marker := "opkg update", "^Updated list of available packages"
+	unread := `^\*\*\* Failed to download the package list from `
 	feeds := "/etc/opkg/distfeeds.conf and /etc/opkg/customfeeds.conf"
 	// Only apk prints a summary line, so only apk is asked for one.
 	summary, dead := "", `[ "$owlab_read" -eq 0 ]`
 	partial := `echo "owlab: opkg update: partial refresh, $owlab_read feed(s) read; the feed above did not answer and its packages will be missing" >&2`
 	if pm == config.APK {
 		cmd, marker = "apk update", `^ \[`
+		unread = `^WARNING: updating and opening `
 		feeds = "/etc/apk/repositories and /etc/apk/repositories.d"
 		summary = `owlab_have=$(printf '%s\n' "$owlab_upd" | sed -n 's/^[0-9][0-9]* unavailable, [0-9][0-9]* stale; \([0-9][0-9]*\) distinct packages available$/\1/p')` + "\n"
 		dead = `[ "$owlab_read" -eq 0 ] || [ "${owlab_have:-0}" -eq 0 ]`
@@ -292,7 +349,8 @@ func UpdateShell(pm config.PackageManager) string {
 		summary +
 		`if [ "$owlab_rc" -ne 0 ]; then printf '%s\n' "$owlab_upd" >&2; fi` + "\n" +
 		`if [ "$owlab_rc" -ne 0 ] && { ` + dead + `; }; then echo "owlab: ` + cmd + ` failed: no feed answered. Check the router's network and the feeds in ` + feeds + `" >&2; exit "$owlab_rc"; fi` + "\n" +
-		`if [ "$owlab_rc" -ne 0 ]; then ` + partial + `; fi` + "\n"
+		`if [ "$owlab_rc" -ne 0 ]; then ` + partial + `; owlab_partial=all; ` +
+		`if printf '%s\n' "$owlab_upd" | grep -q '` + unread + `' && ! printf '%s\n' "$owlab_upd" | grep '` + unread + `' | grep -qv '/kmods/'; then owlab_partial=kmods; fi; fi` + "\n"
 }
 
 // UpgradeShell is the shell that moves every installed package to the index the
@@ -326,9 +384,22 @@ func UpgradeShell(pm config.PackageManager) string {
 	return `owlab_upg=$(apk upgrade 2>&1) || { printf '%s\n' "$owlab_upg" >&2; echo "owlab: apk upgrade failed on a rolling release; packages installed next may need a newer library than this router has" >&2; }` + "\n"
 }
 
-// EachShell is the loop that installs the packages in list one at a time, with
-// add being the manager's install command: what Options.Tolerant generates, and
-// what images/Dockerfile runs over "$PACKAGES".
+// EachShell is the shell that installs the packages in list, with add being the
+// manager's install command: what Options.Tolerant generates, and what
+// images/Dockerfile runs over "$PACKAGES".
+//
+// All of them in one call first. One call per package cost a second or more of
+// the manager's own start-up each, for nothing: measured 2026-10-26 with the 74
+// names luci-theme-footstrap's routers install, apk 3.0.5 on 25.12.5 took 48 s
+// one at a time and 45 s in one call, opkg on 24.10.8 81 s and 58 s, and a
+// second pass with everything installed 6 s and 27 s against under one. Both
+// left the same installed set, 315 and 312 packages.
+//
+// A name the feeds lack fails that call: apk refuses the whole transaction,
+// opkg installs the rest and exits 255. The names the call reports as missing
+// are dropped, and the rest asked for again in one call. Only when that fails
+// too are they installed one at a time, which is what names the ones that do
+// not install.
 //
 // Only a name the feed does not carry is a skip. Any other refusal used to be
 // called one too, with the manager's stderr thrown away: on 24.10.8 `opkg
@@ -338,14 +409,76 @@ func UpgradeShell(pm config.PackageManager) string {
 // lines are each manager's own, matched whole: apk 3.0.5 prints
 // `  <name> (no such package):` and exits 1, opkg prints
 // `Unknown package '<name>'.` and exits 255.
+//
+// A failed package is recorded in PackagesFailedPath, and `owlab up` exits
+// non-zero on it. Printing alone was not enough: the build went on, `owlab up`
+// exited 0, and a router built while downloads.openwrt.org dropped one fetch
+// was handed to a test run without the app it was meant to test. The record
+// is cleared first, because this loop also runs on top of an already-built
+// owlab image, whose own failures are not this build's; a record that cannot
+// be cleared stops the build for the same reason.
+//
+// Not a skip after a partial refresh (owlab_partial, set by UpdateShell): with
+// a feed that did not answer, "no such package" may mean that feed carries it.
+// The exception is a kmods index alone, which can only have carried a kmod-*.
+//
+// A failed download is asked again on the waits in retryWaits; it is the one
+// failure a second attempt can fix, and this layer is cached once it exits 0.
+// Measured with the download refused and with a 404 and a 503 from a local
+// feed: opkg on 24.10.8 prints `opkg_download: Failed to download <url>, wget
+// returned 4.` (or 8). apk 3.0.5 prints `ERROR: wget: exited with error 4`
+// (or 8) and then `ERROR: <pkg>-<version>: unexpected end of file`; it prints
+// the same wget line for a feed index it could not revalidate, but follows
+// that with `WARNING: updating and opening <url>`, and after a partial refresh
+// it does so on every `apk add`, so only a wget line not followed by that
+// warning counts. Neither manager tells a 404 from a 503, and here a 404 is
+// not a wrong URL: the index the refresh just read named the file. The first
+// package to fail every attempt ends the retries for the rest of the loop, so
+// an outage costs one round of waiting and not one per package.
+//
+// On opkg, a name an installed package provides is a skip, whatever the
+// refusal. ImmortalWrt 24.10 ships dnsmasq-full, which provides dnsmasq, and
+// the stock set asks for dnsmasq: opkg installs the real dnsmasq beside it
+// and refuses on check_data_file_clashes (measured on immortalwrt 24.10.6),
+// so every ImmortalWrt 24.10 router failed `owlab up` on a name it already
+// had. apk counts the provider as the name and installs nothing. Asked only
+// of a name opkg refused, because `opkg install libgcc` resolves to the
+// libgcc1 that provides it and succeeds, and a skip there would be noise: in
+// the one call, a name opkg names in `Cannot install package <name>.`, which
+// is then dropped with the missing ones; one at a time, any failure.
 func EachShell(pm config.PackageManager, add, list string) string {
 	missing := `Unknown package '$p'.`
+	fetchFailed := `printf '%s\n' "$owlab_out" | grep -qF 'opkg_download: Failed to download'`
+	providedFunc := `owlab_provided() { owlab_by=$(awk -v p="$1" '/^Package: / { if (v && s) exit; n = $2; v = s = 0 } /^Provides: / { k = split(substr($0, 11), a, /, */); for (i = 1; i <= k; i++) { sub(/[ (=].*/, "", a[i]); if (a[i] == p) v = 1 } } /^Status: .* installed$/ { s = 1 } END { if (v && s) print n; else exit 1 }' ` + opkgStatus + `) || return 1; ` +
+		`echo "owlab: skip (provided by $owlab_by, already installed): $1"; }; `
+	dropProvided := `elif printf '%s\n' "$owlab_out" | grep -qxF " * opkg_install_cmd: Cannot install package $p." && owlab_provided "$p"; then owlab_dropped=1; `
+	skipProvided := `if owlab_provided "$p"; then continue; fi; `
 	if pm == config.APK {
 		missing = `  $p (no such package):`
+		fetchFailed = `printf '%s\n' "$owlab_out" | awk '/^ERROR: wget: exited with error/ { w = 1; next } w && !/^WARNING: updating and opening / { f = 1 } { w = 0 } END { exit !(f || w) }'`
+		providedFunc, dropProvided, skipProvided = "", "", ""
 	}
-	return `for p in ` + list + `; do owlab_out=$(` + add + ` "$p" 2>&1) && continue; ` +
-		`if printf '%s\n' "$owlab_out" | grep -qxF "` + missing + `"; then echo "owlab: skip (not in this feed): $p"; ` +
-		`else printf '%s\n' "$owlab_out" >&2; echo "owlab: FAILED to install $p, for the reason above; this router is built without it" >&2; fi; done` + "\n"
+	isMissing := `printf '%s\n' "$owlab_out" | grep -qxF "` + missing + `"`
+	attempts := strconv.Itoa(len(strings.Fields(retryWaits)) + 1)
+	return `rm -f ` + packagesFailed + ` || { echo "owlab: cannot remove ` + packagesFailed + `, so the packages an earlier build could not install would be reported for this one; stopping" >&2; exit 1; }; ` +
+		`owlab_waits='` + retryWaits + `'; ` +
+		`owlab_failed() { { mkdir -p ` + path.Dir(packagesFailed) + ` && echo "$1" >> ` + packagesFailed + `; } || ` +
+		`{ echo "owlab: cannot record $1 in ` + packagesFailed + ` (is the overlay full? df /overlay); stopping, because owlab up would report this router as complete" >&2; exit 1; }; }; ` +
+		`owlab_absent() { case "${owlab_partial:-}:$1" in all:*|kmods:kmod-*) ` +
+		`echo "owlab: FAILED to install $1: no feed that answered the refresh above carries it, and one that did not answer may; this router is built without it" >&2; owlab_failed "$1" ;; ` +
+		`*) echo "owlab: skip (not in this feed): $1" ;; esac; }; ` + providedFunc +
+		`if ! owlab_out=$(` + add + ` ` + list + ` 2>&1); then owlab_rest=; owlab_dropped=; ` +
+		`for p in ` + list + `; do if ` + isMissing + `; then owlab_absent "$p"; owlab_dropped=1; ` + dropProvided + `else owlab_rest="$owlab_rest $p"; fi; done; ` +
+		`if [ -z "$owlab_dropped" ] || [ -z "$owlab_rest" ] || ! owlab_out=$(` + add + ` $owlab_rest 2>&1); then ` +
+		`[ -z "$owlab_rest" ] || echo "owlab: installing the packages in one call failed; installing them one at a time to name the ones that do not install" >&2; ` +
+		`for p in $owlab_rest; do owlab_out=$(` + add + ` "$p" 2>&1) && continue; ` + skipProvided +
+		`for owlab_wait in $owlab_waits; do ` + fetchFailed + ` || break; ` +
+		`echo "owlab: downloading $p failed (a download server or network outage); asking again in ${owlab_wait}s" >&2; ` +
+		`sleep "$owlab_wait"; owlab_out=$(` + add + ` "$p" 2>&1) && continue 2; done; ` +
+		`if [ -n "$owlab_waits" ] && ` + fetchFailed + `; then owlab_waits=; ` +
+		`echo "owlab: $p did not download in ` + attempts + ` attempts; the packages after it are asked once each" >&2; fi; ` +
+		`if ` + isMissing + `; then owlab_absent "$p"; continue; fi; ` +
+		`printf '%s\n' "$owlab_out" >&2; echo "owlab: FAILED to install $p, for the reason above; this router is built without it" >&2; owlab_failed "$p"; done; fi; fi` + "\n"
 }
 
 // Install is the shell that installs pkgs, or "true" when there is nothing to
@@ -368,6 +501,9 @@ func Install(pm config.PackageManager, pkgs []string, o Options) string {
 	}
 	if o.Overwrite {
 		flags = append(flags, "--force-overwrite")
+	}
+	if o.Offline && pm == config.APK {
+		flags = append(flags, "--no-network")
 	}
 	if len(flags) > 0 {
 		add += " " + strings.Join(flags, " ")

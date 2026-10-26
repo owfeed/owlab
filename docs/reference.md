@@ -132,6 +132,46 @@ from `wifi-scripts`, and builds the encryption matrix by asking `hostapd` what
 it supports. With both present the pages render from config, with no radio
 present anywhere.
 
+#### When a package does not install
+
+The set is installed in one call. A name the release's feeds do not carry is
+dropped from it, the rest is asked for again in one call, and the name is a
+one-line skip, not an error:
+
+```
+owlab: skip (not in this feed): luci-app-example
+```
+
+On opkg, a name that a package already on the router provides is a skip too,
+and is dropped from the call the same way. ImmortalWrt ships `dnsmasq-full`,
+which provides `dnsmasq`, and opkg would otherwise install the real `dnsmasq`
+beside it and refuse on a file clash. apk counts the provider as the name by
+itself:
+
+```
+owlab: skip (provided by dnsmasq-full, already installed): dnsmasq
+```
+
+When the call fails for any other reason, each package is installed on its
+own, so a failure costs that package and not the router. Anything that still
+does not install is a failure: a file clash, a dependency the feeds lack, or a
+download that still fails after 4 attempts, 2, 4 and 8 s apart (the retries
+owlab's own downloads use). A name that is not found after a refresh in which a
+feed did not answer is a failure too, because that feed may carry it. The
+exception is a kmods index alone: it carries only `kmod-*` packages.
+
+A failure prints the package manager's output, and the build carries on. The
+name is recorded on the router in `/etc/owlab/packages-failed`. `owlab up`
+names it after its table and exits 1, and `owlab test` fails that router on its
+`packages` step:
+
+```
+! owrt2410 is running WITHOUT luci-app-example
+```
+
+A plain `owlab up` reuses the cached build and reports the same names again.
+`owlab up --rebuild <router>` builds that router from scratch.
+
 ### Packages that are in no feed
 
 Most of what a router needs is in OpenWrt's own feeds and goes in `packages:`.
@@ -165,6 +205,12 @@ whose manager has no build is told so and carries on.
 Downloads happen on the host and are cached in `.owlab/cache/`, so `up` does
 not re-fetch them. They have to: a stock OpenWrt rootfs has no `curl`, and its
 busybox `wget` cannot do TLS.
+
+Only the routers being built are fetched for. `owlab up owrt2512` downloads
+owrt2512's packages and compliance files and nothing for the other routers in
+`owlab.yaml`, so a package only a 24.10 router installs cannot fail it. A
+download that sends nothing for 60 seconds, or breaks off halfway, is started
+again from the first byte, 4 attempts in all.
 
 A failure here is neither passed over nor fatal, unlike a name in `packages:`
 that a particular feed happens not to carry. These are named by URL — you said
