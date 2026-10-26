@@ -180,7 +180,9 @@ func (a *app) reportMissing(ctx context.Context, routers []*config.Router) error
 		"!   Every other router built and started; only these packages are missing.\n"+
 			"!   The package manager said why during the build — one router at a time shows it again,\n"+
 			"!   and downloads what failed to download:\n"+
-			"!     owlab up --rebuild %s\n", bad[0])
+			"!     owlab up --rebuild %s\n"+
+			"!   A package the rebuild refuses again cannot go on that router: take it out of the\n"+
+			"!   router's packages: (a \"-name\" entry for one owlab installs by default) or extra_packages:.\n", bad[0])
 	return errPackagesMissing
 }
 

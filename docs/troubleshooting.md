@@ -158,6 +158,8 @@ is a failure.
 !   The package manager said why during the build — one router at a time shows it again,
 !   and downloads what failed to download:
 !     owlab up --rebuild owrt2410
+!   A package the rebuild refuses again cannot go on that router: take it out of the
+!   router's packages: (a "-name" entry for one owlab installs by default) or extra_packages:.
 ```
 
 In 0.6.6 and earlier the same router started with exit 0, and the only trace
@@ -177,8 +179,8 @@ the reason above `owlab: FAILED to install <name>`:
 
 **Fix.** After an outage, run `owlab up --rebuild owrt2410`. A plain `owlab up`
 reuses the cached layer and reports the same router again. For a clash or a
-missing dependency, remove the name from that router's `packages:`, or add the
-package it needs.
+missing dependency, remove the name from that router's `packages:` (a `-name`
+entry for a package owlab installs by default), or add the package it needs.
 
 **Check.** Ask the running router:
 

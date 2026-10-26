@@ -163,6 +163,8 @@ $ owlab exec owrt2410 -- 'opkg update 2>&1 | grep -c "^Updated"'
 !   The package manager said why during the build — one router at a time shows it again,
 !   and downloads what failed to download:
 !     owlab up --rebuild owrt2410
+!   A package the rebuild refuses again cannot go on that router: take it out of the
+!   router's packages: (a "-name" entry for one owlab installs by default) or extra_packages:.
 ```
 
 В 0.6.6 и раньше тот же роутер стартовал с кодом 0, и единственным следом была
@@ -183,7 +185,8 @@ $ owlab exec owrt2410 -- 'opkg update 2>&1 | grep -c "^Updated"'
 **Исправление.** После сбоя сети запустите `owlab up --rebuild owrt2410`.
 Обычный `owlab up` берёт слой из кеша и снова сообщает о том же роутере. При
 конфликте или недостающей зависимости уберите имя из `packages:` этого роутера
-или добавьте пакет, который ему нужен.
+(запись `-имя` для пакета, который owlab ставит по умолчанию) или добавьте
+пакет, который ему нужен.
 
 **Проверка.** Спросить работающий роутер:
 
