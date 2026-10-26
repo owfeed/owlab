@@ -111,6 +111,10 @@ RUN mkdir -p /var/lock /var/run /var/log /var/state
 # alone, which can only carry a kmod-*: a snapshot image older than the feed's
 # kernel window 404s on it on every build.
 #
+# On opkg, a name an installed package provides is a skip too: ImmortalWrt 24.10
+# ships dnsmasq-full, and opkg refuses the stock set's dnsmasq beside it on a
+# file clash. apk counts the provider as the name.
+#
 # The index refresh is tolerant of a feed that does not answer, and loud about
 # it. Both managers exit non-zero when one configured feed is unreachable, and
 # under `set -eu` that used to end this layer before the loop below it ran —
@@ -164,12 +168,16 @@ RUN set -eu; \
 			owlab_failed() { { mkdir -p /etc/owlab && echo "$1" >> /etc/owlab/packages-failed; } || { echo "owlab: cannot record $1 in /etc/owlab/packages-failed (is the overlay full? df /overlay); stopping, because owlab up would report this router as complete" >&2; exit 1; }; }; \
 			owlab_absent() { case "${owlab_partial:-}:$1" in all:*|kmods:kmod-*) echo "owlab: FAILED to install $1: no feed that answered the refresh above carries it, and one that did not answer may; this router is built without it" >&2; owlab_failed "$1" ;; \
 			*) echo "owlab: skip (not in this feed): $1" ;; esac; }; \
+			owlab_provided() { owlab_by=$(awk -v p="$1" '/^Package: / { if (v && s) exit; n = $2; v = s = 0 } /^Provides: / { k = split(substr($0, 11), a, /, */); for (i = 1; i <= k; i++) { sub(/[ (=].*/, "", a[i]); if (a[i] == p) v = 1 } } /^Status: .* installed$/ { s = 1 } END { if (v && s) print n; else exit 1 }' /usr/lib/opkg/status) || return 1; echo "owlab: skip (provided by $owlab_by, already installed): $1"; }; \
 			if ! owlab_out=$(opkg install $PACKAGES 2>&1); then owlab_rest=; owlab_dropped=; \
 			for p in $PACKAGES; do \
-			if printf '%s\n' "$owlab_out" | grep -qxF "Unknown package '$p'."; then owlab_absent "$p"; owlab_dropped=1; else owlab_rest="$owlab_rest $p"; fi; done; \
+			if printf '%s\n' "$owlab_out" | grep -qxF "Unknown package '$p'."; then owlab_absent "$p"; owlab_dropped=1; \
+			elif printf '%s\n' "$owlab_out" | grep -qxF " * opkg_install_cmd: Cannot install package $p." && owlab_provided "$p"; then owlab_dropped=1; \
+			else owlab_rest="$owlab_rest $p"; fi; done; \
 			if [ -z "$owlab_dropped" ] || [ -z "$owlab_rest" ] || ! owlab_out=$(opkg install $owlab_rest 2>&1); then \
 			[ -z "$owlab_rest" ] || echo "owlab: installing the packages in one call failed; installing them one at a time to name the ones that do not install" >&2; \
 			for p in $owlab_rest; do owlab_out=$(opkg install "$p" 2>&1) && continue; \
+			if owlab_provided "$p"; then continue; fi; \
 			for owlab_wait in $owlab_waits; do printf '%s\n' "$owlab_out" | grep -qF 'opkg_download: Failed to download' || break; \
 			echo "owlab: downloading $p failed (a download server or network outage); asking again in ${owlab_wait}s" >&2; \
 			sleep "$owlab_wait"; owlab_out=$(opkg install "$p" 2>&1) && continue 2; done; \

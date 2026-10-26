@@ -166,16 +166,22 @@ func TestEachSkipsOnlyANameTheFeedLacks(t *testing.T) {
 	}
 }
 
-// tempRecord points EachShell's record at a temporary directory and drops the
-// waits between download attempts, for the rest of the test.
+// tempRecord points EachShell's record at a temporary directory, drops the
+// waits between download attempts, and gives opkg an empty status file, for
+// the rest of the test.
 func tempRecord(t *testing.T) string {
 	t.Helper()
-	oldRec, oldWaits := packagesFailed, retryWaits
-	t.Cleanup(func() { packagesFailed, retryWaits = oldRec, oldWaits })
+	oldRec, oldWaits, oldStatus := packagesFailed, retryWaits, opkgStatus
+	t.Cleanup(func() { packagesFailed, retryWaits, opkgStatus = oldRec, oldWaits, oldStatus })
 	// Forward slashes: the path is pasted unquoted into shell text, and Git's
 	// sh on a Windows runner eats backslashes.
-	packagesFailed = filepath.ToSlash(t.TempDir()) + "/owlab/packages-failed"
+	dir := filepath.ToSlash(t.TempDir())
+	packagesFailed = dir + "/owlab/packages-failed"
 	retryWaits = "0 0 0"
+	opkgStatus = dir + "/status"
+	if err := os.WriteFile(opkgStatus, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	return packagesFailed
 }
 
@@ -318,6 +324,102 @@ func TestEachRecordsADownloadThatKeepsFailing(t *testing.T) {
 		}
 		if got := readRecord(t, rec); got != "tree ttyd" {
 			t.Errorf("%s: recorded %q, want \"tree ttyd\"", c.pm, got)
+		}
+	}
+}
+
+// Measured 2026-10-26 on immortalwrt 24.10.6 (x86_64), trimmed: the dnsmasq-full
+// the image ships, and the stanza opkg leaves behind for the dnsmasq it refused.
+const (
+	immortalwrtStatus = `Package: wpad-basic-mbedtls
+Version: 2024.09.15~5ace39b0-r2
+Provides: hostapd, wpa-supplicant
+Status: install user installed
+Architecture: x86_64
+
+Package: dnsmasq
+Version: 2.93-r1
+Depends: libc, libubus20250102
+Status: install user not-installed
+Architecture: x86_64
+
+Package: dnsmasq-full
+Version: 2.90-r5
+Depends: libc, libubus20250102, libnettle8, libnetfilter-conntrack3, nftables-json
+Provides: dnsmasq
+Status: install ok installed
+Architecture: x86_64
+Installed-Time: 1776821074
+`
+)
+
+// ImmortalWrt 24.10 ships dnsmasq-full, the stock set asks for dnsmasq, and
+// opkg refuses the real dnsmasq beside it: every ImmortalWrt 24.10 router was
+// recorded as built without a name it had, and `owlab up` exited 1 on it. The
+// name is dropped from the one call as a missing one is, so the rest is asked
+// for again in one call rather than one at a time. The other direction matters
+// as much: a provider that is not installed, or an installed package that
+// provides some other name, is no excuse.
+func TestEachSkipsANameAnInstalledPackageProvides(t *testing.T) {
+	notInstalled := strings.Replace(immortalwrtStatus, "Status: install ok installed", "Status: install user not-installed", 1)
+	openwrtStatus := "Package: dnsmasq\nVersion: 2.90-r4\nStatus: install ok installed\n"
+	// What opkg prints for bad, in the call for the set and in one of its own:
+	// the clash, or a download that did not happen; both end on opkg's own
+	// `Cannot install package` line, which a call that only failed does not.
+	clash := func(bad string) string {
+		return " * check_data_file_clashes: Package " + bad + " wants to install file /usr/sbin/dnsmasq\n" +
+			"\tBut that file is already provided by package  * dnsmasq-full\n" +
+			" * opkg_install_cmd: Cannot install package " + bad + "."
+	}
+	fetch := func(bad string) string {
+		return " * opkg_download: Failed to download https://downloads.openwrt.org/" + bad + ".ipk, wget returned 4.\n" +
+			" * opkg_install_cmd: Cannot install package " + bad + "."
+	}
+	for _, c := range []struct {
+		name, status, bad, batchOut, singleOut string
+		calls                                  string
+		skip                                   string
+	}{
+		{"provider installed", immortalwrtStatus, "dnsmasq", clash("dnsmasq"), clash("dnsmasq"), "dnsmasq nano|nano", "dnsmasq-full"},
+		{"provider installed, one of several names", immortalwrtStatus, "wpa-supplicant", clash("wpa-supplicant"), clash("wpa-supplicant"), "wpa-supplicant nano|nano", "wpad-basic-mbedtls"},
+		// Nothing to download for a name the router already has.
+		{"provider installed, download refused", immortalwrtStatus, "dnsmasq", fetch("dnsmasq"), fetch("dnsmasq"), "dnsmasq nano|nano", "dnsmasq-full"},
+		// A call that failed without naming it: one at a time finds it.
+		{"provider installed, not named by the call", immortalwrtStatus, "dnsmasq", "Collected errors:", clash("dnsmasq"), "dnsmasq nano|dnsmasq|nano", "dnsmasq-full"},
+		{"provider not installed", notInstalled, "dnsmasq", clash("dnsmasq"), clash("dnsmasq"), "dnsmasq nano|dnsmasq|nano", ""},
+		// OpenWrt 24.10: the stock dnsmasq provides no dnsmasq-full.
+		{"installed package provides another name", openwrtStatus, "dnsmasq-full", clash("dnsmasq-full"), clash("dnsmasq-full"), "dnsmasq-full nano|dnsmasq-full|nano", ""},
+	} {
+		tempRecord(t)
+		if err := os.WriteFile(opkgStatus, []byte(c.status), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		dir := filepath.ToSlash(t.TempDir())
+		for name, body := range map[string]string{"batch": c.batchOut, "single": c.singleOut} {
+			if err := os.WriteFile(dir+"/"+name, []byte(body+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// opkg installs the rest of a call and exits 255 on the one it refused.
+		body := `shift; echo "$*" >> '` + dir + `/calls'; out=single; [ "$#" -gt 1 ] && out=batch
+for p in "$@"; do if [ "$p" = '` + c.bad + `' ]; then cat '` + dir + `/'"$out"; exit 255; fi; done`
+		code, got := runStub(t, config.OPKG, body, EachShell(config.OPKG, "opkg install", c.bad+" nano"))
+		b, err := os.ReadFile(dir + "/calls")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if calls := strings.Join(strings.Split(strings.TrimSpace(string(b)), "\n"), "|"); code != 0 || calls != c.calls {
+			t.Errorf("%s: exit %d, calls %q; want 0 and %q:\n%s", c.name, code, calls, c.calls, got)
+		}
+		want, record := "owlab: skip (provided by "+c.skip+", already installed): "+c.bad, ""
+		if c.skip == "" {
+			want, record = "owlab: FAILED to install "+c.bad, c.bad
+		}
+		if !strings.Contains(got, want) {
+			t.Errorf("%s: no %q in:\n%s", c.name, want, got)
+		}
+		if got := readRecord(t, packagesFailed); got != record {
+			t.Errorf("%s: recorded %q, want %q", c.name, got, record)
 		}
 	}
 }

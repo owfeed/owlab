@@ -139,10 +139,12 @@ var (
 const PackagesFailedPath = "/etc/owlab/packages-failed"
 
 // Variables rather than literals only so the tests can keep the record in a
-// temporary directory, and keep the attempts while dropping the waiting.
+// temporary directory, keep the attempts while dropping the waiting, and hand
+// opkg a status file of their own.
 var (
 	packagesFailed = PackagesFailedPath
 	retryWaits     = netxWaits()
+	opkgStatus     = "/usr/lib/opkg/status"
 )
 
 // netxWaits is internal/netx's retry schedule as the seconds a shell sleeps
@@ -433,12 +435,28 @@ func UpgradeShell(pm config.PackageManager) string {
 // not a wrong URL: the index the refresh just read named the file. The first
 // package to fail every attempt ends the retries for the rest of the loop, so
 // an outage costs one round of waiting and not one per package.
+//
+// On opkg, a name an installed package provides is a skip, whatever the
+// refusal. ImmortalWrt 24.10 ships dnsmasq-full, which provides dnsmasq, and
+// the stock set asks for dnsmasq: opkg installs the real dnsmasq beside it
+// and refuses on check_data_file_clashes (measured on immortalwrt 24.10.6),
+// so every ImmortalWrt 24.10 router failed `owlab up` on a name it already
+// had. apk counts the provider as the name and installs nothing. Asked only
+// of a name opkg refused, because `opkg install libgcc` resolves to the
+// libgcc1 that provides it and succeeds, and a skip there would be noise: in
+// the one call, a name opkg names in `Cannot install package <name>.`, which
+// is then dropped with the missing ones; one at a time, any failure.
 func EachShell(pm config.PackageManager, add, list string) string {
 	missing := `Unknown package '$p'.`
 	fetchFailed := `printf '%s\n' "$owlab_out" | grep -qF 'opkg_download: Failed to download'`
+	providedFunc := `owlab_provided() { owlab_by=$(awk -v p="$1" '/^Package: / { if (v && s) exit; n = $2; v = s = 0 } /^Provides: / { k = split(substr($0, 11), a, /, */); for (i = 1; i <= k; i++) { sub(/[ (=].*/, "", a[i]); if (a[i] == p) v = 1 } } /^Status: .* installed$/ { s = 1 } END { if (v && s) print n; else exit 1 }' ` + opkgStatus + `) || return 1; ` +
+		`echo "owlab: skip (provided by $owlab_by, already installed): $1"; }; `
+	dropProvided := `elif printf '%s\n' "$owlab_out" | grep -qxF " * opkg_install_cmd: Cannot install package $p." && owlab_provided "$p"; then owlab_dropped=1; `
+	skipProvided := `if owlab_provided "$p"; then continue; fi; `
 	if pm == config.APK {
 		missing = `  $p (no such package):`
 		fetchFailed = `printf '%s\n' "$owlab_out" | awk '/^ERROR: wget: exited with error/ { w = 1; next } w && !/^WARNING: updating and opening / { f = 1 } { w = 0 } END { exit !(f || w) }'`
+		providedFunc, dropProvided, skipProvided = "", "", ""
 	}
 	isMissing := `printf '%s\n' "$owlab_out" | grep -qxF "` + missing + `"`
 	attempts := strconv.Itoa(len(strings.Fields(retryWaits)) + 1)
@@ -448,12 +466,12 @@ func EachShell(pm config.PackageManager, add, list string) string {
 		`{ echo "owlab: cannot record $1 in ` + packagesFailed + ` (is the overlay full? df /overlay); stopping, because owlab up would report this router as complete" >&2; exit 1; }; }; ` +
 		`owlab_absent() { case "${owlab_partial:-}:$1" in all:*|kmods:kmod-*) ` +
 		`echo "owlab: FAILED to install $1: no feed that answered the refresh above carries it, and one that did not answer may; this router is built without it" >&2; owlab_failed "$1" ;; ` +
-		`*) echo "owlab: skip (not in this feed): $1" ;; esac; }; ` +
+		`*) echo "owlab: skip (not in this feed): $1" ;; esac; }; ` + providedFunc +
 		`if ! owlab_out=$(` + add + ` ` + list + ` 2>&1); then owlab_rest=; owlab_dropped=; ` +
-		`for p in ` + list + `; do if ` + isMissing + `; then owlab_absent "$p"; owlab_dropped=1; else owlab_rest="$owlab_rest $p"; fi; done; ` +
+		`for p in ` + list + `; do if ` + isMissing + `; then owlab_absent "$p"; owlab_dropped=1; ` + dropProvided + `else owlab_rest="$owlab_rest $p"; fi; done; ` +
 		`if [ -z "$owlab_dropped" ] || [ -z "$owlab_rest" ] || ! owlab_out=$(` + add + ` $owlab_rest 2>&1); then ` +
 		`[ -z "$owlab_rest" ] || echo "owlab: installing the packages in one call failed; installing them one at a time to name the ones that do not install" >&2; ` +
-		`for p in $owlab_rest; do owlab_out=$(` + add + ` "$p" 2>&1) && continue; ` +
+		`for p in $owlab_rest; do owlab_out=$(` + add + ` "$p" 2>&1) && continue; ` + skipProvided +
 		`for owlab_wait in $owlab_waits; do ` + fetchFailed + ` || break; ` +
 		`echo "owlab: downloading $p failed (a download server or network outage); asking again in ${owlab_wait}s" >&2; ` +
 		`sleep "$owlab_wait"; owlab_out=$(` + add + ` "$p" 2>&1) && continue 2; done; ` +

@@ -180,7 +180,9 @@ func (a *app) reportMissing(ctx context.Context, routers []*config.Router) error
 		"!   Every other router built and started; only these packages are missing.\n"+
 			"!   The package manager said why during the build — one router at a time shows it again,\n"+
 			"!   and downloads what failed to download:\n"+
-			"!     owlab up --rebuild %s\n", bad[0])
+			"!     owlab up --rebuild %s\n"+
+			"!   A package the rebuild refuses again cannot go on that router: take it out of the\n"+
+			"!   router's packages: (a \"-name\" entry for one owlab installs by default) or extra_packages:.\n", bad[0])
 	return errPackagesMissing
 }
 
@@ -639,8 +641,14 @@ func (a *app) install(ctx context.Context, args []string) error {
 			Rolling: r.Rolling(),
 		})
 		fmt.Printf("== %s (%s)\n", r.ID, pm)
-		if len(names) == 0 && feedKeyArchive == nil && installOffline(ctx, run, pm, installArgs, os.Stdout) {
-			continue
+		if len(names) == 0 && feedKeyArchive == nil {
+			retry, err := installOffline(ctx, run, pm, installArgs, os.Stdout)
+			if err != nil {
+				markFailed(r.ID)
+			}
+			if !retry {
+				continue
+			}
 		}
 		if err := run(ctx, cmd, nil, os.Stdout); err != nil {
 			markFailed(r.ID)
@@ -670,24 +678,32 @@ func (a *app) install(ctx context.Context, args []string) error {
 }
 
 // installOffline installs package files already on a router without asking any
-// feed, and reports whether that was enough.
+// feed. retry says the caller must install them again with the refresh; err is
+// the refusal that ends this router's install, its output already shown.
 //
 // A file needs a feed only for a dependency the router does not have, so
 // refreshing every index first made installing it depend on all of them:
 // installing a theme whose one dependency, luci-base, was already on the router
 // spent 1.8 s on the refresh, and with no feed answering the refresh ended the
-// script before the install ran. When this attempt fails, the caller installs
-// the files again with the refresh, and that attempt's output is the one
-// shown: it says the same of a broken package, and this one's says only that
-// a dependency was not on the router.
-func installOffline(ctx context.Context, run syncpkg.Exec, pm config.PackageManager, files []string, out io.Writer) bool {
+// script before the install ran.
+//
+// Only a refusal a refresh can change is handed back, and that attempt's
+// output is the one shown: this one's says only that a dependency was not on
+// the router. opkg's attempt is never final, because opkg has no offline mode
+// and fetched the dependencies it lacked out of lists that may be stale. apk's
+// is, unless it could not select a dependency: anything else would only be
+// said worse a second time. A post-install script that exits 1 prints its
+// error on the first `apk add` alone, and every later one just "1 error;"
+// (measured on 25.12.4, apk 3.0.5).
+func installOffline(ctx context.Context, run syncpkg.Exec, pm config.PackageManager, files []string, out io.Writer) (retry bool, err error) {
 	var log bytes.Buffer
-	if err := run(ctx, pkgmgr.Install(pm, files, pkgmgr.Options{Untrusted: true, Offline: true}), nil, &log); err != nil {
+	err = run(ctx, pkgmgr.Install(pm, files, pkgmgr.Options{Untrusted: true, Offline: true}), nil, &log)
+	if err != nil && (pm != config.APK || strings.Contains(log.String(), "ERROR: unable to select packages:")) {
 		fmt.Fprintln(out, "   did not install from what the router has; refreshing its feeds and trying again")
-		return false
+		return true, nil
 	}
 	_, _ = out.Write(log.Bytes())
-	return true
+	return false, err
 }
 
 // localPackage is a package file taken from the host, already wrapped in the

@@ -15,9 +15,9 @@ one waits for a major.
   package spent the package manager's own start-up on each: for
   luci-theme-footstrap's 74 names, 81 s against 58 s on 24.10.8 (opkg) and
   48 s against 45 s on 25.12.5 (apk), with the same packages installed. A name
-  the feeds lack is dropped and the rest installed in one call again; only
-  when that fails is each package installed on its own, to name the ones that
-  do not install.
+  the feeds lack, and on opkg a name an installed package provides, is dropped
+  and the rest installed in one call again; only when that fails is each
+  package installed on its own, to name the ones that do not install.
 
 ### Fixed
 
@@ -37,14 +37,20 @@ one waits for a major.
   The feed that did not answer may carry it. A kmods index alone is the
   exception, because it carries only `kmod-*` packages, and a snapshot image
   older than the feed's kernel window loses it on every build.
+- **On opkg, a name an installed package provides is a skip.** ImmortalWrt
+  24.10 ships `dnsmasq-full`, which provides `dnsmasq`, and opkg refused the
+  stock set's `dnsmasq` beside it on a file clash: 0.6.6 printed
+  `FAILED to install dnsmasq` for every ImmortalWrt 24.10 router. apk already
+  counts the provider as the name.
 - **`owlab up` exits non-zero when a router never answered on HTTP.** It
   printed `did not answer on HTTP in time` and exited 0.
 - **`owlab install` exits non-zero when a router refused the package,** and
   names the router. It printed `install failed on` and exited 0.
 - **`owlab install <router> <file>` no longer refreshes every feed index
   first.** A file whose dependencies are already on the router installs
-  without asking a feed (`apk --no-network`, plain `opkg install`). When that
-  fails, owlab refreshes the feeds and installs again, as before.
+  without asking a feed (`apk --no-network`, plain `opkg install`). When a
+  dependency is missing, owlab refreshes the feeds and installs again, as
+  before.
 
 ## [0.6.6] - 2026-10-20
 

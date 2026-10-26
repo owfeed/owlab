@@ -142,6 +142,16 @@ one-line skip, not an error:
 owlab: skip (not in this feed): luci-app-example
 ```
 
+On opkg, a name that a package already on the router provides is a skip too,
+and is dropped from the call the same way. ImmortalWrt ships `dnsmasq-full`,
+which provides `dnsmasq`, and opkg would otherwise install the real `dnsmasq`
+beside it and refuse on a file clash. apk counts the provider as the name by
+itself:
+
+```
+owlab: skip (provided by dnsmasq-full, already installed): dnsmasq
+```
+
 When the call fails for any other reason, each package is installed on its
 own, so a failure costs that package and not the router. Anything that still
 does not install is a failure: a file clash, a dependency the feeds lack, or a
