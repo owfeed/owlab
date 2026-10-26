@@ -148,8 +148,54 @@ $ owlab exec owrt2410 -- 'opkg update 2>&1 | grep -c "^Updated"'
 ```
 
 Ноль — это фатальный случай, и owlab об этом скажет. Любое число больше нуля с
-ненулевым кодом возврата — частичный случай, и пропущенными будут отмечены
-именно те пакеты, которые живут в не ответившем фиде.
+ненулевым кодом возврата — частичный случай. Имя, которое установка после этого
+не нашла, считается сбоем: его мог нести не ответивший фид; см. следующий
+раздел. Если не ответил только индекс kmods, сбоем считается только
+ненайденный `kmod-*`.
+
+### `owlab up` выходит с кодом 1: роутер работает БЕЗ пакета из `packages:`
+
+**Симптом.** `owlab up` печатает свою таблицу, потом это, и выходит с кодом 1:
+
+```
+! owrt2410 is running WITHOUT luci-app-example
+!   Every other router built and started; only these packages are missing.
+!   The package manager said why during the build — one router at a time shows it again,
+!   and downloads what failed to download:
+!     owlab up --rebuild owrt2410
+!   A package the rebuild refuses again cannot go on that router: take it out of the
+!   router's packages: (a "-name" entry for one owlab installs by default) or extra_packages:.
+```
+
+В 0.6.6 и раньше тот же роутер стартовал с кодом 0, и единственным следом была
+строка `owlab: FAILED to install` в логе сборки.
+
+**Причина.** Слой пакетов ставит каждое имя отдельно и записывает те, что не
+встали, в `/etc/owlab/packages-failed`. Причину лог сборки называет над строкой
+`owlab: FAILED to install <name>`:
+
+- `owlab: <name> did not download in 4 attempts`: сбой сервера загрузок или
+  сети. Пакеты после него запрашиваются по одному разу, так что один сбой стоит
+  одного круга ожидания.
+- Строки самого менеджера пакетов: конфликт файлов или зависимость, которой нет
+  в фидах.
+- `no feed that answered the refresh above carries it`: имя не нашлось после
+  `partial refresh`, а не ответивший фид мог его нести.
+
+**Исправление.** После сбоя сети запустите `owlab up --rebuild owrt2410`.
+Обычный `owlab up` берёт слой из кеша и снова сообщает о том же роутере. При
+конфликте или недостающей зависимости уберите имя из `packages:` этого роутера
+(запись `-имя` для пакета, который owlab ставит по умолчанию) или добавьте
+пакет, который ему нужен.
+
+**Проверка.** Спросить работающий роутер:
+
+```console
+$ owlab exec owrt2410 -- cat /etc/owlab/packages-failed
+luci-app-example
+```
+
+`owlab test` проваливает этот роутер на шаге `packages` с теми же именами.
 
 ---
 
@@ -157,10 +203,10 @@ $ owlab exec owrt2410 -- 'opkg update 2>&1 | grep -c "^Updated"'
 
 ### Интерфейс контейнера не попал ни в одну зону firewall
 
-**Симптом.** `owlab up` пишет `did not answer on HTTP in time`. `curl` на
-опубликованный порт не получает ничего — код выхода 52, пустой ответ, — при
-том что внутри контейнера `uhttpd` слушает `0.0.0.0:80` и локальный запрос
-отрабатывает. Замечено на ImmortalWrt: два роутера недоступны, а роутеры
+**Симптом.** `owlab up` пишет `did not answer on HTTP in time` и выходит с
+кодом 1. `curl` на опубликованный порт не получает ничего — код выхода 52,
+пустой ответ, — при том что внутри контейнера `uhttpd` слушает `0.0.0.0:80` и
+локальный запрос отрабатывает. Замечено на ImmortalWrt: два роутера недоступны, а роутеры
 OpenWrt на том же стенде работают.
 
 ```console

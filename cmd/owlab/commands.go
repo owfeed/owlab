@@ -100,12 +100,14 @@ func (a *app) up(ctx context.Context, args []string) error {
 	if !*noWait {
 		ready = a.waitForLuCI(ctx, routers)
 	}
-	if err := a.printReady(routers, ready); err != nil {
-		return err
-	}
-	// After the table, because it is what should be left on screen — and
-	// after the build, because the build no longer stops for it.
-	return a.reportMissingExtras(ctx, containers)
+	// Both, whichever fails: a router that did not answer and a router built
+	// without a package are two different things to fix. The missing packages
+	// come after the table, because they are what should be left on screen,
+	// and after the build, because the build no longer stops for them. ctx's
+	// own error first, so a Ctrl-C during the wait still exits 130 rather
+	// than as a router that did not answer.
+	notReady := a.printReady(routers, ready)
+	return errors.Join(ctx.Err(), notReady, a.reportMissing(ctx, routers))
 }
 
 // extrasFailedPath is where an image build records the extra_packages it could
@@ -114,18 +116,20 @@ func (a *app) up(ctx context.Context, args []string) error {
 // Read back off the router rather than scraped out of the build log, for two
 // reasons: the log is thousands of lines of buildkit progress that nobody
 // reads, and a router started from a cached image never printed one at all.
+// The feed packages have their own record, pkgmgr.PackagesFailedPath, for the
+// same reasons.
 const extrasFailedPath = "/etc/owlab/extras-failed"
 
-// missingExtras asks one router which of its extra_packages did not install.
+// recorded asks one router for the names a build recorded in path.
 //
 // Empty for almost every router: the file exists only when a build had
 // something to record.
-func missingExtras(ctx context.Context, run syncpkg.Exec) []string {
+func recorded(ctx context.Context, run syncpkg.Exec, path string) []string {
 	var buf bytes.Buffer
 	// A missing file is the normal case, not an error to propagate — and any
 	// other failure here (a router that stopped, an engine that went away) is
 	// already reported by whatever else is talking to the same router.
-	if err := run(ctx, "cat "+extrasFailedPath+" 2>/dev/null || true", nil, &buf); err != nil {
+	if err := run(ctx, "cat "+path+" 2>/dev/null || true", nil, &buf); err != nil {
 		return nil
 	}
 	var out []string
@@ -137,27 +141,32 @@ func missingExtras(ctx context.Context, run syncpkg.Exec) []string {
 	return out
 }
 
-// reportMissingExtras names, per router, the extra_packages its image was
-// built without.
+// reportMissing names, per router, the packages its config names and its
+// image was built without: feed packages from packages:, files from
+// extra_packages.
 //
 // This is the half of issue #12 that is not "stop cancelling the other
-// routers". One bad file no longer fails the build, and tolerance with no
+// routers". One bad package no longer fails the build, and tolerance with no
 // report is silence — which is worse than the failure it replaced: the
-// developer named a file, the router does not have it, and nothing but a line
-// in the middle of a buildkit log would say so. Hence the non-zero exit as
-// well: a script that runs `owlab up` before its own checks must not read
-// "lab is up" as "lab is what the config describes".
-func (a *app) reportMissingExtras(ctx context.Context, routers []*config.Router) error {
+// developer named a package, the router does not have it, and nothing but a
+// line in the middle of a buildkit log would say so. Hence the non-zero exit
+// as well: a script that runs `owlab up` before its own checks must not read
+// "lab is up" as "lab is what the config describes". Feed packages were left
+// out of this until a download that failed during the build gave a CI job a
+// router without the app under test, and `owlab up` exited 0.
+func (a *app) reportMissing(ctx context.Context, routers []*config.Router) error {
 	var bad []string
 	for _, r := range routers {
-		if len(r.Extra) == 0 {
-			continue
-		}
 		run, err := a.execFor(r)
 		if err != nil {
 			continue
 		}
-		missing := missingExtras(ctx, run)
+		missing := recorded(ctx, run, pkgmgr.PackagesFailedPath)
+		// A vm installs its extra_packages over ssh during provisioning, which
+		// fails as itself and leaves no record.
+		if len(r.Extra) > 0 && r.Fidelity != config.VM {
+			missing = append(missing, recorded(ctx, run, extrasFailedPath)...)
+		}
 		if len(missing) == 0 {
 			continue
 		}
@@ -169,16 +178,23 @@ func (a *app) reportMissingExtras(ctx context.Context, routers []*config.Router)
 	}
 	fmt.Fprintf(os.Stderr,
 		"!   Every other router built and started; only these packages are missing.\n"+
-			"!   The package manager said why during the build — one router at a time shows it again:\n"+
-			"!     owlab up --rebuild %s\n", bad[0])
-	return errExtrasMissing
+			"!   The package manager said why during the build — one router at a time shows it again,\n"+
+			"!   and downloads what failed to download:\n"+
+			"!     owlab up --rebuild %s\n"+
+			"!   A package the rebuild refuses again cannot go on that router: take it out of the\n"+
+			"!   router's packages: (a \"-name\" entry for one owlab installs by default) or extra_packages:.\n", bad[0])
+	return errPackagesMissing
 }
 
-// errExtrasMissing is the exit status of an `owlab up` that started every
-// router and could not put a named package on one of them. A plain sentinel:
-// the routers and packages have already been printed one line each, and an
-// "owlab: extra_packages missing" summary on top would bury which is which.
-var errExtrasMissing = errors.New("extra_packages missing")
+// errPackagesMissing is the exit status of an `owlab up` that started every
+// router and could not put a package its config names on one of them. A plain
+// sentinel: the routers and packages have already been printed one line each,
+// and an "owlab: packages missing" summary on top would bury which is which.
+var errPackagesMissing = errors.New("packages missing")
+
+// errNotReady is the exit status of an `owlab up` that started a router whose
+// LuCI never answered. Printed already, under the table.
+var errNotReady = errors.New("router not ready")
 
 // resolveBaseImages asks the registry whether each router's upstream image
 // exists, and switches the ones that do not onto the rootfs tarball.
@@ -625,14 +641,18 @@ func (a *app) install(ctx context.Context, args []string) error {
 			Rolling: r.Rolling(),
 		})
 		fmt.Printf("== %s (%s)\n", r.ID, pm)
+		if len(names) == 0 && feedKeyArchive == nil {
+			retry, err := installOffline(ctx, run, pm, installArgs, os.Stdout)
+			if err != nil {
+				markFailed(r.ID)
+			}
+			if !retry {
+				continue
+			}
+		}
 		if err := run(ctx, cmd, nil, os.Stdout); err != nil {
 			markFailed(r.ID)
 		}
-	}
-	if len(failed) > 0 {
-		// Not fatal: feeds differ between releases and between a fork and
-		// upstream, and "missing on 24.10" is information, not an error.
-		fmt.Fprintf(os.Stderr, "\n! install failed on: %s\n", strings.Join(failed, ", "))
 	}
 
 	// LuCI caches its dispatch tree and module list; a new app is invisible
@@ -646,7 +666,44 @@ func (a *app) install(ctx context.Context, args []string) error {
 		}
 		_ = run(ctx, script, nil, io.Discard)
 	}
+	// After the reload, so the routers that did install show it. An exit 0
+	// here used to say "installed" for a router that refused the package: a
+	// CI job that ran `owlab install` and then its checks measured a router
+	// without the package and blamed the package.
+	if len(failed) > 0 {
+		return fmt.Errorf("install failed on %s; the reason is printed above, under each router's name. "+
+			"Fix what it names and run owlab install again", strings.Join(failed, ", "))
+	}
 	return nil
+}
+
+// installOffline installs package files already on a router without asking any
+// feed. retry says the caller must install them again with the refresh; err is
+// the refusal that ends this router's install, its output already shown.
+//
+// A file needs a feed only for a dependency the router does not have, so
+// refreshing every index first made installing it depend on all of them:
+// installing a theme whose one dependency, luci-base, was already on the router
+// spent 1.8 s on the refresh, and with no feed answering the refresh ended the
+// script before the install ran.
+//
+// Only a refusal a refresh can change is handed back, and that attempt's
+// output is the one shown: this one's says only that a dependency was not on
+// the router. opkg's attempt is never final, because opkg has no offline mode
+// and fetched the dependencies it lacked out of lists that may be stale. apk's
+// is, unless it could not select a dependency: anything else would only be
+// said worse a second time. A post-install script that exits 1 prints its
+// error on the first `apk add` alone, and every later one just "1 error;"
+// (measured on 25.12.4, apk 3.0.5).
+func installOffline(ctx context.Context, run syncpkg.Exec, pm config.PackageManager, files []string, out io.Writer) (retry bool, err error) {
+	var log bytes.Buffer
+	err = run(ctx, pkgmgr.Install(pm, files, pkgmgr.Options{Untrusted: true, Offline: true}), nil, &log)
+	if err != nil && (pm != config.APK || strings.Contains(log.String(), "ERROR: unable to select packages:")) {
+		fmt.Fprintln(out, "   did not install from what the router has; refreshing its feeds and trying again")
+		return true, nil
+	}
+	_, _ = out.Write(log.Bytes())
+	return false, err
 }
 
 // localPackage is a package file taken from the host, already wrapped in the
@@ -1080,10 +1137,15 @@ func (a *app) printReady(routers []*config.Router, ready map[string]bool) error 
 				"!   Or point owlab at an existing key:  export OWLAB_PUBKEY=/path/to/key.pub\n"+
 				"!   Then re-run `owlab up` to install it.\n")
 	}
+	// An error, not only a line: the table above says "up", and a script
+	// that runs `owlab up` before its own checks reads the exit status, not the
+	// table.
 	if len(stalled) > 0 {
 		fmt.Fprintf(os.Stderr,
-			"\n! %s did not answer on HTTP in time. Check `owlab logs %s`.\n",
+			"\n! %s did not answer on HTTP in time. Check `owlab logs %s`.\n"+
+				"!   A router built without uhttpd never answers; start it with `owlab up --no-wait`.\n",
 			strings.Join(stalled, ", "), stalled[0])
+		return errNotReady
 	}
 	return nil
 }

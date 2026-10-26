@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -68,6 +69,20 @@ func TestNoUpdateMeansNoUpdate(t *testing.T) {
 	}
 }
 
+// --no-network is apk's alone, and only when asked for: without it apk
+// revalidates an index older than four hours before installing a file.
+func TestOfflineIsAPKsNoNetwork(t *testing.T) {
+	if got := Install(config.APK, []string{"/tmp/x.apk"}, Options{Untrusted: true, Offline: true}); !strings.Contains(got, "apk add --allow-untrusted --no-network /tmp/x.apk") {
+		t.Errorf("apk offline install:\n%s", got)
+	}
+	if got := Install(config.APK, []string{"/tmp/x.apk"}, Options{Untrusted: true}); strings.Contains(got, "--no-network") {
+		t.Errorf("--no-network without Offline:\n%s", got)
+	}
+	if got := Install(config.OPKG, []string{"/tmp/x.ipk"}, Options{Offline: true}); got != "opkg install /tmp/x.ipk\n" {
+		t.Errorf("opkg has no --no-network:\n%s", got)
+	}
+}
+
 // Tolerant is what keeps one name missing on 24.10 from costing the whole
 // router: each package is tried alone and the skips are reported.
 func TestTolerantInstallsOneAtATimeAndReportsSkips(t *testing.T) {
@@ -121,6 +136,7 @@ func TestEachSkipsOnlyANameTheFeedLacks(t *testing.T) {
 			[]string{"check_data_file_clashes", "owlab: FAILED to install dnsmasq-full", "owlab: FAILED to install ttyd"}, "skip"},
 		{config.APK, "apk add", "luci", "OK: 12.6 MiB in 141 packages", 0, nil, "owlab"},
 	}
+	rec := tempRecord(t)
 	for _, c := range cases {
 		code, got := runStubbed(t, c.pm, c.out, c.rc, EachShell(c.pm, c.add, c.pkgs))
 		if code != 0 {
@@ -134,6 +150,407 @@ func TestEachSkipsOnlyANameTheFeedLacks(t *testing.T) {
 		if strings.Contains(got, c.not) {
 			t.Errorf("%s %s: %q in:\n%s", c.add, c.pkgs, c.not, got)
 		}
+		// What `owlab up` will read back: every FAILED line, and no skip.
+		var failed []string
+		for _, w := range c.want {
+			if name, ok := strings.CutPrefix(w, "owlab: FAILED to install "); ok {
+				failed = append(failed, name)
+			}
+		}
+		if got := readRecord(t, rec); got != strings.Join(failed, " ") {
+			t.Errorf("%s %s: recorded %q, want %q", c.add, c.pkgs, got, strings.Join(failed, " "))
+		}
+	}
+}
+
+// tempRecord points EachShell's record at a temporary directory, drops the
+// waits between download attempts, and gives opkg an empty status file, for
+// the rest of the test.
+func tempRecord(t *testing.T) string {
+	t.Helper()
+	oldRec, oldWaits, oldStatus := packagesFailed, retryWaits, opkgStatus
+	t.Cleanup(func() { packagesFailed, retryWaits, opkgStatus = oldRec, oldWaits, oldStatus })
+	// Forward slashes: the path is pasted unquoted into shell text, and Git's
+	// sh on a Windows runner eats backslashes.
+	dir := filepath.ToSlash(t.TempDir())
+	packagesFailed = dir + "/owlab/packages-failed"
+	retryWaits = "0 0 0"
+	opkgStatus = dir + "/status"
+	if err := os.WriteFile(opkgStatus, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return packagesFailed
+}
+
+// readRecord is the record's names joined by one space, "" when there is none.
+func readRecord(t *testing.T, rec string) string {
+	t.Helper()
+	b, err := os.ReadFile(rec)
+	if errors.Is(err, fs.ErrNotExist) {
+		return ""
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.Join(strings.Fields(string(b)), " ")
+}
+
+// A record an earlier build left — this loop also runs on top of an already
+// built owlab image — would be reported as this build's failure.
+func TestEachClearsAnEarlierRecord(t *testing.T) {
+	rec := tempRecord(t)
+	if err := os.MkdirAll(filepath.Dir(rec), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rec, []byte("luci-app-old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, got := runStubbed(t, config.APK, "OK: 12.6 MiB in 141 packages", 0, EachShell(config.APK, "apk add", "luci")); code != 0 || got != "" {
+		t.Errorf("exit %d, output %q, want a silent success", code, got)
+	}
+	if got := readRecord(t, rec); got != "" {
+		t.Errorf("record after a clean install = %q, want none", got)
+	}
+}
+
+// Measured 2026-10-26 with downloads.openwrt.org pointed at 0.0.0.0 after a
+// good refresh: apk 3.0.5 on openwrt/rootfs:x86-64-25.12.4 (exit 1) and opkg
+// on openwrt/rootfs:x86-64-24.10.8 (exit 255). A 404 and a 503 from a local
+// feed differ only in the code: `exited with error 8`, `wget returned 8.`
+const (
+	apkFetchFailed = `(1/1) Installing tree (2.2.1-r2)
+wgetFailed to send request: Operation not permitted
+ERROR: wget: exited with error 4
+ERROR: tree-2.2.1-r2: unexpected end of file
+1 error; 12.9 MiB in 142 packages`
+	opkgFetchFailed = `Installing tree (2.2.1-r1) to root...
+Downloading https://downloads.openwrt.org/releases/24.10.8/packages/x86_64/packages/tree_2.2.1-r1_x86_64.ipk
+Collected errors:
+ * opkg_download: Failed to download https://downloads.openwrt.org/releases/24.10.8/packages/x86_64/packages/tree_2.2.1-r1_x86_64.ipk, wget returned 4.
+ * opkg_download: Check your network settings and connectivity.
+
+ * opkg_install_pkg: Failed to download tree. Perhaps you need to run 'opkg update'?
+ * opkg_install_cmd: Cannot install package tree.`
+)
+
+// runCounting runs script under `set -eu` against a stub manager that fails the
+// first `fails` installs of each package with out and exit rc, then installs
+// it. It returns the exit code, the output, and how often each package was
+// asked for.
+func runCounting(t *testing.T, pm config.PackageManager, out string, rc, fails int, script string) (int, string, map[string]int) {
+	t.Helper()
+	dir := filepath.ToSlash(t.TempDir())
+	if err := os.WriteFile(dir+"/out", []byte(out+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// $2 is the package for both `apk add <p>` and `opkg install <p>`.
+	body := `n=$(cat '` + dir + `/calls.'"$2" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > '` + dir + `/calls.'"$2"
+if [ "$n" -le ` + strconv.Itoa(fails) + ` ]; then cat '` + dir + `/out'; exit ` + strconv.Itoa(rc) + `; fi
+echo "installed $2"`
+	code, got := runStub(t, pm, body, script)
+	calls := map[string]int{}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if name, ok := strings.CutPrefix(e.Name(), "calls."); ok {
+			b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			calls[name], _ = strconv.Atoi(strings.TrimSpace(string(b)))
+		}
+	}
+	return code, got, calls
+}
+
+// One dropped fetch used to build the router without that package, and the
+// layer that did it was cached, so every `owlab up` after it handed back the
+// same short router. A download that heals on a later attempt now installs.
+func TestEachAsksAgainAfterAFailedDownload(t *testing.T) {
+	for _, c := range []struct {
+		pm       config.PackageManager
+		add, out string
+		rc       int
+	}{
+		{config.APK, "apk add", apkFetchFailed, 1},
+		{config.OPKG, "opkg install", opkgFetchFailed, 255},
+	} {
+		rec := tempRecord(t)
+		code, got, calls := runCounting(t, c.pm, c.out, c.rc, 2, EachShell(c.pm, c.add, "tree"))
+		if code != 0 || calls["tree"] != 3 {
+			t.Errorf("%s: exit %d after %d attempts, want 0 after 3:\n%s", c.pm, code, calls["tree"], got)
+		}
+		if !strings.Contains(got, "owlab: downloading tree failed (a download server or network outage); asking again") {
+			t.Errorf("%s: the retry is not said:\n%s", c.pm, got)
+		}
+		if strings.Contains(got, "FAILED") || readRecord(t, rec) != "" {
+			t.Errorf("%s: a download that healed was reported as failed (record %q):\n%s", c.pm, readRecord(t, rec), got)
+		}
+	}
+}
+
+// A download that never heals is recorded, and the outage costs one round of
+// waiting: the package after it is asked once, not four times.
+func TestEachRecordsADownloadThatKeepsFailing(t *testing.T) {
+	for _, c := range []struct {
+		pm       config.PackageManager
+		add, out string
+		rc       int
+	}{
+		{config.APK, "apk add", apkFetchFailed, 1},
+		{config.OPKG, "opkg install", opkgFetchFailed, 255},
+	} {
+		rec := tempRecord(t)
+		code, got, calls := runCounting(t, c.pm, c.out, c.rc, 99, EachShell(c.pm, c.add, "tree ttyd"))
+		if code != 0 {
+			t.Errorf("%s: the outage ended the loop with %d:\n%s", c.pm, code, got)
+		}
+		if calls["tree"] != 4 || calls["ttyd"] != 1 {
+			t.Errorf("%s: asked tree %d and ttyd %d times, want 4 and 1:\n%s", c.pm, calls["tree"], calls["ttyd"], got)
+		}
+		for _, w := range []string{"owlab: tree did not download in 4 attempts", "owlab: FAILED to install tree", "owlab: FAILED to install ttyd"} {
+			if !strings.Contains(got, w) {
+				t.Errorf("%s: no %q in:\n%s", c.pm, w, got)
+			}
+		}
+		if got := readRecord(t, rec); got != "tree ttyd" {
+			t.Errorf("%s: recorded %q, want \"tree ttyd\"", c.pm, got)
+		}
+	}
+}
+
+// Measured 2026-10-26 on immortalwrt 24.10.6 (x86_64), trimmed: the dnsmasq-full
+// the image ships, and the stanza opkg leaves behind for the dnsmasq it refused.
+const (
+	immortalwrtStatus = `Package: wpad-basic-mbedtls
+Version: 2024.09.15~5ace39b0-r2
+Provides: hostapd, wpa-supplicant
+Status: install user installed
+Architecture: x86_64
+
+Package: dnsmasq
+Version: 2.93-r1
+Depends: libc, libubus20250102
+Status: install user not-installed
+Architecture: x86_64
+
+Package: dnsmasq-full
+Version: 2.90-r5
+Depends: libc, libubus20250102, libnettle8, libnetfilter-conntrack3, nftables-json
+Provides: dnsmasq
+Status: install ok installed
+Architecture: x86_64
+Installed-Time: 1776821074
+`
+	opkgProvidedClash = ` * check_data_file_clashes: Package dnsmasq wants to install file /usr/sbin/dnsmasq
+	But that file is already provided by package  * dnsmasq-full
+ * opkg_install_cmd: Cannot install package dnsmasq.`
+)
+
+// ImmortalWrt 24.10 ships dnsmasq-full, the stock set asks for dnsmasq, and
+// opkg refuses the real dnsmasq beside it: every ImmortalWrt 24.10 router was
+// recorded as built without a name it had, and `owlab up` exited 1 on it. The
+// other direction matters as much: a provider that is not installed, or an
+// installed package that provides some other name, is no excuse.
+func TestEachSkipsANameAnInstalledPackageProvides(t *testing.T) {
+	notInstalled := strings.Replace(immortalwrtStatus, "Status: install ok installed", "Status: install user not-installed", 1)
+	for _, c := range []struct {
+		name, status, pkg, out string
+		calls                  int
+		skip                   string
+	}{
+		{"provider installed", immortalwrtStatus, "dnsmasq", opkgProvidedClash, 1, "dnsmasq-full"},
+		{"provider installed, one of several names", immortalwrtStatus, "wpa-supplicant", opkgProvidedClash, 1, "wpad-basic-mbedtls"},
+		// Nothing to download for a name the router already has.
+		{"provider installed, download refused", immortalwrtStatus, "dnsmasq", opkgFetchFailed, 1, "dnsmasq-full"},
+		{"provider not installed", notInstalled, "dnsmasq", opkgProvidedClash, 1, ""},
+		// OpenWrt 24.10: the stock dnsmasq provides no dnsmasq-full.
+		{"installed package provides another name", "Package: dnsmasq\nVersion: 2.90-r4\nStatus: install ok installed\n", "dnsmasq-full", opkgClash, 1, ""},
+	} {
+		tempRecord(t)
+		if err := os.WriteFile(opkgStatus, []byte(c.status), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		code, got, calls := runCounting(t, config.OPKG, c.out, 255, 99, EachShell(config.OPKG, "opkg install", c.pkg))
+		if code != 0 || calls[c.pkg] != c.calls {
+			t.Errorf("%s: exit %d after %d attempts, want 0 after %d:\n%s", c.name, code, calls[c.pkg], c.calls, got)
+		}
+		want, record := "owlab: skip (provided by "+c.skip+", already installed): "+c.pkg, ""
+		if c.skip == "" {
+			want, record = "owlab: FAILED to install "+c.pkg, c.pkg
+		}
+		if !strings.Contains(got, want) {
+			t.Errorf("%s: no %q in:\n%s", c.name, want, got)
+		}
+		if got := readRecord(t, packagesFailed); got != record {
+			t.Errorf("%s: recorded %q, want %q", c.name, got, record)
+		}
+	}
+}
+
+// A refusal that is not a download — a file clash, a missing dependency — gives
+// the same answer every time, so it is asked once.
+func TestEachDoesNotAskARefusalAgain(t *testing.T) {
+	rec := tempRecord(t)
+	code, got, calls := runCounting(t, config.OPKG, opkgClash, 255, 99, EachShell(config.OPKG, "opkg install", "dnsmasq-full"))
+	if code != 0 || calls["dnsmasq-full"] != 1 || strings.Contains(got, "asking again") {
+		t.Errorf("exit %d, %d attempts, want 0 and 1:\n%s", code, calls["dnsmasq-full"], got)
+	}
+	if got := readRecord(t, rec); got != "dnsmasq-full" {
+		t.Errorf("recorded %q, want dnsmasq-full", got)
+	}
+}
+
+// Measured 2026-10-26: `apk update` on openwrt/rootfs:x86-64-25.12.5 and `opkg
+// update` on openwrt/rootfs:x86-64-24.10.8, with the kmods line pointed at a
+// kernel build the feed does not have, then the luci feed at a refused port as
+// well. Trimmed to the lines the shell reads.
+const (
+	apkPartialLuci = `ERROR: wget: exited with error 8
+WARNING: updating and opening https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/kmods/6.12.0-1-dead/packages.adb: unexpected end of file
+wgetFailed to send request: Operation not permitted
+ERROR: wget: exited with error 4
+WARNING: updating and opening http://127.0.0.1:9/luci/packages.adb: unexpected end of file
+ [https://downloads.openwrt.org/releases/25.12.5/targets/x86/64/packages/packages.adb]
+ [https://downloads.openwrt.org/releases/25.12.5/packages/x86_64/base/packages.adb]
+2 unavailable, 0 stale; 6497 distinct packages available`
+	opkgPartialKmods = `Updated list of available packages in /var/opkg-lists/openwrt_core
+Updated list of available packages in /var/opkg-lists/openwrt_base
+*** Failed to download the package list from https://downloads.openwrt.org/releases/24.10.8/targets/x86/64/kmods/6.6.0-1-dead/Packages.gz
+
+Updated list of available packages in /var/opkg-lists/openwrt_luci
+Collected errors:
+ * opkg_download: Failed to download https://downloads.openwrt.org/releases/24.10.8/targets/x86/64/kmods/6.6.0-1-dead/Packages.gz, wget returned 8.`
+	opkgPartialLuci = `Updated list of available packages in /var/opkg-lists/openwrt_core
+*** Failed to download the package list from https://downloads.openwrt.org/releases/24.10.8/targets/x86/64/kmods/6.6.0-1-dead/Packages.gz
+
+*** Failed to download the package list from http://127.0.0.1:9/luci/Packages.gz
+
+Updated list of available packages in /var/opkg-lists/openwrt_packages
+ * opkg_download: Failed to download http://127.0.0.1:9/luci/Packages.gz, wget returned 4.`
+	opkgOK = `Updated list of available packages in /var/opkg-lists/openwrt_core
+Updated list of available packages in /var/opkg-lists/openwrt_luci`
+)
+
+// runRefreshThenAdd runs a tolerant install of pkg under `set -eu` against a
+// stub manager whose refresh prints update and exits updateRC, and whose
+// install prints add and exits addRC.
+func runRefreshThenAdd(t *testing.T, pm config.PackageManager, update string, updateRC int, add string, addRC int, pkg string) (int, string) {
+	t.Helper()
+	dir := filepath.ToSlash(t.TempDir())
+	for name, body := range map[string]string{"update": update, "add": add} {
+		if err := os.WriteFile(dir+"/"+name, []byte(body+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	body := `if [ "$1" = update ]; then cat '` + dir + `/update'; exit ` + strconv.Itoa(updateRC) + `; fi
+cat '` + dir + `/add'; exit ` + strconv.Itoa(addRC)
+	return runStub(t, pm, body, Install(pm, []string{pkg}, Options{Update: true, Tolerant: true}))
+}
+
+// After a refresh that lost a feed, "no such package" no longer means the
+// release lacks the name: the feed that did not answer may carry it. Calling it
+// a skip built a router without a whole feed's packages and exited 0.
+//
+// The other direction matters as much. A snapshot image older than the feed's
+// kmods window loses that one index on every build, and a name the release
+// does not carry would then fail every `owlab up` on that router. A kmods index
+// carries kmod-* only, so it makes only those a failure.
+func TestEachMissingNameAfterAPartialRefresh(t *testing.T) {
+	apkMissing := func(p string) string {
+		return "ERROR: unable to select packages:\n  " + p + " (no such package):\n    required by: world[" + p + "]"
+	}
+	opkgMissing := func(p string) string {
+		return "Unknown package '" + p + "'.\nCollected errors:\n * opkg_install_cmd: Cannot install package " + p + "."
+	}
+	for _, c := range []struct {
+		name     string
+		pm       config.PackageManager
+		update   string
+		updateRC int
+		pkg      string
+		fails    bool
+	}{
+		{"every feed read", config.APK, apkOK, 0, "owlab-no-such-pkg", false},
+		{"every feed read", config.OPKG, opkgOK, 0, "owlab-no-such-pkg", false},
+		{"kmods unread, other name", config.APK, apkPartial, 1, "owlab-no-such-pkg", false},
+		{"kmods unread, other name", config.OPKG, opkgPartialKmods, 1, "owlab-no-such-pkg", false},
+		{"kmods unread, kmod name", config.APK, apkPartial, 1, "kmod-owlab-no-such", true},
+		{"kmods unread, kmod name", config.OPKG, opkgPartialKmods, 1, "kmod-owlab-no-such", true},
+		{"luci unread", config.APK, apkPartialLuci, 2, "owlab-no-such-pkg", true},
+		{"luci unread", config.OPKG, opkgPartialLuci, 2, "owlab-no-such-pkg", true},
+		// A non-zero refresh that names no unread feed is not known to be the
+		// harmless case, so it is not treated as one.
+		{"unread feed not named", config.OPKG, opkgPartial, 1, "owlab-no-such-pkg", true},
+	} {
+		rec := tempRecord(t)
+		add, addRC := apkMissing(c.pkg), 1
+		if c.pm == config.OPKG {
+			add, addRC = opkgMissing(c.pkg), 255
+		}
+		code, got := runRefreshThenAdd(t, c.pm, c.update, c.updateRC, add, addRC, c.pkg)
+		if code != 0 {
+			t.Errorf("%s, %s: exit %d:\n%s", c.pm, c.name, code, got)
+		}
+		want, record := "owlab: skip (not in this feed): "+c.pkg, ""
+		if c.fails {
+			want, record = "owlab: FAILED to install "+c.pkg+": no feed that answered the refresh above carries it", c.pkg
+		}
+		if !strings.Contains(got, want) {
+			t.Errorf("%s, %s: no %q in:\n%s", c.pm, c.name, want, got)
+		}
+		if got := readRecord(t, rec); got != record {
+			t.Errorf("%s, %s: recorded %q, want %q", c.pm, c.name, got, record)
+		}
+	}
+}
+
+// After a partial refresh apk tries the unread index again on every `apk add`,
+// and prints the same wget line it prints for a package it could not fetch.
+// Read as a download failure, that cost a missing name 14 s of retries and
+// called it "did not download". It is the line after it that tells them apart.
+func TestEachRetriesAPackageNotAnIndex(t *testing.T) {
+	const index = `ERROR: wget: exited with error 8
+WARNING: updating and opening https://downloads.openwrt.org/releases/25.12.5/packages/x86_64/nope/packages.adb: unexpected end of file
+`
+	for _, c := range []struct {
+		name, out string
+		rc, calls int
+	}{
+		{"missing name", index + apkNoSuch, 1, 1},
+		{"missing dependency", index + "ERROR: unable to select packages:\n  kmod-ifb (no such package):\n    required by: luci-app-sqm[kmod-ifb]", 1, 1},
+		// Measured the same day: the unread feed, then the package itself
+		// refused, both in one `apk add`.
+		{"package fetch", index + apkFetchFailed, 1, 4},
+	} {
+		tempRecord(t)
+		_, got, calls := runCounting(t, config.APK, c.out, c.rc, 99, EachShell(config.APK, "apk add", "tree"))
+		if calls["tree"] != c.calls {
+			t.Errorf("%s: asked %d times, want %d:\n%s", c.name, calls["tree"], c.calls, got)
+		}
+	}
+}
+
+// A record that cannot be written would let `owlab up` call a short router
+// complete, so the loop stops instead of carrying on without it. A file where
+// the record's directory should be fails mkdir -p, and on macOS the rm -f that
+// clears the old record before it: BSD rm reports ENOTDIR even with -f.
+func TestEachStopsWhenTheRecordCannotBeWritten(t *testing.T) {
+	tempRecord(t)
+	// A file where the record's directory should be: mkdir -p fails on it.
+	blocker := filepath.ToSlash(t.TempDir()) + "/owlab"
+	if err := os.WriteFile(blocker, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	packagesFailed = blocker + "/packages-failed"
+	code, got, _ := runCounting(t, config.OPKG, opkgClash, 255, 99, EachShell(config.OPKG, "opkg install", "dnsmasq-full ttyd"))
+	if code == 0 || strings.Contains(got, "ttyd") {
+		t.Errorf("exit %d, want non-zero before ttyd:\n%s", code, got)
+	}
+	if !strings.Contains(got, "owlab: cannot record dnsmasq-full in "+packagesFailed) && !strings.Contains(got, "owlab: cannot remove "+packagesFailed) {
+		t.Errorf("the failure does not name the record:\n%s", got)
 	}
 }
 
@@ -412,8 +829,15 @@ func runUpdate(t *testing.T, pm config.PackageManager, out string, rc int) (int,
 // that prints out and exits rc.
 func runStubbed(t *testing.T, pm config.PackageManager, out string, rc int, script string) (int, string) {
 	t.Helper()
+	return runStub(t, pm, "cat <<'OUT'\n"+out+"\nOUT\nexit "+strconv.Itoa(rc), script)
+}
+
+// runStub runs script under `set -eu` with the manager replaced by a shell
+// script whose body is body.
+func runStub(t *testing.T, pm config.PackageManager, body, script string) (int, string) {
+	t.Helper()
 	bin := t.TempDir()
-	stub := "#!/bin/sh\ncat <<'OUT'\n" + out + "\nOUT\nexit " + strconv.Itoa(rc) + "\n"
+	stub := "#!/bin/sh\n" + body + "\n"
 	name := "opkg"
 	if pm == config.APK {
 		name = "apk"
@@ -554,6 +978,9 @@ func TestDockerfileRefreshesTheIndexTheSameWay(t *testing.T) {
 		}
 	}
 	codeFlat := shellWords(strings.ReplaceAll(strings.Join(code, "\n"), "\\\n", " "))
+	// The loop is one line of shell, broken across lines in the Dockerfile
+	// between commands; joining those breaks back is all this undoes.
+	unwrapped := regexp.MustCompile(`[ \t]*\\\n[ \t]*`).ReplaceAllString(string(b), " ")
 	for _, pm := range []config.PackageManager{config.APK, config.OPKG} {
 		want := shellWords(strings.ReplaceAll(strings.TrimSuffix(UpdateShell(pm), "\n"), "\n", "; "))
 		if !strings.Contains(flat, want) {
@@ -567,11 +994,12 @@ func TestDockerfileRefreshesTheIndexTheSameWay(t *testing.T) {
 		if extra := strings.Count(codeFlat, cmd) - blocks*strings.Count(want, cmd); extra != 0 {
 			t.Errorf("images/Dockerfile runs %q %d time(s) outside the refresh this package generates; paste UpdateShell(%s) there instead", cmd, extra, pm)
 		}
-		// Compared unflattened: the loop's missing-name line is matched with
-		// grep -x, so a space lost inside its quotes would turn every skip
-		// into a failure while shellWords still saw the same text.
+		// Compared with only the line continuations unwrapped, not flattened:
+		// the loop's missing-name line is matched with grep -x, so a space lost
+		// inside its quotes would turn every skip into a failure while
+		// shellWords still saw the same text.
 		add := map[config.PackageManager]string{config.APK: "apk add", config.OPKG: "opkg install"}[pm]
-		if loop := strings.TrimSuffix(EachShell(pm, add, "$PACKAGES"), "\n"); !strings.Contains(string(b), loop) {
+		if loop := strings.TrimSuffix(EachShell(pm, add, "$PACKAGES"), "\n"); !strings.Contains(unwrapped, loop) {
 			t.Errorf("images/Dockerfile does not run the %s install loop this package generates.\nwant:\n%s", pm, loop)
 		}
 	}
