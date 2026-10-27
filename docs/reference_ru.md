@@ -485,7 +485,7 @@ caught», lua-шный `stack traceback:`): поймав исключение, L
 ### В GitHub Actions
 
 ```yaml
-- uses: owfeed/owlab/action@v0.6.7
+- uses: owfeed/owlab/action@v0.7.0
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*
@@ -496,13 +496,13 @@ caught», lua-шный `stack traceback:`): поймав исключение, L
 
 У каждого флага выше есть одноимённый input; `assert` и `install` принимают по
 одному значению на строку. Экшен пишет таблицу в summary джоба и отдаёт outputs
-`report` (путь к JSON), `passed` и `failed`. `owfeed/owlab/setup@v0.6.7`
+`report` (путь к JSON), `passed` и `failed`. `owfeed/owlab/setup@v0.7.0`
 ставит только бинарь — для джоба, который сам вызывает `owlab`. Оба проверяют
 скачанное по build attestation этого репозитория до того, как бинарь будет
 запущен или попадёт в `PATH`.
 
-Версия — это тег в `uses:`. `action@v0.6.7` и `setup@v0.6.7` ставят owlab
-v0.6.7, поэтому бамп этой строки от dependabot двигает и бинарь. `version:`
+Версия — это тег в `uses:`. `action@v0.7.0` и `setup@v0.7.0` ставят owlab
+v0.7.0, поэтому бамп этой строки от dependabot двигает и бинарь. `version:`
 задавайте, только если нужен другой релиз. Вызванные по ветке или SHA, оба
 ставят последний релиз и предупреждают об этом.
 
