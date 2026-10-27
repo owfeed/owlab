@@ -62,6 +62,9 @@ type Build struct {
 	Context    string            `yaml:"context"`
 	Dockerfile string            `yaml:"dockerfile"`
 	Args       map[string]string `yaml:"args,omitempty"`
+	// Labels go on the image, not the container: the service's own Labels
+	// below are the container's.
+	Labels map[string]string `yaml:"labels,omitempty"`
 }
 
 // Network is the single user-defined bridge every router joins.
@@ -118,7 +121,7 @@ func Render(cfg *config.Config, eng engine.Info) (*Project, error) {
 			// no /dev/kvm on macOS or Windows 10.
 			continue
 		}
-		doc.Services[r.ID] = service(cfg, r, eng, name, ctxDir, keyFile)
+		doc.Services[r.ID] = service(cfg, r, eng, ctxDir, keyFile)
 	}
 
 	out, err := yaml.Marshal(doc)
@@ -213,7 +216,7 @@ func BuildArgsFor(cfg *config.Config, r *config.Router) map[string]string {
 	return args
 }
 
-func service(cfg *config.Config, r *config.Router, eng engine.Info, project, ctxDir, keyFile string) Service {
+func service(cfg *config.Config, r *config.Router, eng engine.Info, ctxDir, keyFile string) Service {
 	args := BuildArgsFor(cfg, r)
 
 	svc := Service{
@@ -221,8 +224,9 @@ func service(cfg *config.Config, r *config.Router, eng engine.Info, project, ctx
 			Context:    ctxDir,
 			Dockerfile: "Dockerfile",
 			Args:       args,
+			Labels:     map[string]string{InputsLabel: Inputs(cfg, r)},
 		},
-		Image:         fmt.Sprintf("%s-%s:latest", project, r.ID),
+		Image:         Image(cfg, r),
 		Platform:      r.Platform(),
 		ContainerName: ContainerName(cfg.Project.Name, r.ID),
 		Hostname:      r.Hostname,
@@ -338,6 +342,11 @@ func ProjectName(s string) string {
 		out = "project"
 	}
 	return "owlab-" + out
+}
+
+// Image is the image one router is built as and started from.
+func Image(cfg *config.Config, r *config.Router) string {
+	return fmt.Sprintf("%s-%s:latest", ProjectName(cfg.Project.Name), r.ID)
 }
 
 // ContainerName is the container one router runs in.

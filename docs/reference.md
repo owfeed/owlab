@@ -577,6 +577,32 @@ command works.
 A ready-made workflow is in
 [examples/workflow/package-ci.yml](../examples/workflow/package-ci.yml).
 
+#### Start a router from a saved image
+
+Building a router is most of a job's network: the base image, every package
+from the feeds, the `extra_packages` files. A job that drives `owlab` itself
+can save the image once and start later jobs from it:
+
+```console
+$ mkdir -p ~/.cache/owlab-stand
+$ docker save -o ~/.cache/owlab-stand/owrt2512.tar owlab-<project>-owrt2512:latest
+$ docker load -i ~/.cache/owlab-stand/owrt2512.tar
+$ owlab up --no-build owrt2512
+```
+
+`--no-build` fetches and builds nothing: it starts the image the engine holds,
+waits for LuCI and reports missing packages as a plain `owlab up` does. It
+refuses an image whose `org.owlab.inputs` label is not what this owlab and
+this `owlab.yaml` would build: one from another owlab, another router config,
+another `OWLAB_ROOT_PASSWORD` or a build from the rootfs tarball. It also
+refuses an image with no label, and a `fidelity: vm` router, which has no
+image. A refusal over the image exits 1 and names `owlab up <id>`, which builds
+it, so a script can fall back to that.
+
+The label does not cover the feeds: a saved image keeps the packages it was
+built with. Key the cache by a date as well as by `owlab.yaml` and owlab's
+version, to bound how stale a router can get.
+
 ## Licence and trademarks
 
 owlab is GPL-2.0-only.

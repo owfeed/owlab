@@ -52,6 +52,7 @@ func parseMixed(fs *flag.FlagSet, args []string) ([]string, error) {
 func (a *app) up(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
 	rebuild := fs.Bool("rebuild", false, "rebuild images from scratch, ignoring the layer cache")
+	noBuild := fs.Bool("no-build", false, "start container routers from the images this engine holds, built or loaded; fetch and build nothing")
 	noWait := fs.Bool("no-wait", false, "return as soon as the containers start, without waiting for LuCI")
 	verbose := fs.Bool("v", false, "echo the docker commands being run")
 	ids, err := parseMixed(fs, args)
@@ -59,18 +60,30 @@ func (a *app) up(ctx context.Context, args []string) error {
 		return err
 	}
 	a.docker.Verbose = *verbose
+	if *rebuild && *noBuild {
+		return errors.New("--rebuild builds the images from scratch and --no-build builds nothing: pick one")
+	}
 
 	routers, err := a.cfg.Select(ids)
 	if err != nil {
 		return err
 	}
+	containers, vms := splitTiers(routers)
+	// Refused, not started the usual way: a vm boots from a disk it may have
+	// to download first, and --no-build promises no network.
+	if *noBuild && len(vms) > 0 {
+		return fmt.Errorf("--no-build starts container routers from their images; %s is a fidelity: vm router, which has none", vms[0].ID)
+	}
 	if err := a.checkFidelity(ctx, routers); err != nil {
 		return err
 	}
-	containers, vms := splitTiers(routers)
-	resolveBaseImages(ctx, containers, false)
 
-	if len(containers) > 0 {
+	if *noBuild {
+		if err := a.upBuilt(ctx, containers); err != nil {
+			return err
+		}
+	} else if len(containers) > 0 {
+		resolveBaseImages(ctx, containers, false)
 		proj, err := compose.Prepare(a.cfg, a.eng, containers)
 		if err != nil {
 			return err
@@ -110,6 +123,56 @@ func (a *app) up(ctx context.Context, args []string) error {
 	// than as a router that did not answer.
 	notReady := a.printReady(routers, ready)
 	return errors.Join(ctx.Err(), notReady, a.reportMissing(ctx, routers))
+}
+
+// upBuilt starts container routers from the images this engine already holds,
+// built by an earlier `owlab up` or loaded with `docker load`, the way a CI job
+// starts one from an image a cache restored. Nothing is fetched or built: the
+// compose file is rendered, never the build context, and compose is told not to
+// build or pull.
+//
+// Only an image whose InputsLabel matches this owlab and this owlab.yaml is
+// started. One built from other inputs, or by an owlab older than the label, is
+// a router the config does not describe, and starting it would say nothing.
+func (a *app) upBuilt(ctx context.Context, routers []*config.Router) error {
+	if len(routers) == 0 {
+		return nil
+	}
+	proj, err := compose.Render(a.cfg, a.eng)
+	if err != nil {
+		return err
+	}
+	for _, r := range routers {
+		image := compose.Image(a.cfg, r)
+		label, err := a.docker.Quiet(ctx, "image", "inspect", "--format",
+			`{{index .Config.Labels "`+compose.InputsLabel+`"}}`, image)
+		if err := builtFrom(r, image, strings.TrimSpace(label), err, compose.Inputs(a.cfg, r)); err != nil {
+			return err
+		}
+	}
+	upArgs := append([]string{"up", "-d", "--no-build", "--pull", "never", "--remove-orphans"}, routerIDs(routers)...)
+	if err := a.docker.Compose(ctx, proj.ComposePath, upArgs...); err != nil {
+		return fmt.Errorf("start failed: %w", err)
+	}
+	return nil
+}
+
+// builtFrom is why r cannot start from image, given the inputs label `docker
+// image inspect` read off it (or the error it failed with) and the inputs this
+// owlab and owlab.yaml describe; nil when it can.
+func builtFrom(r *config.Router, image, label string, inspectErr error, want string) error {
+	switch {
+	case inspectErr != nil:
+		return fmt.Errorf("%s: this engine has no image %s (docker image inspect: %v); build it with `owlab up %s`, or load one with `docker load`",
+			r.ID, image, inspectErr, r.ID)
+	case label == "":
+		return fmt.Errorf("%s: %s carries no %s label: an owlab that did not label its images built it, or something else did; build it with `owlab up %s`",
+			r.ID, image, compose.InputsLabel, r.ID)
+	case label != want:
+		return fmt.Errorf("%s: %s was built from other inputs than this owlab and owlab.yaml describe (another owlab, a changed router, or a build from the rootfs tarball); build it with `owlab up %s`",
+			r.ID, image, r.ID)
+	}
+	return nil
 }
 
 // extrasFailedPath is where an image build records the extra_packages it could
