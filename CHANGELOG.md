@@ -7,6 +7,23 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+### Added
+
+- **`owlab up --no-build` starts a router from an image the engine already
+  holds,** built earlier or loaded with `docker load`, and fetches and builds
+  nothing. A CI job can save a router's image to its cache once and start the
+  next jobs from it: luci-theme-footstrap's 25.12.5 router took 81 s from
+  scratch and 11 s from a saved image (`docker load` 1.6 s, `owlab up
+  --no-build` 9.7 s), LuCI answering in both. Every image owlab builds now
+  carries an `org.owlab.inputs` label, a digest of this owlab's version, its
+  build context, the build args, the platform, the release and the
+  `extra_packages` URLs, and
+  `--no-build` refuses an image whose label does not match, or that has none,
+  naming the `owlab up` that builds it. A `fidelity: vm` router is refused
+  too.
+
 ## [0.6.7] - 2026-10-26
 
 ### Changed

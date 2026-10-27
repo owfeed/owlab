@@ -81,10 +81,20 @@ once.
   copies `extra/<id>/` and `compliance/<id>/` of the router it builds, so a
   router's layers hash its own files and do not change with the selection.
 
-`up` and `context` need both. `down` and `logs` need only the first, and that
-is not a micro-optimisation: stopping a router or reading its log would
-otherwise fail on a machine with no network, over files it is not about to
-build with.
+`up` and `context` need both. `down`, `logs` and `up --no-build` need only the
+first, and that is not a micro-optimisation: stopping a router or reading its
+log would otherwise fail on a machine with no network, over files it is not
+about to build with.
+
+`up --no-build` starts the images the engine already holds and skips the
+registry probe, `Materialize` and `compose build`. Every image `compose build`
+makes carries an `org.owlab.inputs` label, `compose.Inputs`: a digest of this
+owlab's version and VCS revision, the embedded build context, the build args,
+the platform, the release and its rootfs tarball URL, and the `extra_packages`
+URLs. Two builds of one commit with different uncommitted changes share it. `up --no-build` starts an image only when its label
+matches that digest for the config it reads now. What the feeds served during
+the build is not in the digest, and cannot be: the same inputs built a week
+apart install that week's packages.
 
 ### The seam between the tiers
 
