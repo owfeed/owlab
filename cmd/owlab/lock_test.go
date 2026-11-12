@@ -36,4 +36,11 @@ func TestLockRoutersWaitsUnlessNoLock(t *testing.T) {
 		t.Fatalf("--no-lock waited or failed: %v", err)
 	}
 	skip()
+
+	t.Setenv("OWLAB_NO_LOCK", "1")
+	env, err := a.lockRouters(ctx, routers, false)
+	if err != nil {
+		t.Fatalf("OWLAB_NO_LOCK=1 waited or failed: %v", err)
+	}
+	env()
 }

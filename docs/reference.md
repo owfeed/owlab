@@ -412,10 +412,15 @@ takes; on Windows it is LockFileEx.
 
 A `project.lock` path without `{id}` is one lock for every router. A command
 acting on several routers takes their locks in the order of their paths.
-`--no-lock` neither waits for a lock nor takes one. A script that already
-holds the shared lock, such as a gate under `flock -x <FILE>`, waits for itself
-forever unless the owlab commands it runs pass `--no-lock`; on `exec` the flag
-goes before `--`.
+`--no-lock` neither waits for a lock nor takes one; on `exec` it goes before
+`--`. `OWLAB_NO_LOCK=1` in the environment has the same effect on every
+command. A script that already holds the shared lock waits for itself forever
+unless the owlab commands it runs skip the lock. A gate sets the variable once
+for all of them:
+
+```sh
+flock -x ../tmp/stands-owrt2512.lock env OWLAB_NO_LOCK=1 <GATE_SCRIPT>
+```
 
 ## Environment
 
@@ -433,6 +438,7 @@ misbehaves.
 | `OWLAB_QEMU_IMG` | the `qemu-img` to create disks with; the default is the one beside the emulator |
 | `OWLAB_FIRMWARE` | the UEFI firmware for an aarch64 or armv7 VM |
 | `OWLAB_ACCEL` | force an accelerator, e.g. `tcg`, instead of the fastest one this host has |
+| `OWLAB_NO_LOCK` | `1` skips the router locks, as `--no-lock` does; see [Router locks](#router-locks) |
 
 `OWLAB_QEMU` is rarely needed now that owlab searches the directories the
 installers use — `C:\Program Files\qemu` and the scoop and chocolatey

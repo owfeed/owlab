@@ -16,9 +16,12 @@ one waits for a major.
   router another one is testing (#39). The lock is `.owlab/locks/<id>.lock`, or
   the file `project.lock` names: `lock: ../tmp/stands-{id}.lock` shares a
   project's own `flock -x` lock, and its gates and owlab then wait for each
-  other; owlab commands a gate runs under that lock pass `--no-lock`.
-  `--no-lock` skips the lock; `status`, `logs` and the other read-only commands
-  take none.
+  other. `--no-lock` skips the lock; `status`, `logs` and the other read-only
+  commands take none.
+- **`OWLAB_NO_LOCK=1` skips the router locks for every owlab command it
+  reaches,** so a gate that holds the shared lock sets it once instead of
+  passing `--no-lock` to each owlab call under it, where a missing flag waits
+  forever: `flock -x ../tmp/stands-owrt2512.lock env OWLAB_NO_LOCK=1 <script>`.
 
 ### Fixed
 

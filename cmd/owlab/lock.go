@@ -17,10 +17,12 @@ import (
 // reported on a build it never made (issue #39). Read-only commands take none:
 // waiting to read a log behind a 20-minute test helps nobody.
 //
-// skip is --no-lock, for a lock left by something that is still running and
+// skip is --no-lock (or OWLAB_NO_LOCK=1), for a lock left by something that is still running and
 // is known not to matter.
 func (a *app) lockRouters(ctx context.Context, routers []*config.Router, skip bool) (func(), error) {
-	if skip {
+	// The variable is for a gate that holds the shared lock and runs owlab
+	// under it: one flag missed there waits for the gate forever.
+	if skip || os.Getenv("OWLAB_NO_LOCK") == "1" {
 		return func() {}, nil
 	}
 	if a.cfg.Project.Lock == "" {
