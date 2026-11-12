@@ -7,6 +7,125 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [0.7.0] - 2026-10-27
+
+### Added
+
+- **`owlab up --no-build` starts a router from an image the engine already
+  holds,** built earlier or loaded with `docker load`, and fetches and builds
+  nothing. A CI job can save a router's image to its cache once and start the
+  next jobs from it: luci-theme-footstrap's 25.12.5 router took 81 s from
+  scratch and 11 s from a saved image (`docker load` 1.6 s, `owlab up
+  --no-build` 9.7 s), LuCI answering in both. Every image owlab builds now
+  carries an `org.owlab.inputs` label, a digest of this owlab's version, its
+  build context, the build args, the platform, the release and the
+  `extra_packages` URLs, and
+  `--no-build` refuses an image whose label does not match, or that has none,
+  naming the `owlab up` that builds it. A `fidelity: vm` router is refused
+  too.
+
+## [0.6.7] - 2026-10-26
+
+### Changed
+
+- **The image build installs the feed packages in one call.** One call per
+  package spent the package manager's own start-up on each: for
+  luci-theme-footstrap's 74 names, 81 s against 58 s on 24.10.8 (opkg) and
+  48 s against 45 s on 25.12.5 (apk), with the same packages installed. A name
+  the feeds lack, and on opkg a name an installed package provides, is dropped
+  and the rest installed in one call again; only when that fails is each
+  package installed on its own, to name the ones that do not install.
+
+### Fixed
+
+- **`owlab up` exits non-zero when a router is missing a package from
+  `packages:`.** A package that failed to install was a line in the build log,
+  and `owlab up` exited 0, so a CI job ran its checks against a router without
+  the app under test. The image now records the name in
+  `/etc/owlab/packages-failed`, as it already did for `extra_packages`.
+  `owlab up` names it after its table and exits 1, and `owlab test` fails that
+  router on a `packages` step. A name the release's feeds do not carry is
+  still a skip.
+- **A package download that fails during the image build is asked again.** It
+  gets the retries owlab's own downloads have: 4 attempts, 2, 4 and 8 s apart.
+  The first package that fails every attempt ends the retries for the rest of
+  the build, so an outage costs one round of waiting.
+- **A name not found after a partial index refresh is a failure, not a skip.**
+  The feed that did not answer may carry it. A kmods index alone is the
+  exception, because it carries only `kmod-*` packages, and a snapshot image
+  older than the feed's kernel window loses it on every build.
+- **On opkg, a name an installed package provides is a skip.** ImmortalWrt
+  24.10 ships `dnsmasq-full`, which provides `dnsmasq`, and opkg refused the
+  stock set's `dnsmasq` beside it on a file clash: 0.6.6 printed
+  `FAILED to install dnsmasq` for every ImmortalWrt 24.10 router. apk already
+  counts the provider as the name.
+- **`owlab up` exits non-zero when a router never answered on HTTP.** It
+  printed `did not answer on HTTP in time` and exited 0.
+- **`owlab install` exits non-zero when a router refused the package,** and
+  names the router. It printed `install failed on` and exited 0.
+- **`owlab install <router> <file>` no longer refreshes every feed index
+  first.** A file whose dependencies are already on the router installs
+  without asking a feed (`apk --no-network`, plain `opkg install`). When a
+  dependency is missing, owlab refreshes the feeds and installs again, as
+  before.
+- **`owlab up <id>` downloads only that router's files.** The out-of-feed
+  packages and compliance files of every router in `owlab.yaml` were fetched
+  for any build, so an `owlab up owrt2410` also fetched the 25.12 `.apk` files
+  and the snapshot's sha256sums, and a GitHub 5xx on a package that router never
+  installs failed it. `owlab up`, `owlab test` and `owlab context --router` now
+  stage the routers they build and no others. The image copies only its own
+  router's `extra/` and `compliance/` directory, so a router's layer cache no
+  longer changes with which routers were selected.
+- **A download that stalls or breaks off is started again.** Out-of-feed
+  packages and compliance files had a 5-minute limit on the whole download and
+  no retry once the body had started: a GitHub node that went quiet held the
+  command for 5 minutes and then failed it, and a dropped connection failed it
+  at once. A download now counts as stalled after 60 seconds without a byte,
+  and a stalled or broken-off download is fetched again from the start, 4
+  attempts in all, before it is reported as an outage. A slow download that
+  keeps sending is no longer cut off.
+- **`setup` stops a `gh` call that hangs.** `gh release view`,
+  `gh release download` and `gh attestation verify` had no time limit, and a
+  stall printed nothing the outage check could match, so the step waited for
+  the job's own timeout. Each call now has 120 seconds; one that runs out is
+  retried as an outage and ends in exit 8 if that persists.
+- **A registry that does not answer no longer fails the build.** Every
+  container router's base image came from a registry, so a Docker Hub outage
+  failed `owlab up` and `owlab test`, and the tarball path owlab already took
+  for a release with no image unpacked the rootfs in an `alpine` image pulled
+  from Docker Hub as well. owlab now asks the image's registry before building
+  (a manifest `HEAD`, for the default image and for `image:` alike). When the
+  registry refuses, times out, or answers 5xx or 429 through 4 attempts, the
+  router is built from its release's rootfs tarball on the download server, and
+  owlab says so. The tarball is downloaded on the host and unpacked onto
+  `scratch` by `ADD`, so that path pulls nothing from any registry; `owlab
+  context` stages it at `tarball/<id>.tar.gz` and no longer emits `ROOTFS_URL`.
+  A missing tag on an explicit `image:` still fails the build. When the
+  download server does not answer either (an offline machine, or one that
+  reaches the internet only through the engine's proxy), the image stays, as it
+  did before. `owlab context`, which prepares the images owlab publishes, keeps
+  the image through an outage too: an `aarch64_generic` tag built from the
+  tarball would carry `linux/arm64` and fail every `image:` that names it.
+
+## [0.6.6] - 2026-10-20
+
+### Fixed
+
+- **A `snapshot` router no longer mixes the image's libraries with the feed's.**
+  A snapshot feed can move a library to a new ABI under a rootfs that still
+  carries the old one, and installing by name then upgraded half of it: on
+  2026-10-20 a rebuilt `ucode-mod-html` landed beside the image's older `ucode`
+  and LuCI answered 502. On a rolling release (`snapshot`, `master`, a branch
+  snapshot) owlab now runs `apk upgrade` after the index refresh and before
+  installing, in the image build, `owlab install`, `owlab test` and vm
+  provisioning. Point releases install exactly as before.
+- **A package that fails to install for a reason other than a missing name is
+  reported as a failure.** The per-package loop called every failure
+  "skip (not in this feed)" and threw the package manager's output away, so a
+  file clash or a missing dependency read as an absent package. A name the feed
+  does not carry is still a one-line skip; anything else prints the manager's
+  output and `owlab: FAILED to install <name>`. The build still carries on.
+
 ## [0.6.5] - 2026-09-14
 
 ### Fixed
@@ -609,7 +728,10 @@ First release.
   to be re-run still leaves the immutable tags behind.
 
 [artifact-contract]: https://github.com/owfeed/owfeed/blob/main/docs/artifact-contract.md
-[Unreleased]: https://github.com/owfeed/owlab/compare/v0.6.5...HEAD
+[Unreleased]: https://github.com/owfeed/owlab/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/owfeed/owlab/compare/v0.6.7...v0.7.0
+[0.6.7]: https://github.com/owfeed/owlab/compare/v0.6.6...v0.6.7
+[0.6.6]: https://github.com/owfeed/owlab/compare/v0.6.5...v0.6.6
 [0.6.5]: https://github.com/owfeed/owlab/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/owfeed/owlab/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/owfeed/owlab/compare/v0.6.2...v0.6.3

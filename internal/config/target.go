@@ -311,6 +311,10 @@ func PackageManagerFor(release string) PackageManager {
 	return OPKG
 }
 
+// Rolling reports whether this router's release is rebuilt in place, so its
+// feed moves under a fixed rootfs. See pkgmgr.UpgradeShell.
+func (r *Router) Rolling() bool { return isSnapshot(r.Release) }
+
 func isSnapshot(release string) bool {
 	r := strings.ToLower(release)
 	return r == "snapshot" || r == "master" || r == "main" || strings.HasSuffix(r, "-snapshot")
@@ -400,6 +404,12 @@ func (r *Router) SumsURL() string { return r.ReleaseDir() + "/sha256sums" }
 // BaseImage is the upstream container image for this router, or "" when the
 // router must be built from a rootfs tarball instead.
 func (r *Router) BaseImage() string {
+	// UseTarball before anything else, an explicit image included: owlab calls
+	// it on an image only when its registry did not answer, and `image:` is an
+	// accelerator over the same rootfs, so the tarball builds the same router.
+	if r.noUpstreamImage {
+		return ""
+	}
 	// An explicit image wins: it is the whole point of pointing at one. This is
 	// checked BEFORE FromTarball, which deliberately ignores it — see the note
 	// there.

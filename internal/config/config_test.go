@@ -322,6 +322,34 @@ routers:
 	}
 }
 
+// UseTarball is what owlab calls when a registry does not answer, and `image:`
+// does not survive it: the router is built from the tarball like any other,
+// with the platform a tarball build carries. Without the call, the image
+// stands.
+func TestUseTarballOverridesAnExplicitImage(t *testing.T) {
+	p := write(t, `
+version: 1
+routers:
+  - id: owrt
+    release: "25.12.5"
+    arch: aarch64_generic
+    image: ghcr.io/openwrt/rootfs:aarch64_generic-25.12.5
+`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, _ := cfg.Router("owrt")
+	if r.BaseImage() != "ghcr.io/openwrt/rootfs:aarch64_generic-25.12.5" || r.Platform() != "linux/aarch64_generic" {
+		t.Fatalf("before UseTarball: image %q, platform %q", r.BaseImage(), r.Platform())
+	}
+	r.UseTarball()
+	if r.BaseImage() != "" || !r.FromTarball() || r.Platform() != "linux/arm64" {
+		t.Errorf("after UseTarball: image %q, from tarball %v, platform %q; want none, true, linux/arm64",
+			r.BaseImage(), r.FromTarball(), r.Platform())
+	}
+}
+
 func TestVMDefaultsAndDiskOptOut(t *testing.T) {
 	p := write(t, `
 version: 1

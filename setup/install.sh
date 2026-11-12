@@ -82,21 +82,63 @@ gh_outage() {
   grep -Eqi 'HTTP (408|429|5[0-9][0-9])|status code: (408|429|5[0-9][0-9])|error connecting to|connection (refused|reset)|i/o timeout|TLS handshake timeout|timeout awaiting|no such host|unexpected EOF|server misbehaving|proxyconnect|rate limit|error creating Sigstore verifier' <<<"$1"
 }
 
+# How long one gh call may take, and the first pause before asking again. A release
+# download is a few MB and an attestation check a few requests: both take seconds on
+# a runner. Variables rather than literals so setup/install_test.go can shorten them.
+gh_deadline=120
+gh_retry_delay=5
+
+# bounded <seconds> <command...>
+#
+# Runs a command and stops it at the deadline, exiting 124 then, as coreutils timeout
+# does. A gh call that stalls prints nothing, so gh_outage has no text to match, and
+# before this a stalled download held the job until the job's own timeout. Written
+# out rather than calling timeout(1), which macOS runners do not have. The watcher's
+# output goes to /dev/null so that a $(...) around this does not wait for its sleep.
+bounded() {
+  local secs=$1 pid watcher rc=0 fired=0
+  shift
+  "$@" &
+  pid=$!
+  (
+    trap 'kill "${nap:-}" 2>/dev/null; exit 0' TERM
+    sleep "$secs" &
+    nap=$!
+    wait "$nap"
+    # Gone already: the command finished on its own, at the deadline.
+    kill -TERM "$pid" 2>/dev/null || exit 0
+    exit 124
+  ) </dev/null >/dev/null 2>&1 &
+  watcher=$!
+  wait "$pid" || rc=$?
+  kill -TERM "$watcher" 2>/dev/null || true
+  wait "$watcher" || fired=$?
+  if [ "$fired" -eq 124 ]; then
+    return 124
+  fi
+  return "$rc"
+}
+
 # gh_read <gh arguments>
 #
 # A read from GitHub, asked again while GitHub is failing: 4 attempts, 5, 10 and 20 s
 # apart. Exit 8 when the outage outlasts them -- owfeed's code for "upstream outage,
 # safe to rerun" -- and 7 at once for an answer. Before this a single 502 from the
 # release API failed the step with gh's exit 1, the same as a tag that does not exist.
+# A call that does not finish within gh_deadline counts as an outage.
 gh_read() {
-  local attempt=1 delay=5 err
+  local attempt=1 delay=$gh_retry_delay err rc
   err="$(mktemp)"
   while :; do
-    if gh "$@" 2>"$err"; then
+    rc=0
+    bounded "$gh_deadline" gh "$@" 2>"$err" || rc=$?
+    if [ "$rc" -eq 0 ]; then
       rm -f "$err"
       return 0
     fi
-    if ! gh_outage "$(cat "$err")"; then
+    if [ "$rc" -eq 124 ]; then
+      echo "gh $1 $2: no answer from GitHub within ${gh_deadline}s" >>"$err"
+    elif ! gh_outage "$(cat "$err")"; then
       cat "$err" >&2
       rm -f "$err"
       return 7
@@ -162,17 +204,22 @@ if [ "${OWLAB_VERIFY:-true}" = "true" ]; then
   # that as "does not verify" told people the binary was suspect when the check had
   # never run, and pushed them towards verify: false.
   attempt=1
-  delay=5
+  delay=$gh_retry_delay
   while :; do
-    if out=$(gh attestation verify "$dir/$asset" \
+    rc=0
+    out=$(bounded "$gh_deadline" gh attestation verify "$dir/$asset" \
         --repo owfeed/owlab \
-        --signer-workflow owfeed/owlab/.github/workflows/release.yml 2>&1); then
+        --signer-workflow owfeed/owlab/.github/workflows/release.yml 2>&1) || rc=$?
+    if [ "$rc" -eq 0 ]; then
       echo "$out"
       echo "verified $asset as built by owfeed/owlab .github/workflows/release.yml"
       break
     fi
     echo "$out"
-    if gh_outage "$out"; then
+    if [ "$rc" -eq 124 ]; then
+      echo "gh attestation verify: no answer from GitHub or Sigstore within ${gh_deadline}s"
+    fi
+    if [ "$rc" -eq 124 ] || gh_outage "$out"; then
       if [ "$attempt" -lt 4 ]; then
         echo "the attestation check could not reach GitHub or Sigstore (attempt $attempt of 4); retrying in ${delay}s"
         sleep "$delay"

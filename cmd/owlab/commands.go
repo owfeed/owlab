@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,7 @@ import (
 
 	"owfeed.org/owlab/internal/compose"
 	"owfeed.org/owlab/internal/config"
+	"owfeed.org/owlab/internal/netx"
 	"owfeed.org/owlab/internal/pkgmgr"
 	"owfeed.org/owlab/internal/qemu"
 	syncpkg "owfeed.org/owlab/internal/sync"
@@ -50,6 +52,7 @@ func parseMixed(fs *flag.FlagSet, args []string) ([]string, error) {
 func (a *app) up(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("up", flag.ContinueOnError)
 	rebuild := fs.Bool("rebuild", false, "rebuild images from scratch, ignoring the layer cache")
+	noBuild := fs.Bool("no-build", false, "start container routers from the images this engine holds, built or loaded; fetch and build nothing")
 	noWait := fs.Bool("no-wait", false, "return as soon as the containers start, without waiting for LuCI")
 	verbose := fs.Bool("v", false, "echo the docker commands being run")
 	ids, err := parseMixed(fs, args)
@@ -57,19 +60,31 @@ func (a *app) up(ctx context.Context, args []string) error {
 		return err
 	}
 	a.docker.Verbose = *verbose
+	if *rebuild && *noBuild {
+		return errors.New("--rebuild builds the images from scratch and --no-build builds nothing: pick one")
+	}
 
 	routers, err := a.cfg.Select(ids)
 	if err != nil {
 		return err
 	}
+	containers, vms := splitTiers(routers)
+	// Refused, not started the usual way: a vm boots from a disk it may have
+	// to download first, and --no-build promises no network.
+	if *noBuild && len(vms) > 0 {
+		return fmt.Errorf("--no-build starts container routers from their images; %s is a fidelity: vm router, which has none", vms[0].ID)
+	}
 	if err := a.checkFidelity(ctx, routers); err != nil {
 		return err
 	}
-	containers, vms := splitTiers(routers)
-	resolveBaseImages(ctx, containers)
 
-	if len(containers) > 0 {
-		proj, err := compose.Prepare(a.cfg, a.eng)
+	if *noBuild {
+		if err := a.upBuilt(ctx, containers); err != nil {
+			return err
+		}
+	} else if len(containers) > 0 {
+		resolveBaseImages(ctx, containers, false)
+		proj, err := compose.Prepare(a.cfg, a.eng, containers)
 		if err != nil {
 			return err
 		}
@@ -100,12 +115,64 @@ func (a *app) up(ctx context.Context, args []string) error {
 	if !*noWait {
 		ready = a.waitForLuCI(ctx, routers)
 	}
-	if err := a.printReady(routers, ready); err != nil {
+	// Both, whichever fails: a router that did not answer and a router built
+	// without a package are two different things to fix. The missing packages
+	// come after the table, because they are what should be left on screen,
+	// and after the build, because the build no longer stops for them. ctx's
+	// own error first, so a Ctrl-C during the wait still exits 130 rather
+	// than as a router that did not answer.
+	notReady := a.printReady(routers, ready)
+	return errors.Join(ctx.Err(), notReady, a.reportMissing(ctx, routers))
+}
+
+// upBuilt starts container routers from the images this engine already holds,
+// built by an earlier `owlab up` or loaded with `docker load`, the way a CI job
+// starts one from an image a cache restored. Nothing is fetched or built: the
+// compose file is rendered, never the build context, and compose is told not to
+// build or pull.
+//
+// Only an image whose InputsLabel matches this owlab and this owlab.yaml is
+// started. One built from other inputs, or by an owlab older than the label, is
+// a router the config does not describe, and starting it would say nothing.
+func (a *app) upBuilt(ctx context.Context, routers []*config.Router) error {
+	if len(routers) == 0 {
+		return nil
+	}
+	proj, err := compose.Render(a.cfg, a.eng)
+	if err != nil {
 		return err
 	}
-	// After the table, because it is what should be left on screen — and
-	// after the build, because the build no longer stops for it.
-	return a.reportMissingExtras(ctx, containers)
+	for _, r := range routers {
+		image := compose.Image(a.cfg, r)
+		label, err := a.docker.Quiet(ctx, "image", "inspect", "--format",
+			`{{index .Config.Labels "`+compose.InputsLabel+`"}}`, image)
+		if err := builtFrom(r, image, strings.TrimSpace(label), err, compose.Inputs(a.cfg, r)); err != nil {
+			return err
+		}
+	}
+	upArgs := append([]string{"up", "-d", "--no-build", "--pull", "never", "--remove-orphans"}, routerIDs(routers)...)
+	if err := a.docker.Compose(ctx, proj.ComposePath, upArgs...); err != nil {
+		return fmt.Errorf("start failed: %w", err)
+	}
+	return nil
+}
+
+// builtFrom is why r cannot start from image, given the inputs label `docker
+// image inspect` read off it (or the error it failed with) and the inputs this
+// owlab and owlab.yaml describe; nil when it can.
+func builtFrom(r *config.Router, image, label string, inspectErr error, want string) error {
+	switch {
+	case inspectErr != nil:
+		return fmt.Errorf("%s: this engine has no image %s (docker image inspect: %v); build it with `owlab up %s`, or load one with `docker load`",
+			r.ID, image, inspectErr, r.ID)
+	case label == "":
+		return fmt.Errorf("%s: %s carries no %s label: an owlab that did not label its images built it, or something else did; build it with `owlab up %s`",
+			r.ID, image, compose.InputsLabel, r.ID)
+	case label != want:
+		return fmt.Errorf("%s: %s was built from other inputs than this owlab and owlab.yaml describe (another owlab, a changed router, or a build from the rootfs tarball); build it with `owlab up %s`",
+			r.ID, image, r.ID)
+	}
+	return nil
 }
 
 // extrasFailedPath is where an image build records the extra_packages it could
@@ -114,18 +181,20 @@ func (a *app) up(ctx context.Context, args []string) error {
 // Read back off the router rather than scraped out of the build log, for two
 // reasons: the log is thousands of lines of buildkit progress that nobody
 // reads, and a router started from a cached image never printed one at all.
+// The feed packages have their own record, pkgmgr.PackagesFailedPath, for the
+// same reasons.
 const extrasFailedPath = "/etc/owlab/extras-failed"
 
-// missingExtras asks one router which of its extra_packages did not install.
+// recorded asks one router for the names a build recorded in path.
 //
 // Empty for almost every router: the file exists only when a build had
 // something to record.
-func missingExtras(ctx context.Context, run syncpkg.Exec) []string {
+func recorded(ctx context.Context, run syncpkg.Exec, path string) []string {
 	var buf bytes.Buffer
 	// A missing file is the normal case, not an error to propagate — and any
 	// other failure here (a router that stopped, an engine that went away) is
 	// already reported by whatever else is talking to the same router.
-	if err := run(ctx, "cat "+extrasFailedPath+" 2>/dev/null || true", nil, &buf); err != nil {
+	if err := run(ctx, "cat "+path+" 2>/dev/null || true", nil, &buf); err != nil {
 		return nil
 	}
 	var out []string
@@ -137,27 +206,32 @@ func missingExtras(ctx context.Context, run syncpkg.Exec) []string {
 	return out
 }
 
-// reportMissingExtras names, per router, the extra_packages its image was
-// built without.
+// reportMissing names, per router, the packages its config names and its
+// image was built without: feed packages from packages:, files from
+// extra_packages.
 //
 // This is the half of issue #12 that is not "stop cancelling the other
-// routers". One bad file no longer fails the build, and tolerance with no
+// routers". One bad package no longer fails the build, and tolerance with no
 // report is silence — which is worse than the failure it replaced: the
-// developer named a file, the router does not have it, and nothing but a line
-// in the middle of a buildkit log would say so. Hence the non-zero exit as
-// well: a script that runs `owlab up` before its own checks must not read
-// "lab is up" as "lab is what the config describes".
-func (a *app) reportMissingExtras(ctx context.Context, routers []*config.Router) error {
+// developer named a package, the router does not have it, and nothing but a
+// line in the middle of a buildkit log would say so. Hence the non-zero exit
+// as well: a script that runs `owlab up` before its own checks must not read
+// "lab is up" as "lab is what the config describes". Feed packages were left
+// out of this until a download that failed during the build gave a CI job a
+// router without the app under test, and `owlab up` exited 0.
+func (a *app) reportMissing(ctx context.Context, routers []*config.Router) error {
 	var bad []string
 	for _, r := range routers {
-		if len(r.Extra) == 0 {
-			continue
-		}
 		run, err := a.execFor(r)
 		if err != nil {
 			continue
 		}
-		missing := missingExtras(ctx, run)
+		missing := recorded(ctx, run, pkgmgr.PackagesFailedPath)
+		// A vm installs its extra_packages over ssh during provisioning, which
+		// fails as itself and leaves no record.
+		if len(r.Extra) > 0 && r.Fidelity != config.VM {
+			missing = append(missing, recorded(ctx, run, extrasFailedPath)...)
+		}
 		if len(missing) == 0 {
 			continue
 		}
@@ -169,36 +243,127 @@ func (a *app) reportMissingExtras(ctx context.Context, routers []*config.Router)
 	}
 	fmt.Fprintf(os.Stderr,
 		"!   Every other router built and started; only these packages are missing.\n"+
-			"!   The package manager said why during the build — one router at a time shows it again:\n"+
-			"!     owlab up --rebuild %s\n", bad[0])
-	return errExtrasMissing
+			"!   The package manager said why during the build — one router at a time shows it again,\n"+
+			"!   and downloads what failed to download:\n"+
+			"!     owlab up --rebuild %s\n"+
+			"!   A package the rebuild refuses again cannot go on that router: take it out of the\n"+
+			"!   router's packages: (a \"-name\" entry for one owlab installs by default) or extra_packages:.\n", bad[0])
+	return errPackagesMissing
 }
 
-// errExtrasMissing is the exit status of an `owlab up` that started every
-// router and could not put a named package on one of them. A plain sentinel:
-// the routers and packages have already been printed one line each, and an
-// "owlab: extra_packages missing" summary on top would bury which is which.
-var errExtrasMissing = errors.New("extra_packages missing")
+// errPackagesMissing is the exit status of an `owlab up` that started every
+// router and could not put a package its config names on one of them. A plain
+// sentinel: the routers and packages have already been printed one line each,
+// and an "owlab: packages missing" summary on top would bury which is which.
+var errPackagesMissing = errors.New("packages missing")
 
-// resolveBaseImages asks the registry whether each router's upstream image
-// exists, and switches the ones that do not onto the rootfs tarball.
+// errNotReady is the exit status of an `owlab up` that started a router whose
+// LuCI never answered. Printed already, under the table.
+var errNotReady = errors.New("router not ready")
+
+// resolveBaseImages asks the registry about each router's base image, and
+// switches the router onto the rootfs tarball when the image is not there or
+// the registry does not answer.
 //
 // Only on a build path. The two are published on different schedules — the
 // tarball when the release is built, the container image whenever the job that
 // mirrors it runs — so a freshly pinned release can have one and not the
 // other, and owlab can build from either.
-func resolveBaseImages(ctx context.Context, routers []*config.Router) {
+//
+// A registry that does not answer used to leave the image in place, on the
+// reasoning that a 250 MB tarball download was the worse trade. OpenWrt's is
+// 3.4-4.8 MB (25.12.5 and 24.10.8 on x86, armsr and mvebu, measured
+// 2026-10-26; ImmortalWrt's about 10 MB), and it sits on the download server
+// the image's own package installs need anyway, so the registry outage that
+// used to fail the build now costs one small download. The same holds for
+// `image:`, which is an accelerator over the same rootfs, but not for its 404:
+// an explicit image that does not exist is the config's mistake, and the build
+// says so.
+//
+// Only when the tarball answers, though. A machine that reaches neither is
+// offline, or reaches the internet only through the engine's own proxy or
+// mirror, and there the image is what can still work: the engine may pull it
+// its own way, or build entirely from images and layers it already holds.
+// Switching would trade that for a download that cannot succeed.
+//
+// publish is for `owlab context`, which prepares the images owlab pushes, and
+// keeps the image through an outage. A tag built from the tarball carries the
+// honest platform (linux/arm64) instead of upstream's (linux/aarch64_generic),
+// and every router whose `image:` names that tag asks for upstream's and fails
+// to pull it until the next rebuild. A publish that fails is run again.
+func resolveBaseImages(ctx context.Context, routers []*config.Router, publish bool) {
+	// Asked once per host: each probe of a dead host costs netx's attempts,
+	// and a lab is usually several routers on one registry and one download
+	// server. Holds the router the host did not answer for.
+	down := map[string]string{}
 	for _, r := range routers {
-		if r.FromTarball() || r.Image != "" {
+		image := r.BaseImage()
+		if image == "" {
 			continue
 		}
-		if !upstream.HasContainerImage(ctx, r) {
+		host := upstream.RegistryHost(image)
+		var state upstream.ImageState
+		var err error
+		if first, ok := down[host]; ok {
+			state, err = upstream.RegistryDown, fmt.Errorf("not asked again after %s", first)
+		} else {
+			state, err = upstream.ProbeImage(ctx, image)
+		}
+		switch state {
+		case upstream.ImageMissing:
+			if r.Image != "" {
+				continue
+			}
 			fmt.Fprintf(os.Stderr,
 				"owlab: %s has no published container image yet; building %s from the rootfs tarball\n",
-				r.BaseImage(), r.ID)
+				image, r.ID)
+			r.UseTarball()
+		case upstream.RegistryDown:
+			if _, ok := down[host]; !ok {
+				down[host] = r.ID
+			}
+			if publish {
+				fmt.Fprintf(os.Stderr,
+					"owlab: %s did not answer (%v); %s stays on %s, because a published tag built from the rootfs tarball would change its platform; run this again once the registry answers\n",
+					host, err, r.ID, image)
+				continue
+			}
+			tarball := r.RootfsTarballURL()
+			if terr := tarballOutage(ctx, r, down); terr != nil {
+				fmt.Fprintf(os.Stderr,
+					"owlab: %s did not answer (%v), and neither did the rootfs tarball (%v); leaving %s on %s for the engine, which may reach it through its own proxy or mirror, or hold it already\n",
+					host, err, terr, r.ID, image)
+				continue
+			}
+			fmt.Fprintf(os.Stderr,
+				"owlab: %s did not answer (%v); building %s from the rootfs tarball %s instead of %s\n",
+				host, err, r.ID, tarball, image)
 			r.UseTarball()
 		}
 	}
+}
+
+// headTarball asks whether the download server serves a rootfs tarball. A
+// variable so tests answer for a server they cannot reach.
+var headTarball = upstream.HeadFile
+
+// tarballOutage is why r's rootfs tarball cannot be downloaded now, or nil if
+// it can. A download server that did not answer is recorded in down and not
+// asked again for the next router; a 404 is about one file and is not.
+func tarballOutage(ctx context.Context, r *config.Router, down map[string]string) error {
+	tarball := r.RootfsTarballURL()
+	u, err := url.Parse(tarball)
+	if err != nil {
+		return err
+	}
+	if first, ok := down[u.Host]; ok {
+		return fmt.Errorf("%s not asked again after %s", u.Host, first)
+	}
+	err = headTarball(ctx, tarball)
+	if err != nil && netx.Transient(err) {
+		down[u.Host] = r.ID
+	}
+	return err
 }
 
 // startVM boots one fidelity-vm router and sets it up if it is new.
@@ -621,17 +786,22 @@ func (a *app) install(ctx context.Context, args []string) error {
 			// A name given alongside --feed is meant to come out of it; when
 			// that feed was not read, stop rather than install the same name
 			// from the distribution feed.
-			Feed: feedUnderTest,
+			Feed:    feedUnderTest,
+			Rolling: r.Rolling(),
 		})
 		fmt.Printf("== %s (%s)\n", r.ID, pm)
+		if len(names) == 0 && feedKeyArchive == nil {
+			retry, err := installOffline(ctx, run, pm, installArgs, os.Stdout)
+			if err != nil {
+				markFailed(r.ID)
+			}
+			if !retry {
+				continue
+			}
+		}
 		if err := run(ctx, cmd, nil, os.Stdout); err != nil {
 			markFailed(r.ID)
 		}
-	}
-	if len(failed) > 0 {
-		// Not fatal: feeds differ between releases and between a fork and
-		// upstream, and "missing on 24.10" is information, not an error.
-		fmt.Fprintf(os.Stderr, "\n! install failed on: %s\n", strings.Join(failed, ", "))
 	}
 
 	// LuCI caches its dispatch tree and module list; a new app is invisible
@@ -645,7 +815,44 @@ func (a *app) install(ctx context.Context, args []string) error {
 		}
 		_ = run(ctx, script, nil, io.Discard)
 	}
+	// After the reload, so the routers that did install show it. An exit 0
+	// here used to say "installed" for a router that refused the package: a
+	// CI job that ran `owlab install` and then its checks measured a router
+	// without the package and blamed the package.
+	if len(failed) > 0 {
+		return fmt.Errorf("install failed on %s; the reason is printed above, under each router's name. "+
+			"Fix what it names and run owlab install again", strings.Join(failed, ", "))
+	}
 	return nil
+}
+
+// installOffline installs package files already on a router without asking any
+// feed. retry says the caller must install them again with the refresh; err is
+// the refusal that ends this router's install, its output already shown.
+//
+// A file needs a feed only for a dependency the router does not have, so
+// refreshing every index first made installing it depend on all of them:
+// installing a theme whose one dependency, luci-base, was already on the router
+// spent 1.8 s on the refresh, and with no feed answering the refresh ended the
+// script before the install ran.
+//
+// Only a refusal a refresh can change is handed back, and that attempt's
+// output is the one shown: this one's says only that a dependency was not on
+// the router. opkg's attempt is never final, because opkg has no offline mode
+// and fetched the dependencies it lacked out of lists that may be stale. apk's
+// is, unless it could not select a dependency: anything else would only be
+// said worse a second time. A post-install script that exits 1 prints its
+// error on the first `apk add` alone, and every later one just "1 error;"
+// (measured on 25.12.4, apk 3.0.5).
+func installOffline(ctx context.Context, run syncpkg.Exec, pm config.PackageManager, files []string, out io.Writer) (retry bool, err error) {
+	var log bytes.Buffer
+	err = run(ctx, pkgmgr.Install(pm, files, pkgmgr.Options{Untrusted: true, Offline: true}), nil, &log)
+	if err != nil && (pm != config.APK || strings.Contains(log.String(), "ERROR: unable to select packages:")) {
+		fmt.Fprintln(out, "   did not install from what the router has; refreshing its feeds and trying again")
+		return true, nil
+	}
+	_, _ = out.Write(log.Bytes())
+	return false, err
 }
 
 // localPackage is a package file taken from the host, already wrapped in the
@@ -1079,10 +1286,15 @@ func (a *app) printReady(routers []*config.Router, ready map[string]bool) error 
 				"!   Or point owlab at an existing key:  export OWLAB_PUBKEY=/path/to/key.pub\n"+
 				"!   Then re-run `owlab up` to install it.\n")
 	}
+	// An error, not only a line: the table above says "up", and a script
+	// that runs `owlab up` before its own checks reads the exit status, not the
+	// table.
 	if len(stalled) > 0 {
 		fmt.Fprintf(os.Stderr,
-			"\n! %s did not answer on HTTP in time. Check `owlab logs %s`.\n",
+			"\n! %s did not answer on HTTP in time. Check `owlab logs %s`.\n"+
+				"!   A router built without uhttpd never answers; start it with `owlab up --no-wait`.\n",
 			strings.Join(stalled, ", "), stalled[0])
+		return errNotReady
 	}
 	return nil
 }

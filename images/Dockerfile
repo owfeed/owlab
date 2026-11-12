@@ -12,11 +12,14 @@
 #   upstream  FROM openwrt/rootfs:<arch>-<version>. Fast, and the only images
 #             upstream publishes are for the 8 targets that build a rootfs
 #             tarball.
-#   tarball   unpack ROOTFS_URL onto scratch. Needed for ImmortalWrt — every
-#             tag in immortalwrt/rootfs is labelled linux/amd64, including the
-#             ones whose contents are aarch64, so their metadata cannot be
-#             used to select an image. Unpacking the tarball ourselves lets us
-#             stamp honest platform metadata.
+#   tarball   unpack the release's rootfs tarball onto scratch; owlab downloads
+#             it on the host into tarball/<router-id>.tar.gz. Needed for
+#             ImmortalWrt — every tag in immortalwrt/rootfs is labelled
+#             linux/amd64, including the ones whose contents are aarch64, so
+#             their metadata cannot be used to select an image. Unpacking the
+#             tarball ourselves lets us stamp honest platform metadata. Also
+#             the way in when the release has no image yet or the registry
+#             does not answer, which is why it pulls from no registry at all.
 #
 # Built by owlab, which pins every ARG below from owlab.yaml.
 
@@ -29,14 +32,12 @@ ARG BASE_STAGE=upstream
 # invocation -- but it is read as documentation, so it is held to the pin in
 # owlab.yaml by `tools/pins.sh check`. It is also the one place the tarball
 # fallback does not reach: `owlab context` asks the registry first and switches
-# to ROOTFS_URL when the release has no container image yet, and on 2026-09-04
+# to the tarball when the release has no container image yet, and on 2026-09-04
 # `openwrt/rootfs:x86_64-25.12.5` was exactly that -- tagged on the download
 # server, not yet mirrored to Docker Hub. A bare `docker build images/` with
 # these defaults would have failed on the pull while every owlab build of the
 # same release succeeded.
 ARG BASE_IMAGE=openwrt/rootfs:x86_64-25.12.6
-ARG ROOTFS_URL=
-ARG ALPINE_TAG=3.22
 
 # BASE_IMAGE is set to `scratch` on the tarball path, and that is not cosmetic:
 # buildkit resolves the metadata for every FROM in this file before it prunes
@@ -44,20 +45,20 @@ ARG ALPINE_TAG=3.22
 # on an image it never intends to pull.
 FROM ${BASE_IMAGE} AS upstream
 
-# Unreachable, and therefore never even fetched, unless BASE_STAGE=tarball:
-# buildkit builds only the stages the target depends on. That is what lets
-# ROOTFS_URL default to empty (an `ADD ""` is a hard error) without the
-# upstream path ever pulling alpine.
-FROM alpine:${ALPINE_TAG} AS unpack
-ARG ROOTFS_URL
-ADD ${ROOTFS_URL} /tmp/rootfs.tar.gz
-RUN mkdir -p /rootfs && tar -xzf /tmp/rootfs.tar.gz -C /rootfs
-
-# COPY rather than letting ADD unpack: `ADD <url>` does not extract a remote
-# archive. A faithful copy is only possible because these rootfs tarballs
-# carry no device nodes — procd mounts devtmpfs on /dev at boot anyway.
+# Unreachable, and therefore never evaluated, unless BASE_STAGE=tarball:
+# buildkit builds only the stages the target depends on, so the upstream path
+# never looks for a tarball owlab did not stage.
+#
+# ADD unpacks a local archive, which is why owlab downloads it on the host:
+# `ADD <url>` does not extract a remote one, and the stage that used to do it
+# ran tar in alpine pulled from Docker Hub, so the tarball path still needed a
+# registry. Now it needs none, which is what lets owlab take it when the
+# registry does not answer. A faithful copy is only
+# possible because these rootfs tarballs carry no device nodes — procd mounts
+# devtmpfs on /dev at boot anyway.
 FROM scratch AS tarball
-COPY --from=unpack /rootfs/ /
+ARG ROUTER_ID
+ADD tarball/${ROUTER_ID}.tar.gz /
 # scratch carries no metadata, so the PATH the RUNs below rely on must be
 # stated explicitly.
 ENV PATH=/usr/sbin:/usr/bin:/sbin:/bin
@@ -89,21 +90,47 @@ RUN mkdir -p /var/lock /var/run /var/log /var/state
 
 # The package set, chosen in owlab.yaml.
 #
-# Each package is installed on its own and a failure is reported rather than
+# The set is installed in one call, and a failure is reported rather than
 # fatal. Feeds differ between releases and between OpenWrt and its forks, and
 # a package list that is valid on 25.12 but has one name missing on 24.10
-# should cost the developer that one package, not the whole image.
+# should cost the developer that one package, not the whole image. A name the
+# feed lacks is a one-line skip, dropped from the set before it is asked for
+# again in one call. Only when that fails too is each package installed on its
+# own, which names the ones that do not install and replays the manager's
+# output for each. One call per package cost 81 s against 58 s on 24.10.8.
+#
+# A refusal does not end this layer, and it is not left in the log either: the
+# name goes into /etc/owlab/packages-failed, and `owlab up` reports it and exits
+# non-zero, `owlab test` fails on it. Ending the layer would cancel every other
+# router in the lab, for the reason the extras layer below spells out. A failed
+# download is asked again before it counts, because once this RUN exits 0
+# buildkit caches what it built, and `owlab up` run again hands back the same
+# router without the package.
+#
+# After a partial refresh a name the feeds lack is a failure, not a skip: the
+# feed that did not answer may carry it. The one exception is a kmods index
+# alone, which can only carry a kmod-*: a snapshot image older than the feed's
+# kernel window 404s on it on every build.
+#
+# On opkg, a name an installed package provides is a skip too: ImmortalWrt 24.10
+# ships dnsmasq-full, and opkg refuses the stock set's dnsmasq beside it on a
+# file clash. apk counts the provider as the name.
 #
 # The index refresh is tolerant of a feed that does not answer, and loud about
 # it. Both managers exit non-zero when one configured feed is unreachable, and
 # under `set -eu` that used to end this layer before the loop below it ran —
-# a loop already written to survive a package this feed does not carry. The
-# shell here is generated by internal/pkgmgr.UpdateShell and pasted in, because
-# Docker cannot call Go; internal/pkgmgr's TestDockerfileRefreshesTheIndexTheSameWay
-# fails if the two ever drift, and its doc comment carries the measurements
-# these lines are built on. Edit it there first.
+# a loop already written to survive a package this feed does not carry.
+#
+# ROLLING is set for snapshot/master, whose feed changes ABI under this rootfs:
+# the base is upgraded to the index before anything is installed from it.
+#
+# The shell here is generated by internal/pkgmgr (UpdateShell, UpgradeShell,
+# EachShell) and pasted in, because Docker cannot call Go;
+# TestDockerfileRefreshesTheIndexTheSameWay fails if the two ever drift, and
+# the doc comments there carry the measurements. Edit it there first.
 ARG PKG_MANAGER=apk
 ARG PACKAGES="luci-light"
+ARG ROLLING=""
 RUN set -eu; \
 	if [ "$PKG_MANAGER" = "apk" ]; then \
 		owlab_upd=$(apk update 2>&1) && owlab_rc=0 || owlab_rc=$?; \
@@ -111,15 +138,54 @@ RUN set -eu; \
 		owlab_have=$(printf '%s\n' "$owlab_upd" | sed -n 's/^[0-9][0-9]* unavailable, [0-9][0-9]* stale; \([0-9][0-9]*\) distinct packages available$/\1/p'); \
 		if [ "$owlab_rc" -ne 0 ]; then printf '%s\n' "$owlab_upd" >&2; fi; \
 		if [ "$owlab_rc" -ne 0 ] && { [ "$owlab_read" -eq 0 ] || [ "${owlab_have:-0}" -eq 0 ]; }; then echo "owlab: apk update failed: no feed answered. Check the router's network and the feeds in /etc/apk/repositories and /etc/apk/repositories.d" >&2; exit "$owlab_rc"; fi; \
-		if [ "$owlab_rc" -ne 0 ]; then echo "owlab: apk update: partial refresh, $owlab_read feed(s) read, $owlab_have packages available; the feed above did not answer and its packages will be missing" >&2; fi; \
-		for p in $PACKAGES; do apk add "$p" 2>/dev/null || echo "owlab: skip (not in this feed): $p"; done; \
+		if [ "$owlab_rc" -ne 0 ]; then echo "owlab: apk update: partial refresh, $owlab_read feed(s) read, $owlab_have packages available; the feed above did not answer and its packages will be missing" >&2; owlab_partial=all; \
+			if printf '%s\n' "$owlab_upd" | grep -q '^WARNING: updating and opening ' && ! printf '%s\n' "$owlab_upd" | grep '^WARNING: updating and opening ' | grep -qv '/kmods/'; then owlab_partial=kmods; fi; fi; \
+		if [ -n "$ROLLING" ]; then owlab_upg=$(apk upgrade 2>&1) || { printf '%s\n' "$owlab_upg" >&2; echo "owlab: apk upgrade failed on a rolling release; packages installed next may need a newer library than this router has" >&2; }; fi; \
+		rm -f /etc/owlab/packages-failed || { echo "owlab: cannot remove /etc/owlab/packages-failed, so the packages an earlier build could not install would be reported for this one; stopping" >&2; exit 1; }; owlab_waits='2 4 8'; \
+			owlab_failed() { { mkdir -p /etc/owlab && echo "$1" >> /etc/owlab/packages-failed; } || { echo "owlab: cannot record $1 in /etc/owlab/packages-failed (is the overlay full? df /overlay); stopping, because owlab up would report this router as complete" >&2; exit 1; }; }; \
+			owlab_absent() { case "${owlab_partial:-}:$1" in all:*|kmods:kmod-*) echo "owlab: FAILED to install $1: no feed that answered the refresh above carries it, and one that did not answer may; this router is built without it" >&2; owlab_failed "$1" ;; \
+			*) echo "owlab: skip (not in this feed): $1" ;; esac; }; \
+			if ! owlab_out=$(apk add $PACKAGES 2>&1); then owlab_rest=; owlab_dropped=; \
+			for p in $PACKAGES; do \
+			if printf '%s\n' "$owlab_out" | grep -qxF "  $p (no such package):"; then owlab_absent "$p"; owlab_dropped=1; else owlab_rest="$owlab_rest $p"; fi; done; \
+			if [ -z "$owlab_dropped" ] || [ -z "$owlab_rest" ] || ! owlab_out=$(apk add $owlab_rest 2>&1); then \
+			[ -z "$owlab_rest" ] || echo "owlab: installing the packages in one call failed; installing them one at a time to name the ones that do not install" >&2; \
+			for p in $owlab_rest; do owlab_out=$(apk add "$p" 2>&1) && continue; \
+			for owlab_wait in $owlab_waits; do printf '%s\n' "$owlab_out" | awk '/^ERROR: wget: exited with error/ { w = 1; next } w && !/^WARNING: updating and opening / { f = 1 } { w = 0 } END { exit !(f || w) }' || break; \
+			echo "owlab: downloading $p failed (a download server or network outage); asking again in ${owlab_wait}s" >&2; \
+			sleep "$owlab_wait"; owlab_out=$(apk add "$p" 2>&1) && continue 2; done; \
+			if [ -n "$owlab_waits" ] && printf '%s\n' "$owlab_out" | awk '/^ERROR: wget: exited with error/ { w = 1; next } w && !/^WARNING: updating and opening / { f = 1 } { w = 0 } END { exit !(f || w) }'; then owlab_waits=; \
+			echo "owlab: $p did not download in 4 attempts; the packages after it are asked once each" >&2; fi; \
+			if printf '%s\n' "$owlab_out" | grep -qxF "  $p (no such package):"; then owlab_absent "$p"; continue; fi; \
+			printf '%s\n' "$owlab_out" >&2; echo "owlab: FAILED to install $p, for the reason above; this router is built without it" >&2; owlab_failed "$p"; done; fi; fi; \
 	else \
 		owlab_upd=$(opkg update 2>&1) && owlab_rc=0 || owlab_rc=$?; \
 		owlab_read=$(printf '%s\n' "$owlab_upd" | grep -c '^Updated list of available packages') || true; \
 		if [ "$owlab_rc" -ne 0 ]; then printf '%s\n' "$owlab_upd" >&2; fi; \
 		if [ "$owlab_rc" -ne 0 ] && { [ "$owlab_read" -eq 0 ]; }; then echo "owlab: opkg update failed: no feed answered. Check the router's network and the feeds in /etc/opkg/distfeeds.conf and /etc/opkg/customfeeds.conf" >&2; exit "$owlab_rc"; fi; \
-		if [ "$owlab_rc" -ne 0 ]; then echo "owlab: opkg update: partial refresh, $owlab_read feed(s) read; the feed above did not answer and its packages will be missing" >&2; fi; \
-		for p in $PACKAGES; do opkg install "$p" 2>/dev/null || echo "owlab: skip (not in this feed): $p"; done; \
+		if [ "$owlab_rc" -ne 0 ]; then echo "owlab: opkg update: partial refresh, $owlab_read feed(s) read; the feed above did not answer and its packages will be missing" >&2; owlab_partial=all; \
+			if printf '%s\n' "$owlab_upd" | grep -q '^\*\*\* Failed to download the package list from ' && ! printf '%s\n' "$owlab_upd" | grep '^\*\*\* Failed to download the package list from ' | grep -qv '/kmods/'; then owlab_partial=kmods; fi; fi; \
+		rm -f /etc/owlab/packages-failed || { echo "owlab: cannot remove /etc/owlab/packages-failed, so the packages an earlier build could not install would be reported for this one; stopping" >&2; exit 1; }; owlab_waits='2 4 8'; \
+			owlab_failed() { { mkdir -p /etc/owlab && echo "$1" >> /etc/owlab/packages-failed; } || { echo "owlab: cannot record $1 in /etc/owlab/packages-failed (is the overlay full? df /overlay); stopping, because owlab up would report this router as complete" >&2; exit 1; }; }; \
+			owlab_absent() { case "${owlab_partial:-}:$1" in all:*|kmods:kmod-*) echo "owlab: FAILED to install $1: no feed that answered the refresh above carries it, and one that did not answer may; this router is built without it" >&2; owlab_failed "$1" ;; \
+			*) echo "owlab: skip (not in this feed): $1" ;; esac; }; \
+			owlab_provided() { owlab_by=$(awk -v p="$1" '/^Package: / { if (v && s) exit; n = $2; v = s = 0 } /^Provides: / { k = split(substr($0, 11), a, /, */); for (i = 1; i <= k; i++) { sub(/[ (=].*/, "", a[i]); if (a[i] == p) v = 1 } } /^Status: .* installed$/ { s = 1 } END { if (v && s) print n; else exit 1 }' /usr/lib/opkg/status) || return 1; echo "owlab: skip (provided by $owlab_by, already installed): $1"; }; \
+			if ! owlab_out=$(opkg install $PACKAGES 2>&1); then owlab_rest=; owlab_dropped=; \
+			for p in $PACKAGES; do \
+			if printf '%s\n' "$owlab_out" | grep -qxF "Unknown package '$p'."; then owlab_absent "$p"; owlab_dropped=1; \
+			elif printf '%s\n' "$owlab_out" | grep -qxF " * opkg_install_cmd: Cannot install package $p." && owlab_provided "$p"; then owlab_dropped=1; \
+			else owlab_rest="$owlab_rest $p"; fi; done; \
+			if [ -z "$owlab_dropped" ] || [ -z "$owlab_rest" ] || ! owlab_out=$(opkg install $owlab_rest 2>&1); then \
+			[ -z "$owlab_rest" ] || echo "owlab: installing the packages in one call failed; installing them one at a time to name the ones that do not install" >&2; \
+			for p in $owlab_rest; do owlab_out=$(opkg install "$p" 2>&1) && continue; \
+			if owlab_provided "$p"; then continue; fi; \
+			for owlab_wait in $owlab_waits; do printf '%s\n' "$owlab_out" | grep -qF 'opkg_download: Failed to download' || break; \
+			echo "owlab: downloading $p failed (a download server or network outage); asking again in ${owlab_wait}s" >&2; \
+			sleep "$owlab_wait"; owlab_out=$(opkg install "$p" 2>&1) && continue 2; done; \
+			if [ -n "$owlab_waits" ] && printf '%s\n' "$owlab_out" | grep -qF 'opkg_download: Failed to download'; then owlab_waits=; \
+			echo "owlab: $p did not download in 4 attempts; the packages after it are asked once each" >&2; fi; \
+			if printf '%s\n' "$owlab_out" | grep -qxF "Unknown package '$p'."; then owlab_absent "$p"; continue; fi; \
+			printf '%s\n' "$owlab_out" >&2; echo "owlab: FAILED to install $p, for the reason above; this router is built without it" >&2; owlab_failed "$p"; done; fi; fi; \
 	fi
 
 # Packages that do not live in any feed — the developer's own package, or
@@ -177,7 +243,11 @@ RUN set -eu; \
 # table, and which `owlab test` fails on. The record is the point: a build log
 # scrolls past and nobody reads it, so the fact has to outlive the build.
 ARG ROUTER_ID=""
-COPY extra/ /tmp/owlab-extra/
+# This router's directory only, so this layer and every one after it hash this
+# router's own files. owlab stages only the routers it is about to build, and a
+# COPY of the whole directory would miss the cache whenever `owlab up A` and
+# `owlab up` alternate, or another router's package changed.
+COPY extra/${ROUTER_ID}/ /tmp/owlab-extra/${ROUTER_ID}/
 #
 # All of them in ONE command, in the order owlab staged them. These packages
 # routinely depend on each other — luci-app-example requires example-daemon — and
@@ -218,6 +288,9 @@ COPY extra/ /tmp/owlab-extra/
 # test. A bare `opkg update` here failed this layer on one dead feed, and
 # buildkit cancelled every other router in the build with it.
 #
+# On a rolling release apk upgrades the base here too: this layer re-runs long
+# after the package layer cached, and apk revalidates the index first.
+#
 # The retry installs the files in staged order, which is the order the
 # developer wrote them in — see fetchExtraPackages. That is what makes a
 # one-at-a-time pass usable at all: a dependent package staged after the
@@ -235,13 +308,15 @@ RUN set -eu; \
 	if [ "$#" -gt 0 ]; then \
 		for f in "$@"; do echo "owlab: installing $(basename "$f" | cut -c4-)"; done; \
 		if [ "$PKG_MANAGER" = "apk" ]; then \
+			if [ -n "$ROLLING" ]; then owlab_upg=$(apk upgrade 2>&1) || { printf '%s\n' "$owlab_upg" >&2; echo "owlab: apk upgrade failed on a rolling release; packages installed next may need a newer library than this router has" >&2; }; fi; \
 			install_extras() { apk add --allow-untrusted --force-overwrite "$@"; }; \
 		else \
 			owlab_upd=$(opkg update 2>&1) && owlab_rc=0 || owlab_rc=$?; \
 			owlab_read=$(printf '%s\n' "$owlab_upd" | grep -c '^Updated list of available packages') || true; \
 			if [ "$owlab_rc" -ne 0 ]; then printf '%s\n' "$owlab_upd" >&2; fi; \
 			if [ "$owlab_rc" -ne 0 ] && { [ "$owlab_read" -eq 0 ]; }; then echo "owlab: opkg update failed: no feed answered. Check the router's network and the feeds in /etc/opkg/distfeeds.conf and /etc/opkg/customfeeds.conf" >&2; exit "$owlab_rc"; fi; \
-			if [ "$owlab_rc" -ne 0 ]; then echo "owlab: opkg update: partial refresh, $owlab_read feed(s) read; the feed above did not answer and its packages will be missing" >&2; fi; \
+			if [ "$owlab_rc" -ne 0 ]; then echo "owlab: opkg update: partial refresh, $owlab_read feed(s) read; the feed above did not answer and its packages will be missing" >&2; owlab_partial=all; \
+				if printf '%s\n' "$owlab_upd" | grep -q '^\*\*\* Failed to download the package list from ' && ! printf '%s\n' "$owlab_upd" | grep '^\*\*\* Failed to download the package list from ' | grep -qv '/kmods/'; then owlab_partial=kmods; fi; fi; \
 			install_extras() { opkg install --force-overwrite "$@"; }; \
 		fi; \
 		if ! install_extras "$@"; then \
@@ -335,7 +410,9 @@ COPY rootfs-extra/ /
 # commit — but none of it INSIDE the rootfs, which carries no licence texts and
 # no copyright notices at all. Staging it here is what makes the image
 # self-documenting rather than leaving every downstream user to reconstruct it.
-COPY compliance/ /tmp/owlab-compliance/
+#
+# This router's directory only, for the reason given at extra/ above.
+COPY compliance/${ROUTER_ID}/ /tmp/owlab-compliance/${ROUTER_ID}/
 RUN set -eu; \
 	src="/tmp/owlab-compliance/$ROUTER_ID"; \
 	if [ -d "$src" ]; then \

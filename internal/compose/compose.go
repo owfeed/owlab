@@ -62,6 +62,9 @@ type Build struct {
 	Context    string            `yaml:"context"`
 	Dockerfile string            `yaml:"dockerfile"`
 	Args       map[string]string `yaml:"args,omitempty"`
+	// Labels go on the image, not the container: the service's own Labels
+	// below are the container's.
+	Labels map[string]string `yaml:"labels,omitempty"`
 }
 
 // Network is the single user-defined bridge every router joins.
@@ -118,7 +121,7 @@ func Render(cfg *config.Config, eng engine.Info) (*Project, error) {
 			// no /dev/kvm on macOS or Windows 10.
 			continue
 		}
-		doc.Services[r.ID] = service(cfg, r, eng, name, ctxDir, keyFile)
+		doc.Services[r.ID] = service(cfg, r, eng, ctxDir, keyFile)
 	}
 
 	out, err := yaml.Marshal(doc)
@@ -134,31 +137,43 @@ func Render(cfg *config.Config, eng engine.Info) (*Project, error) {
 	return &Project{ComposePath: composePath, ContextDir: ctxDir}, nil
 }
 
-// Materialize fills in the build context the compose file points at.
+// Materialize fills in the build context the compose file points at, for the
+// routers about to be built.
 //
 // This is the expensive half — the embedded context is wiped and rewritten,
-// and the out-of-feed packages and compliance bundle are downloaded — so it is
-// called only by the commands that are about to build an image.
-func Materialize(cfg *config.Config, p *Project) error {
+// and the rootfs tarballs, out-of-feed packages and compliance bundle are
+// downloaded — so it is called only by the commands that are about to build an
+// image.
+//
+// Only the routers named, not every router in the config: `owlab up owrt2410`
+// used to download the 25.12 .apk files and the snapshot's compliance files as
+// well, and a GitHub 5xx on a package that router never installs failed it. A
+// tarball is a hard requirement of the router built from it, so `owlab up
+// owrt2512` must not download, or fail on, the tarball of an ImmortalWrt router
+// in the same owlab.yaml either.
+func Materialize(cfg *config.Config, p *Project, routers []*config.Router) error {
 	if err := extractContext(p.ContextDir); err != nil {
 		return fmt.Errorf("writing build context: %w", err)
 	}
-	// Both after extractContext, which wipes the directory first.
+	// All after extractContext, which wipes the directory first.
 	cacheDir := filepath.Join(cfg.Dir, WorkDirName, "cache")
-	if err := fetchExtraPackages(cfg, p.ContextDir, cacheDir); err != nil {
+	if err := fetchRootfs(routers, p.ContextDir, cacheDir); err != nil {
 		return err
 	}
-	return fetchCompliance(cfg, p.ContextDir, cacheDir)
+	if err := fetchExtraPackages(routers, p.ContextDir, cacheDir); err != nil {
+		return err
+	}
+	return fetchCompliance(routers, p.ContextDir, cacheDir)
 }
 
 // Prepare renders the compose file and materialises the context it refers to,
-// for the commands that are about to build.
-func Prepare(cfg *config.Config, eng engine.Info) (*Project, error) {
+// for the commands that are about to build these routers.
+func Prepare(cfg *config.Config, eng engine.Info, routers []*config.Router) (*Project, error) {
 	p, err := Render(cfg, eng)
 	if err != nil {
 		return nil, err
 	}
-	if err := Materialize(cfg, p); err != nil {
+	if err := Materialize(cfg, p, routers); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -178,12 +193,15 @@ func BuildArgsFor(cfg *config.Config, r *config.Router) map[string]string {
 		"THEME":         cfg.Project.Theme,
 		"ROOT_PASSWORD": RootPassword(),
 	}
+	if r.Rolling() {
+		args["ROLLING"] = "1"
+	}
 	if base := r.BaseImage(); base != "" {
 		args["BASE_STAGE"] = "upstream"
 		args["BASE_IMAGE"] = base
 	} else {
+		// The tarball itself is staged in the context by fetchRootfs.
 		args["BASE_STAGE"] = "tarball"
-		args["ROOTFS_URL"] = r.RootfsTarballURL()
 		// BASE_IMAGE still has to name something that resolves. buildkit reads
 		// the metadata for every FROM in the file before it works out which
 		// stages the target depends on, so leaving the default here makes a
@@ -198,7 +216,7 @@ func BuildArgsFor(cfg *config.Config, r *config.Router) map[string]string {
 	return args
 }
 
-func service(cfg *config.Config, r *config.Router, eng engine.Info, project, ctxDir, keyFile string) Service {
+func service(cfg *config.Config, r *config.Router, eng engine.Info, ctxDir, keyFile string) Service {
 	args := BuildArgsFor(cfg, r)
 
 	svc := Service{
@@ -206,8 +224,9 @@ func service(cfg *config.Config, r *config.Router, eng engine.Info, project, ctx
 			Context:    ctxDir,
 			Dockerfile: "Dockerfile",
 			Args:       args,
+			Labels:     map[string]string{InputsLabel: Inputs(cfg, r)},
 		},
-		Image:         fmt.Sprintf("%s-%s:latest", project, r.ID),
+		Image:         Image(cfg, r),
 		Platform:      r.Platform(),
 		ContainerName: ContainerName(cfg.Project.Name, r.ID),
 		Hostname:      r.Hostname,
@@ -323,6 +342,11 @@ func ProjectName(s string) string {
 		out = "project"
 	}
 	return "owlab-" + out
+}
+
+// Image is the image one router is built as and started from.
+func Image(cfg *config.Config, r *config.Router) string {
+	return fmt.Sprintf("%s-%s:latest", ProjectName(cfg.Project.Name), r.ID)
 }
 
 // ContainerName is the container one router runs in.

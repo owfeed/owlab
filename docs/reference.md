@@ -132,6 +132,46 @@ from `wifi-scripts`, and builds the encryption matrix by asking `hostapd` what
 it supports. With both present the pages render from config, with no radio
 present anywhere.
 
+#### When a package does not install
+
+The set is installed in one call. A name the release's feeds do not carry is
+dropped from it, the rest is asked for again in one call, and the name is a
+one-line skip, not an error:
+
+```
+owlab: skip (not in this feed): luci-app-example
+```
+
+On opkg, a name that a package already on the router provides is a skip too,
+and is dropped from the call the same way. ImmortalWrt ships `dnsmasq-full`,
+which provides `dnsmasq`, and opkg would otherwise install the real `dnsmasq`
+beside it and refuse on a file clash. apk counts the provider as the name by
+itself:
+
+```
+owlab: skip (provided by dnsmasq-full, already installed): dnsmasq
+```
+
+When the call fails for any other reason, each package is installed on its
+own, so a failure costs that package and not the router. Anything that still
+does not install is a failure: a file clash, a dependency the feeds lack, or a
+download that still fails after 4 attempts, 2, 4 and 8 s apart (the retries
+owlab's own downloads use). A name that is not found after a refresh in which a
+feed did not answer is a failure too, because that feed may carry it. The
+exception is a kmods index alone: it carries only `kmod-*` packages.
+
+A failure prints the package manager's output, and the build carries on. The
+name is recorded on the router in `/etc/owlab/packages-failed`. `owlab up`
+names it after its table and exits 1, and `owlab test` fails that router on its
+`packages` step:
+
+```
+! owrt2410 is running WITHOUT luci-app-example
+```
+
+A plain `owlab up` reuses the cached build and reports the same names again.
+`owlab up --rebuild <router>` builds that router from scratch.
+
 ### Packages that are in no feed
 
 Most of what a router needs is in OpenWrt's own feeds and goes in `packages:`.
@@ -165,6 +205,12 @@ whose manager has no build is told so and carries on.
 Downloads happen on the host and are cached in `.owlab/cache/`, so `up` does
 not re-fetch them. They have to: a stock OpenWrt rootfs has no `curl`, and its
 busybox `wget` cannot do TLS.
+
+Only the routers being built are fetched for. `owlab up owrt2512` downloads
+owrt2512's packages and compliance files and nothing for the other routers in
+`owlab.yaml`, so a package only a 24.10 router installs cannot fail it. A
+download that sends nothing for 60 seconds, or breaks off halfway, is started
+again from the first byte, 4 attempts in all.
 
 A failure here is neither passed over nor fatal, unlike a name in `packages:`
 that a particular feed happens not to carry. These are named by URL — you said
@@ -280,6 +326,23 @@ Everything else still applies on top — your `packages:` are installed (the
 package manager reports the ones already there as up to date), fixtures are
 re-applied, the theme is set. A prebuilt image is an accelerator, not a
 different code path, so nothing behaves differently from a locally built one.
+
+Before a build, owlab asks the image's registry whether the image is there: a
+manifest `HEAD`, which Docker Hub does not count as a pull. When the registry
+does not answer — a refused connection, a timeout, or a 5xx or 429 through 4
+attempts — and the download server has the release's rootfs tarball, the router
+is built from that tarball instead, and owlab says so. This holds for the
+default image and for `image:` alike: the tarball is the same rootfs, and the
+tarball path pulls nothing from any registry. A tag the registry reports
+missing (404) moves the default image to the tarball as well. For `image:` it
+fails the build instead, because a name you wrote that does not exist is a
+mistake to fix.
+
+When the download server does not answer either, the image stays. A machine
+that reaches neither is offline, or reaches the internet only through the
+engine's own proxy or mirror, and the engine may still pull the image or build
+from the image and layers it already holds; the tarball could not be
+downloaded at all.
 
 Published tags are `<distro>-<release>-<arch>`:
 
@@ -483,7 +546,7 @@ add'` is the whole of "is anything stale".
 ### In GitHub Actions
 
 ```yaml
-- uses: owfeed/owlab/action@v0.6.5
+- uses: owfeed/owlab/action@v0.7.0
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*
@@ -495,12 +558,12 @@ add'` is the whole of "is anything stale".
 Every flag above has an input with the same name; `assert` and `install` take
 one per line. The action writes a table to the job summary and exposes
 `report` (the JSON path), `passed` and `failed` as outputs.
-`owfeed/owlab/setup@v0.6.5` installs the binary alone, for a job that drives
+`owfeed/owlab/setup@v0.7.0` installs the binary alone, for a job that drives
 `owlab` itself. Both verify the download against this repository's build
 attestation before the binary is executed or put on `PATH`.
 
-The tag in `uses:` is the version. `action@v0.6.5` and `setup@v0.6.5` install
-owlab v0.6.5, so a dependabot bump of that line moves the binary too. Set
+The tag in `uses:` is the version. `action@v0.7.0` and `setup@v0.7.0` install
+owlab v0.7.0, so a dependabot bump of that line moves the binary too. Set
 `version:` only to run a different release. Called at a branch or a SHA, both
 install the latest release and say so in a warning.
 
@@ -513,6 +576,32 @@ command works.
 
 A ready-made workflow is in
 [examples/workflow/package-ci.yml](../examples/workflow/package-ci.yml).
+
+#### Start a router from a saved image
+
+Building a router is most of a job's network: the base image, every package
+from the feeds, the `extra_packages` files. A job that drives `owlab` itself
+can save the image once and start later jobs from it:
+
+```console
+$ mkdir -p ~/.cache/owlab-stand
+$ docker save -o ~/.cache/owlab-stand/owrt2512.tar owlab-<project>-owrt2512:latest
+$ docker load -i ~/.cache/owlab-stand/owrt2512.tar
+$ owlab up --no-build owrt2512
+```
+
+`--no-build` fetches and builds nothing: it starts the image the engine holds,
+waits for LuCI and reports missing packages as a plain `owlab up` does. It
+refuses an image whose `org.owlab.inputs` label is not what this owlab and
+this `owlab.yaml` would build: one from another owlab, another router config,
+another `OWLAB_ROOT_PASSWORD` or a build from the rootfs tarball. It also
+refuses an image with no label, and a `fidelity: vm` router, which has no
+image. A refusal over the image exits 1 and names `owlab up <id>`, which builds
+it, so a script can fall back to that.
+
+The label does not cover the feeds: a saved image keeps the packages it was
+built with. Key the cache by a date as well as by `owlab.yaml` and owlab's
+version, to bound how stale a router can get.
 
 ## Licence and trademarks
 

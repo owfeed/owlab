@@ -171,14 +171,16 @@ type Router struct {
 	VM VMSpec
 
 	target Target
-	// noUpstreamImage records that the published container image for this
-	// release does not exist, so the image has to be assembled from the rootfs
-	// tarball instead. Set by whoever asked the registry; never parsed.
+	// noUpstreamImage records that the container image for this router does not
+	// exist or its registry did not answer, so the image has to be assembled
+	// from the rootfs tarball instead. Set by whoever asked the registry; never
+	// parsed.
 	noUpstreamImage bool
 }
 
-// UseTarball tells this router that there is no upstream container image for
-// its release, so the build must unpack the rootfs tarball.
+// UseTarball tells this router that its container image cannot be pulled —
+// there is none for its release, or the registry did not answer — so the build
+// must unpack the rootfs tarball. It overrides `image:` as well.
 //
 // A separate step rather than something BaseImage works out for itself,
 // because answering it needs a network round trip and most commands have no

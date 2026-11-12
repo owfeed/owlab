@@ -12,7 +12,7 @@ import (
 // package no longer fails the build" and "one bad package is never mentioned
 // again" (issue #12). Reading it wrong is silent in exactly the direction that
 // matters: an empty list means "the router has everything it was told to have".
-func TestMissingExtrasReadsOneNamePerLine(t *testing.T) {
+func TestRecordedReadsOneNamePerLine(t *testing.T) {
 	cases := []struct {
 		name string
 		out  string
@@ -36,9 +36,9 @@ func TestMissingExtrasReadsOneNamePerLine(t *testing.T) {
 				_, err := io.WriteString(out, tc.out)
 				return err
 			}
-			got := missingExtras(t.Context(), run)
+			got := recorded(t.Context(), run, extrasFailedPath)
 			if strings.Join(got, ",") != strings.Join(tc.want, ",") {
-				t.Errorf("missingExtras = %q, want %q", got, tc.want)
+				t.Errorf("recorded = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -47,12 +47,12 @@ func TestMissingExtrasReadsOneNamePerLine(t *testing.T) {
 // A router that cannot be reached is not a router that is missing a package.
 // Reporting one as the other would put "is running WITHOUT" against a box that
 // was simply stopped, and send the developer looking at the wrong thing.
-func TestMissingExtrasReportsNothingWhenTheRouterCannotAnswer(t *testing.T) {
+func TestRecordedReportsNothingWhenTheRouterCannotAnswer(t *testing.T) {
 	run := func(_ context.Context, _ string, _ []byte, out io.Writer) error {
 		_, _ = io.WriteString(out, "Error: No such container\n")
 		return errors.New("exit status 1")
 	}
-	if got := missingExtras(t.Context(), run); got != nil {
-		t.Errorf("missingExtras = %q, want none", got)
+	if got := recorded(t.Context(), run, extrasFailedPath); got != nil {
+		t.Errorf("recorded = %q, want none", got)
 	}
 }

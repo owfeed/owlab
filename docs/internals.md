@@ -59,11 +59,15 @@ once.
 3. If any router is a container, Docker is checked and the engine identified.
    A project whose routers are all `fidelity: vm` never touches Docker, and
    demanding it would be a requirement owlab invented.
-4. Routers split by tier. Containers go through `compose.Prepare` — which
-   writes `authorized_keys` and a Compose file, extracts the build context, and
-   downloads the out-of-feed packages and the compliance bundle — and then
-   `docker compose build` and `up`. VMs go through `qemu.New(...).Start` and,
-   if the disk is new, `Provision`.
+4. Routers split by tier. Containers have their base image checked first:
+   `resolveBaseImages` sends a manifest `HEAD` to the image's registry and
+   moves a router onto its rootfs tarball when the tag is missing, or when the
+   registry does not answer and the download server has the tarball. Then they
+   go through `compose.Prepare` — which writes `authorized_keys` and a Compose
+   file, extracts the build context, and downloads the rootfs tarballs, the
+   out-of-feed packages and the compliance bundle of the routers being built —
+   and then `docker compose build` and `up`. VMs go through
+   `qemu.New(...).Start` and, if the disk is new, `Provision`.
 5. Both tiers are then polled on their forwarded HTTP port until LuCI answers.
    A router is "up" when uhttpd serves, not when the process starts: procd has
    to run the whole boot sequence and apply the uci-defaults first.
@@ -73,12 +77,24 @@ once.
 - `compose.Render` writes the Compose file and touches nothing else. No
   network, no wipe.
 - `compose.Materialize` wipes and rewrites the build context, then downloads
-  what goes in it.
+  what goes in it for the routers it is given, and only those. The Dockerfile
+  copies `extra/<id>/` and `compliance/<id>/` of the router it builds, so a
+  router's layers hash its own files and do not change with the selection.
 
-`up` and `context` need both. `down` and `logs` need only the first, and that
-is not a micro-optimisation: stopping a router or reading its log would
-otherwise fail on a machine with no network, over files it is not about to
-build with.
+`up` and `context` need both. `down`, `logs` and `up --no-build` need only the
+first, and that is not a micro-optimisation: stopping a router or reading its
+log would otherwise fail on a machine with no network, over files it is not
+about to build with.
+
+`up --no-build` starts the images the engine already holds and skips the
+registry probe, `Materialize` and `compose build`. Every image `compose build`
+makes carries an `org.owlab.inputs` label, `compose.Inputs`: a digest of this
+owlab's version and VCS revision, the embedded build context, the build args,
+the platform, the release and its rootfs tarball URL, and the `extra_packages`
+URLs. Two builds of one commit with different uncommitted changes share it. `up --no-build` starts an image only when its label
+matches that digest for the config it reads now. What the feeds served during
+the build is not in the digest, and cannot be: the same inputs built a week
+apart install that week's packages.
 
 ### The seam between the tiers
 
@@ -425,16 +441,40 @@ routers:
 A list with no prefix at all replaces the set outright — an explicit list is
 someone saying they know what they want.
 
+The set is installed in one call: one call per package cost 81 s against 58 s
+for luci-theme-footstrap's 74 names on 24.10.8, and 27 s against under one for
+a second pass with everything installed. A name the feeds lack, and on opkg a
+name an installed package provides, is dropped and the rest asked for again in
+one call; only when that fails too is each package installed on its own, to
+name the ones that do not install.
+
 Failures are reported, not fatal. Feeds differ between releases and between a
 fork and upstream, so a name missing on 24.10 costs that one package rather
 than the whole image:
 
 ```
-owlab: skip (not in this feed): dnsmasq
+owlab: skip (not in this feed): luci-app-openvpn
 ```
 
-That exact line appears on ImmortalWrt 24.10, which ships `dnsmasq-full` and
-refuses the plain variant. It is the intended shape of the message.
+That line is for a name the feed does not carry, as the 2026-10-20 snapshot
+feed did not carry `luci-app-openvpn`. Any other refusal — a file clash, a
+dependency the feed lacks — prints the package manager's own output and then
+`owlab: FAILED to install <name>`, and the build carries on without it.
+
+Carrying on is not the same as passing it over. The name goes into
+`/etc/owlab/packages-failed`, which `owlab up` reads back off the running
+router and reports before exiting 1, as it does for `extra_packages` below.
+Ending the layer instead would cancel every other router in the build. Two
+kinds of failure are worth a closer look, because each would otherwise be
+cached:
+
+- A download is asked again, 4 attempts 2, 4 and 8 s apart, the schedule of
+  `internal/netx`. Once the layer exits 0, buildkit keeps it, and every
+  `owlab up` after a dropped fetch would hand back the same short router.
+- After a refresh in which a feed did not answer, a name the install does not
+  find is a failure, because that feed may carry it. A kmods index alone is the
+  exception: a snapshot image older than the feed's kernel window loses it on
+  every build, and it carries only `kmod-*` packages.
 
 ### `extra_packages` — anything not in a feed
 
@@ -523,8 +563,14 @@ any rewriting risks breaking it.
 
 The practical consequence for a project: **pin an exact point release.** A
 snapshot rootfs and a snapshot feed are rebuilt daily and independently, so
-they drift apart within a day and installs start failing. `owlab doctor` warns
-when a router names `snapshot`.
+they drift apart within a day, and a library can move to a new ABI in between.
+On 2026-10-20 the feed's `ucode-mod-html` needed a `libucode` the image's
+`ucode` was not linked against, and installing it by name left LuCI answering
+502. So on a rolling release owlab runs `apk upgrade` after the index refresh
+and before installing anything, which brings the whole image up to the feed it
+is about to install from. A point release is never upgraded: its ABI does not
+move, and a user of it installs without upgrading. A snapshot router is still
+not repeatable, and `owlab doctor` warns when a router names `snapshot`.
 
 ### apk and opkg
 

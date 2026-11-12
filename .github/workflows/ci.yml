@@ -272,6 +272,42 @@ jobs:
           [ -s "$RUNNER_TEMP/report.json" ] || exit 0
           jq -r '.routers[] | "\(.id) \(if .ok then "pass" else "FAIL" end)"' "$RUNNER_TEMP/report.json"
 
+  # `owlab up --no-build` against what a CI cache hands it: an image saved,
+  # removed and loaded again, started without a build on the runner's own
+  # Docker and Compose, and refused once owlab.yaml no longer describes it.
+  no-build:
+    needs: routers
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go build -o "$RUNNER_TEMP/owlab" ./cmd/owlab
+      - name: Save, load and start without a build
+        env:
+          RELEASE: ${{ needs.routers.outputs.action_release }}
+        run: |
+          set -eu
+          owlab="$RUNNER_TEMP/owlab"
+          mkdir -p "$RUNNER_TEMP/nb" && cd "$RUNNER_TEMP/nb"
+          printf 'version: 1\nproject:\n  name: nb\nrouters:\n  - id: r\n    release: "%s"\n    ports: { http: 8090, ssh: 2290 }\n' "$RELEASE" > owlab.yaml
+          "$owlab" up r
+          "$owlab" down r
+          docker save -o r.tar owlab-nb-r:latest
+          docker image rm owlab-nb-r:latest
+          docker load -i r.tar
+          rm -rf .owlab
+          "$owlab" up --no-build r
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8090/cgi-bin/luci/)
+          case "$code" in 200|403) ;; *) echo "LuCI answered $code" >&2; exit 1 ;; esac
+          "$owlab" down r
+          printf '    packages: ["+luci-app-wol"]\n' >> owlab.yaml
+          if "$owlab" up --no-build r; then
+            echo "started an image owlab.yaml no longer describes" >&2
+            exit 1
+          fi
+
   # The action is shell, and shell that only runs in other people's
   # repositories is shell nobody tests.
   #

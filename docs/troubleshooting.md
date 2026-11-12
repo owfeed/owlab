@@ -143,8 +143,54 @@ $ owlab exec owrt2410 -- 'opkg update 2>&1 | grep -c "^Updated"'
 ```
 
 Zero is the fatal case and owlab will have said so. Anything above zero with a
-non-zero exit is the partial one, and the packages that live in the feed that
-did not answer are the ones that will be reported as skipped.
+non-zero exit is the partial one. A name the install then does not find is
+reported as a failure, because the feed that did not answer may carry it; see
+the next entry. When only a kmods index did not answer, only a missing `kmod-*`
+is a failure.
+
+### `owlab up` exits 1: a router is running WITHOUT a package from `packages:`
+
+**Symptom.** `owlab up` prints its table, then this, and exits 1:
+
+```
+! owrt2410 is running WITHOUT luci-app-example
+!   Every other router built and started; only these packages are missing.
+!   The package manager said why during the build — one router at a time shows it again,
+!   and downloads what failed to download:
+!     owlab up --rebuild owrt2410
+!   A package the rebuild refuses again cannot go on that router: take it out of the
+!   router's packages: (a "-name" entry for one owlab installs by default) or extra_packages:.
+```
+
+In 0.6.6 and earlier the same router started with exit 0, and the only trace
+was an `owlab: FAILED to install` line in the build log.
+
+**Cause.** The package layer installs the set in one call; when that fails, it
+installs each name on its own and records the ones that did not install in
+`/etc/owlab/packages-failed`. The build log gives
+the reason above `owlab: FAILED to install <name>`:
+
+- `owlab: <name> did not download in 4 attempts`: a download server or network
+  outage. The packages after it are asked once each, so one outage costs one
+  round of waiting.
+- The package manager's own lines: a file clash, or a dependency the feeds do
+  not carry.
+- `no feed that answered the refresh above carries it`: the name was not found
+  after a `partial refresh`, and the feed that did not answer may carry it.
+
+**Fix.** After an outage, run `owlab up --rebuild owrt2410`. A plain `owlab up`
+reuses the cached layer and reports the same router again. For a clash or a
+missing dependency, remove the name from that router's `packages:` (a `-name`
+entry for a package owlab installs by default), or add the package it needs.
+
+**Check.** Ask the running router:
+
+```console
+$ owlab exec owrt2410 -- cat /etc/owlab/packages-failed
+luci-app-example
+```
+
+`owlab test` fails that router on its `packages` step with the same names.
 
 ---
 
@@ -152,10 +198,10 @@ did not answer are the ones that will be reported as skipped.
 
 ### The container's interface is in no firewall zone
 
-**Symptom.** `owlab up` reports `did not answer on HTTP in time`. `curl`
-against the published port gets nothing back — exit 52, empty reply — while
-inside the container `uhttpd` is listening on `0.0.0.0:80` and a local request
-is answered. Reported on ImmortalWrt, where two routers were unreachable and
+**Symptom.** `owlab up` reports `did not answer on HTTP in time` and exits 1.
+`curl` against the published port gets nothing back — exit 52, empty reply —
+while inside the container `uhttpd` is listening on `0.0.0.0:80` and a local
+request is answered. Reported on ImmortalWrt, where two routers were unreachable and
 the OpenWrt routers on the same stand were not.
 
 ```console
@@ -572,7 +618,10 @@ Run the command again later. For GitHub, check
 [githubstatus.com](https://www.githubstatus.com).
 
 The same applies to `unreachable after 4 attempts (a network or server outage …)`,
-which covers timeouts, DNS failures and refused connections.
+which covers timeouts, DNS failures and refused connections. An out-of-feed
+package or a compliance file whose server went quiet says `the server sent nothing
+for 1m0s`, and one that broke off says `reading the body: unexpected EOF`: each
+attempt downloads the whole file again.
 
 ### `404 Not Found` on an image, a rootfs or a package
 
@@ -580,12 +629,37 @@ The server answered, and the file is not there. owlab asks for a 404 once. Check
 the release number and target in `owlab.yaml`: the release may not publish that
 image yet, or the out-of-feed package URL is wrong.
 
+### `… did not answer (…); building <id> from the rootfs tarball … instead of <image>`
+
+Not an error. The registry that serves the router's base image (Docker Hub for
+the default `openwrt/rootfs`, or the one named in `image:`) refused the
+connection, timed out, or answered 5xx or 429 through 4 attempts. owlab built
+the router from its release's rootfs tarball instead, which is the same rootfs.
+The build takes longer, because no layer from a build on the image can be
+reused, and the image carries the target's honest platform (`linux/arm64`
+rather than `linux/aarch64_generic`). The next run asks the registry again.
+
+A machine that reaches Docker Hub only through the engine's `registry-mirrors`
+sees this on every run: owlab asks `registry-1.docker.io` itself. Point
+`image:` at the mirror to keep the image path. A proxy in `HTTPS_PROXY` is used
+by owlab as well.
+
+`… and neither did the rootfs tarball (…); leaving <id> on <image> for the
+engine …` is the same check finding the download server unreachable too, which
+is what an offline machine sees. owlab leaves the image to the engine, as it did
+before it asked: the engine pulls it through its own proxy or mirror, or builds
+from the copy and layers it holds. If it can do neither, the build fails on the
+pull and names the registry. Check the network of the machine running owlab, or
+set `HTTPS_PROXY` for it.
+
 ### `setup` step: `Upstream outage (safe to rerun)`, exit code 8
 
 `gh release download`, `gh release view` or `gh attestation verify` could not reach
-GitHub or Sigstore after 4 attempts. The binary was not checked, which is different
-from failing verification. Rerun the job. `does not verify as built by
-owfeed/owlab's release workflow`, exit code 1, is the real refusal.
+GitHub or Sigstore after 4 attempts. A call that does not finish within 120 seconds
+counts as one of them, and the log says `no answer from GitHub within 120s`. The
+binary was not checked, which is different from failing verification. Rerun the
+job. `does not verify as built by owfeed/owlab's release workflow`, exit code 1,
+is the real refusal.
 
 ---
 
