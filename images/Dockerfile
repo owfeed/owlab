@@ -37,7 +37,7 @@ ARG BASE_STAGE=upstream
 # server, not yet mirrored to Docker Hub. A bare `docker build images/` with
 # these defaults would have failed on the pull while every owlab build of the
 # same release succeeded.
-ARG BASE_IMAGE=openwrt/rootfs:x86_64-25.12.5
+ARG BASE_IMAGE=openwrt/rootfs:x86_64-25.12.6
 
 # BASE_IMAGE is set to `scratch` on the tarball path, and that is not cosmetic:
 # buildkit resolves the metadata for every FROM in this file before it prunes
