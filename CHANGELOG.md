@@ -9,6 +9,8 @@ one waits for a major.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-12
+
 ### Added
 
 - **`owlab up`, `down`, `sync`, `test`, `install` and `exec` lock each router
@@ -777,7 +779,8 @@ First release.
   to be re-run still leaves the immutable tags behind.
 
 [artifact-contract]: https://github.com/owfeed/owfeed/blob/main/docs/artifact-contract.md
-[Unreleased]: https://github.com/owfeed/owlab/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/owfeed/owlab/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/owfeed/owlab/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/owfeed/owlab/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/owfeed/owlab/compare/v0.6.7...v0.7.0
 [0.6.7]: https://github.com/owfeed/owlab/compare/v0.6.6...v0.6.7

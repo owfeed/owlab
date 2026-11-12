@@ -81,7 +81,7 @@ valid attestation for arbitrary bytes.
 
 ### Pin the action to a tag
 
-The tag decides the binary too: `setup@v0.7.1` with no `version:` installs v0.7.1.
+The tag decides the binary too: `setup@v0.8.0` with no `version:` installs v0.8.0.
 
 With `latest`, a branch or a SHA, the tool a CI result depends on can change between runs without a
 commit anywhere. The installer warns when you use one.
@@ -89,8 +89,8 @@ commit anywhere. The installer warns when you use one.
 ## Verifying a download by hand
 
 ```sh
-gh release download v0.7.1 -R owfeed/owlab -p 'owlab_0.7.1_linux_amd64.tar.gz'
-gh attestation verify owlab_0.7.1_linux_amd64.tar.gz -R owfeed/owlab \
+gh release download v0.8.0 -R owfeed/owlab -p 'owlab_0.8.0_linux_amd64.tar.gz'
+gh attestation verify owlab_0.8.0_linux_amd64.tar.gz -R owfeed/owlab \
   --signer-workflow owfeed/owlab/.github/workflows/release.yml
 ```
 

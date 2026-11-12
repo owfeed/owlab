@@ -455,10 +455,10 @@ Expect it to be slow. owlab says so before it starts.
 In a package repository, with no `owlab.yaml`:
 
 ```yaml
-- uses: owfeed/owlab/setup@v0.7.1
+- uses: owfeed/owlab/setup@v0.8.0
 - run: owlab build --release 25.12.5 --out dist   # .apk for 25.12
 - run: owlab build --release 24.10.8 --out dist   # .ipk for 24.10
-- uses: owfeed/owlab/action@v0.7.1
+- uses: owfeed/owlab/action@v0.8.0
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*
