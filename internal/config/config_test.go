@@ -503,3 +503,32 @@ routers:
 		t.Errorf("a list with no +/- should replace the stock set outright, got %v", got)
 	}
 }
+
+func TestLockPath(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "proj")
+	for _, tc := range []struct{ lock, want string }{
+		{"", filepath.Join(dir, ".owlab", "locks", "owrt2512.lock")},
+		// The template a project's own gates already use, relative to the config.
+		{"../tmp/stands-{id}.lock", filepath.Join(filepath.Dir(dir), "tmp", "stands-owrt2512.lock")},
+		{"lab.lock", filepath.Join(dir, "lab.lock")},
+	} {
+		c := &Config{Dir: dir, Project: Project{Lock: tc.lock}}
+		if got := c.LockPath("owrt2512"); got != tc.want {
+			t.Errorf("lock %q: LockPath = %q, want %q", tc.lock, got, tc.want)
+		}
+	}
+}
+
+func TestWorkDirIsIgnoredByGit(t *testing.T) {
+	dir := t.TempDir()
+	work, err := WorkDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if work != filepath.Join(dir, ".owlab") {
+		t.Fatalf("WorkDir = %q", work)
+	}
+	if body, err := os.ReadFile(filepath.Join(work, ".gitignore")); err != nil || string(body) != "*\n" {
+		t.Fatalf(".gitignore = %q, %v; want *", body, err)
+	}
+}

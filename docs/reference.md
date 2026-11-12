@@ -24,6 +24,7 @@ For someone who has an owlab project and needs to look up one value.
 | Config that makes LuCI pages render | [Fixtures](#fixtures) |
 | Faster builds from a published image | [Prebuilt images](#prebuilt-images) |
 | `OWLAB_*` variables | [Environment](#environment) |
+| Two sessions on one router | [Router locks](#router-locks) |
 | The flags of one command, such as `owlab build` | [Command flags](#command-flags) |
 | Flags for CI runs | [owlab test](#owlab-test) |
 | GitHub Actions inputs | [In GitHub Actions](#in-github-actions) |
@@ -76,6 +77,7 @@ wins.
 | `project.install` | Maps a source directory to a destination on the router. See [What `sync` copies](#what-sync-copies-and-with-what-permissions) | map of directory → path | luci.mk's own mapping | `htdocs: /www` |
 | `project.build` | Shell command line run on the host, in the project directory, before every sync | string | none | `./build-css.sh …` |
 | `project.post_sync` | Shell command line run on each router after the files arrive | string | none | `uci -q commit luci` |
+| `project.lock` | Lock file for each router; `{id}` is the router id | path relative to the directory of `owlab.yaml` | `.owlab/locks/{id}.lock` | `../tmp/stands-{id}.lock` |
 | `routers[].id` | Router name used by every command | string | required | `owrt2512` |
 | `distro` | Distribution | `openwrt`, `immortalwrt` | `openwrt` | `immortalwrt` |
 | `release` | Exact point release. See [Pin point releases](#pin-point-releases) | point release or `snapshot` | required | `"25.12.5"` |
@@ -509,6 +511,36 @@ Real boards ship firmware images and an SDK, but nothing a container or a VM can
 
 </details>
 
+## Router locks
+
+`up`, `down`, `sync`, `test`, `install` and `exec` hold an exclusive lock on
+each router they act on until they exit. A second session on the same router
+waits and prints `owlab: another session holds <FILE>; waiting for it`.
+`status`, `logs`, `shell`, `open`, `build`, `releases` and `doctor` take no
+lock. The wait has
+no timeout of its own: Ctrl-C ends it, and in `owlab test` it counts toward
+`--timeout`. `sync --watch` holds its locks until it is stopped. A lock is
+released when its process exits, a crash included, so no file is ever removed
+by hand. On Linux and macOS the lock is flock(2), the lock `flock -x <FILE>`
+takes; on Windows it is LockFileEx.
+
+| Name | Type | Default | Example |
+|---|---|---|---|
+| `project.lock` | path relative to the directory of `owlab.yaml`; `{id}` is the router id | `.owlab/locks/{id}.lock` | `lock: ../tmp/stands-{id}.lock` |
+| `--no-lock` on `up`, `down`, `sync`, `test`, `install`, `exec` | flag | off | `owlab sync owrt2512 --no-lock` |
+
+A `project.lock` path without `{id}` is one lock for every router. A command
+acting on several routers takes their locks in the order of their paths.
+`--no-lock` neither waits for a lock nor takes one; on `exec` it goes before
+`--`. `OWLAB_NO_LOCK=1` in the environment has the same effect on every
+command. A script that already holds the shared lock waits for itself forever
+unless the owlab commands it runs skip the lock. A gate sets the variable once
+for all of them:
+
+```sh
+flock -x ../tmp/stands-owrt2512.lock env OWLAB_NO_LOCK=1 <GATE_SCRIPT>
+```
+
 ## Environment
 
 A working machine needs none of these. Each one covers a case owlab cannot detect: an install somewhere
@@ -524,6 +556,7 @@ unusual, or a host whose accelerator misbehaves.
 | `OWLAB_QEMU_IMG` | the `qemu-img` to create disks with | the one beside the emulator |
 | `OWLAB_FIRMWARE` | the UEFI firmware for an aarch64 or armv7 VM | searched for, see below |
 | `OWLAB_ACCEL` | force an accelerator, for example `tcg` | the fastest one this host has |
+| `OWLAB_NO_LOCK` | `1` skips the router locks, as `--no-lock` does; see [Router locks](#router-locks) | unset |
 
 - **`OWLAB_QEMU`** is rarely needed. owlab searches the directories the installers use, not PATH alone:
   `C:\Program Files\qemu` and the scoop and chocolatey locations on Windows, `/opt/homebrew/bin` on
@@ -564,6 +597,8 @@ Every flag of every command, with its default. `owlab <command> -h` prints a com
   `shell` and `open`: `owlab up owrt2512 --rebuild` works.
 - **No router ids** means every router, for the commands that can act on several.
 - **`build`, `releases`, `doctor` and `version`** take flags only.
+- **`--no-lock`** on `up`, `down`, `sync`, `install`, `exec` and `test` skips the router lock: see
+  [Router locks](#router-locks).
 - **`exec` and `test`** have their own sections: [owlab exec](#owlab-exec) and
   [owlab test](#owlab-test).
 
