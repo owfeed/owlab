@@ -461,10 +461,10 @@ $ owlab install owrt2512 dist/noarch/luci-app-mine-1.0-r1.apk
 В репозитории пакета, без всякого `owlab.yaml`:
 
 ```yaml
-- uses: owfeed/owlab/setup@v0.7.1
+- uses: owfeed/owlab/setup@v0.8.0
 - run: owlab build --release 25.12.5 --out dist   # .apk для 25.12
 - run: owlab build --release 24.10.8 --out dist   # .ipk для 24.10
-- uses: owfeed/owlab/action@v0.7.1
+- uses: owfeed/owlab/action@v0.8.0
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*

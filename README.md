@@ -286,7 +286,7 @@ output straight to a publishing tool without either one knowing about the other.
 ### Check it in CI
 
 ```yaml
-- uses: owfeed/owlab/action@v0.7.1
+- uses: owfeed/owlab/action@v0.8.0
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*

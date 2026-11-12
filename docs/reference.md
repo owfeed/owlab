@@ -899,7 +899,7 @@ Other commands with a `schema` field:
 ### In GitHub Actions
 
 ```yaml
-- uses: owfeed/owlab/action@v0.7.1
+- uses: owfeed/owlab/action@v0.8.0
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*
@@ -920,12 +920,12 @@ Other commands with a `schema` field:
   job summary.
 - **No setup step needed.** The action installs the owlab binary itself, through the same
   `setup/install.sh` the setup action uses.
-- **Binary only.** `owfeed/owlab/setup@v0.7.1` installs the binary alone, for a job that drives `owlab`
+- **Binary only.** `owfeed/owlab/setup@v0.8.0` installs the binary alone, for a job that drives `owlab`
   itself.
 - **Verification.** Both verify the download against this repository's build attestation before the
   binary is executed or put on `PATH`.
-- **Version.** The tag in `uses:` is the version. `action@v0.7.1` and `setup@v0.7.1` install owlab
-  v0.7.1, so a dependabot bump of that line moves the binary too. Set `version:` only to run a different
+- **Version.** The tag in `uses:` is the version. `action@v0.8.0` and `setup@v0.8.0` install owlab
+  v0.8.0, so a dependabot bump of that line moves the binary too. Set `version:` only to run a different
   release.
 - **Branch or SHA.** Called at a branch or a SHA, both install the latest release and say so in a
   warning.
