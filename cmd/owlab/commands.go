@@ -489,25 +489,36 @@ func (a *app) shell(ctx context.Context, args []string) error {
 
 func (a *app) exec(ctx context.Context, args []string) error {
 	// Everything after -- is the command, verbatim.
-	var ids []string
+	var before []string
 	var cmd []string
 	for i, s := range args {
 		if s == "--" {
-			ids = args[:i]
+			before = args[:i]
 			cmd = args[i+1:]
 			break
 		}
 	}
 	if cmd == nil {
-		return fmt.Errorf("usage: owlab exec <router> -- <command>")
+		return fmt.Errorf("usage: owlab exec <router> [--no-lock] -- <command>")
 	}
 	if len(cmd) == 0 {
 		return fmt.Errorf("no command given after --")
+	}
+	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
+	noLock := fs.Bool("no-lock", false, "do not wait for or take the routers' locks (see project.lock)")
+	ids, err := parseMixed(fs, before)
+	if err != nil {
+		return err
 	}
 	r, err := a.single(ids, "exec")
 	if err != nil {
 		return err
 	}
+	release, err := a.lockRouters(ctx, []*config.Router{r}, *noLock)
+	if err != nil {
+		return err
+	}
+	defer release()
 	run, err := a.tierFor(r).Stream()
 	if err != nil {
 		return err
@@ -639,6 +650,7 @@ func (a *app) install(ctx context.Context, args []string) error {
 	feed := fs.String("feed", "", "package feed to add first: the index URL for apk, the directory URL for opkg")
 	feedKey := fs.String("feed-key", "", "the feed's public key file (for opkg the filename must be the key id)")
 	feedName := fs.String("feed-name", "owlab-feed", "name the feed is registered under")
+	noLock := fs.Bool("no-lock", false, "do not wait for or take the routers' locks (see project.lock)")
 	rest, err := parseMixed(fs, args)
 	if err != nil {
 		return err
@@ -726,6 +738,12 @@ func (a *app) install(ctx context.Context, args []string) error {
 			return err
 		}
 	}
+
+	release, err := a.lockRouters(ctx, routers, *noLock)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	var failed []string
 	markFailed := func(id string) {

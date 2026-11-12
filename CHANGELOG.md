@@ -11,12 +11,14 @@ one waits for a major.
 
 ### Added
 
-- **`owlab up`, `down`, `sync` and `test` lock each router they act on,** so a
-  second session waits instead of rebuilding or syncing a router another one
-  is testing (#39). The lock is `.owlab/locks/<id>.lock`, or the file
-  `project.lock` names: `lock: ../tmp/stands-{id}.lock` shares a project's own
-  `flock -x` lock, and its gates and owlab then wait for each other. `--no-lock`
-  skips it; `status`, `logs` and the other read-only commands take none.
+- **`owlab up`, `down`, `sync`, `test`, `install` and `exec` lock each router
+  they act on,** so a second session waits instead of rebuilding or syncing a
+  router another one is testing (#39). The lock is `.owlab/locks/<id>.lock`, or
+  the file `project.lock` names: `lock: ../tmp/stands-{id}.lock` shares a
+  project's own `flock -x` lock, and its gates and owlab then wait for each
+  other; owlab commands a gate runs under that lock pass `--no-lock`.
+  `--no-lock` skips the lock; `status`, `logs` and the other read-only commands
+  take none.
 
 ## [0.7.1] - 2026-11-12
 
