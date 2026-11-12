@@ -196,7 +196,7 @@ func dnsEgressChecks(ctx context.Context, cfg *config.Config) []check {
 	var container string
 	for i := range cfg.Routers {
 		r := &cfg.Routers[i]
-		if r.Fidelity == config.VM {
+		if r.Fidelity == config.VM || !r.Target().CanRun() {
 			continue
 		}
 		name := compose.ContainerName(cfg.Project.Name, r.ID)
@@ -327,6 +327,14 @@ func configChecks(ctx context.Context, cfg *config.Config) []check {
 	for i := range cfg.Routers {
 		r := &cfg.Routers[i]
 		name := "router " + r.ID
+
+		// Nothing below applies: it never runs, so it has no image, no
+		// emulation to warn about and no ports to hold.
+		if !r.Target().CanRun() {
+			out = append(out, check{name, info,
+				fmt.Sprintf("build only — `owlab build` uses %s; `up` and `test` refuse it", sdkImage(r.Target(), r.Release))})
+			continue
+		}
 
 		switch {
 		case r.Fidelity == config.VM:

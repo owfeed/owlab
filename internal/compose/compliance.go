@@ -30,7 +30,7 @@ import (
 func fetchCompliance(routers []*config.Router, ctxDir, cacheDir string) error {
 	root := filepath.Join(ctxDir, "compliance")
 	for _, r := range routers {
-		if r.Fidelity == config.VM {
+		if r.Fidelity == config.VM || !r.Target().CanRun() {
 			continue
 		}
 		// Created even when nothing below downloads: the Dockerfile COPYs

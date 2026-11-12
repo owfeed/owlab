@@ -479,7 +479,10 @@ func merge(def, r rawRouter, index int) (Router, error) {
 	if out.Release == "" {
 		return Router{}, errors.New("release is required (e.g. \"25.12.4\" or \"snapshot\")")
 	}
-	t, err := LookupTarget(out.Arch)
+	// Resolved wide: a router whose arch can only be built is a valid entry,
+	// because `owlab build` takes its target from it. The commands that start
+	// routers refuse it through Runnable.
+	t, err := ResolveTarget(out.Arch)
 	if err != nil {
 		return Router{}, err
 	}
@@ -593,6 +596,12 @@ func (c *Config) validate() error {
 			return fmt.Errorf("router %q: unknown package_manager %q (known: apk, opkg)", r.ID, r.PkgManager)
 		}
 		if r.Fidelity == VM {
+			// Asked before SupportsVM, whose message is about combined images
+			// and would name a target this router does not have.
+			if !r.target.CanRun() {
+				return fmt.Errorf("router %q: fidelity vm needs an arch owlab can run, and %s can only be built (arches that boot: %s)",
+					r.ID, r.Arch, strings.Join(VMArches(), ", "))
+			}
 			if !r.target.SupportsVM() {
 				return fmt.Errorf(
 					"router %q: fidelity vm is not supported for arch %s — upstream publishes no bootable combined image for %s (arches that work: %s)",
@@ -624,12 +633,44 @@ func (c *Config) Router(id string) (*Router, bool) {
 	return nil, false
 }
 
-// Select returns the named routers, or all of them when no ids are given.
+// Runnable is nil when owlab can start this router, and otherwise the reason
+// it cannot.
+//
+// Every command that starts or talks to a router asks this, so a build-only
+// arch fails as a sentence naming it — not as a compose file with an empty
+// platform or a download of a tarball that was never published.
+func (r *Router) Runnable() error {
+	if r.target.CanRun() {
+		return nil
+	}
+	return fmt.Errorf("router %q: arch %s can be built with `owlab build` but not run — "+
+		"%s publishes no rootfs for it, only firmware images for real boards "+
+		"(routers can run on: %s)",
+		r.ID, r.Arch, r.Title(), strings.Join(KnownArches(), ", "))
+}
+
+// Select returns the named routers, or every runnable one when no ids are
+// given.
+//
+// No ids means "the lab", and a router that exists only to give `owlab build`
+// its target is not part of it; a project with one next to its real routers
+// must still be able to `owlab up`. Naming one is a request that cannot be
+// met, and says why.
 func (c *Config) Select(ids []string) ([]*Router, error) {
 	if len(ids) == 0 {
 		out := make([]*Router, 0, len(c.Routers))
+		var buildOnly error
 		for i := range c.Routers {
+			if err := c.Routers[i].Runnable(); err != nil {
+				if buildOnly == nil {
+					buildOnly = err
+				}
+				continue
+			}
 			out = append(out, &c.Routers[i])
+		}
+		if len(out) == 0 && buildOnly != nil {
+			return nil, buildOnly
 		}
 		return out, nil
 	}
@@ -638,6 +679,9 @@ func (c *Config) Select(ids []string) ([]*Router, error) {
 		r, ok := c.Router(id)
 		if !ok {
 			return nil, fmt.Errorf("no router %q in %s (have: %s)", id, FileName, strings.Join(c.RouterIDs(), ", "))
+		}
+		if err := r.Runnable(); err != nil {
+			return nil, err
 		}
 		out = append(out, r)
 	}

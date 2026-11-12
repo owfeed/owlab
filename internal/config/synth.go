@@ -78,6 +78,11 @@ func Synthesize(o SynthOptions) (*Config, error) {
 		if err != nil {
 			return nil, fmt.Errorf("release %q: %w", rel, err)
 		}
+		// Every synthesised router is about to be started; there is no build
+		// that could take its target from one.
+		if err := r.Runnable(); err != nil {
+			return nil, err
+		}
 		cfg.Routers = append(cfg.Routers, r)
 	}
 	if len(cfg.Routers) == 0 {

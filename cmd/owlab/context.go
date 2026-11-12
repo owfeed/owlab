@@ -49,6 +49,9 @@ func (a *app) buildContext(ctx context.Context, args []string) error {
 	if !ok {
 		return fmt.Errorf("no router %q (have: %s)", *router, strings.Join(a.cfg.RouterIDs(), ", "))
 	}
+	if err := r.Runnable(); err != nil {
+		return err
+	}
 	// The matrix may name a release the config does not pin — that is the
 	// whole point of resolving it against the download server — so the release
 	// travels with the matrix entry and is applied here.
@@ -124,7 +127,7 @@ func (a *app) printMatrix(ctx context.Context, keep int) error {
 	var entries []matrixEntry
 	for i := range a.cfg.Routers {
 		r := &a.cfg.Routers[i]
-		if r.Fidelity == config.VM {
+		if r.Fidelity == config.VM || !r.Target().CanRun() {
 			continue
 		}
 		for _, rel := range a.releasesFor(ctx, r, keep) {

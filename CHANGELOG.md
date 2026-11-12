@@ -7,6 +7,20 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+### Fixed
+
+- **`owlab build` builds for every OpenWrt package architecture.** `arch:
+  aarch64_cortex-a53` (and `--arch`) failed with `unknown arch` before any
+  command ran, because the only architectures owlab accepted were the six it
+  can start a router on. A board target like mediatek/filogic publishes an SDK
+  but no rootfs, so it now loads and builds in `openwrt/sdk:<arch>-<release>`.
+  `up`, `test`, `sync` and the other commands that start a router refuse it by
+  name — `arch aarch64_cortex-a53 can be built with owlab build but not run` —
+  and with no router ids they skip it, so a build target can sit next to the
+  routers a project runs.
+
 ## [0.7.0] - 2026-10-27
 
 ### Added

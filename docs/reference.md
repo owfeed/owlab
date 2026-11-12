@@ -374,6 +374,24 @@ Silicon, `x86_64` on Intel and AMD. Anything else runs under emulation, which
 works but is slow enough to notice; `owlab doctor` warns when you have asked
 for it.
 
+Routers run on `x86_64`, `i386_pentium4`, `aarch64_generic`,
+`arm_cortex-a15_neon-vfpv4`, `arm_cortex-a9_vfpv3-d16` and `mips_24kc` — the
+targets upstream publishes a rootfs for. Any other OpenWrt package
+architecture (`aarch64_cortex-a53`, `mipsel_24kc`, …) is accepted for
+`owlab build` only: real boards ship firmware images and an SDK, but nothing a
+container or a VM can start. The build uses `openwrt/sdk:<arch>-<release>`,
+which upstream maps to one board of that arch — fine for userland packages,
+not for kernel modules of a different board. `up`, `test` and every other
+command that starts a router refuse such a router by name, and skip it when no
+router ids are given.
+
+```yaml
+routers:
+  - id: filogic
+    release: "24.10.8"
+    arch: aarch64_cortex-a53   # owlab build only
+```
+
 ## Environment
 
 Nothing here is needed on a working machine. Each one exists for a case owlab

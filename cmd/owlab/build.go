@@ -77,7 +77,9 @@ func (a *app) build(ctx context.Context, args []string) error {
 	var target config.Target
 	switch {
 	case *arch != "":
-		t, err := config.LookupTarget(*arch)
+		// Wide, unlike every command that starts a router: the SDK is a cross
+		// compiler and needs no rootfs, so any package architecture builds.
+		t, err := config.ResolveTarget(*arch)
 		if err != nil {
 			return err
 		}
@@ -104,7 +106,7 @@ func (a *app) build(ctx context.Context, args []string) error {
 	}
 	apkDir, ipkDir := archDirs(pkgArch, *layout)
 
-	sdk := fmt.Sprintf("openwrt/sdk:%s-%s", target.TagPrefix, rel)
+	sdk := sdkImage(target, rel)
 
 	// Every openwrt/sdk tag is linux/amd64, including the ones targeting
 	// aarch64 — the SDK is a cross-compiler, and upstream publishes only
@@ -136,6 +138,15 @@ func (a *app) build(ctx context.Context, args []string) error {
 	fmt.Printf("  sdk    %s\n", sdk)
 	fmt.Printf("  source %s\n", pkgDir)
 	fmt.Printf("  out    %s\n\n", outDir)
+	if !target.CanRun() {
+		// Upstream points the arch-form tag at one board of that arch
+		// (aarch64_cortex-a53 is bcm27xx/bcm2710, not mediatek/filogic).
+		// Userland packages do not care; kernel modules do.
+		fmt.Fprintf(os.Stderr,
+			"owlab: %s is the SDK of one target of this arch. Userland packages built\n"+
+				"owlab: with it install on every %s board; kernel modules match that target only.\n\n",
+			sdk, target.Arch)
+	}
 
 	script := sdkScript(pkgName, *verbose)
 	runArgs := []string{
@@ -158,6 +169,12 @@ func (a *app) build(ctx context.Context, args []string) error {
 	runArgs = append(runArgs, sdk, "/bin/bash", "-c", script)
 
 	if err := a.docker.Run(ctx, runArgs...); err != nil {
+		if !target.CanRun() {
+			// The arch was accepted by its shape, so a name no SDK exists for
+			// gets this far and fails as a pull.
+			return fmt.Errorf("SDK build failed: %w\n\nIf the image was not found, check that %s is a package "+
+				"architecture %s %s publishes an SDK for", err, target.Arch, title, rel)
+		}
 		return fmt.Errorf("SDK build failed: %w", err)
 	}
 
@@ -180,6 +197,15 @@ func (a *app) build(ctx context.Context, args []string) error {
 	}
 	fmt.Printf("\nInstall it with:  owlab install <router> /path/to/package\n")
 	return nil
+}
+
+// sdkImage is the openwrt/sdk tag to build a release in.
+//
+// A target owlab can run has a target-form tag (armsr-armv8-25.12.4) naming
+// exactly that target. A build-only arch has only its arch-form tag, which
+// upstream publishes for every package architecture.
+func sdkImage(t config.Target, release string) string {
+	return fmt.Sprintf("openwrt/sdk:%s-%s", t.TagPrefix, release)
 }
 
 // builtPackages lists the artifacts under a build's output directory.

@@ -89,6 +89,11 @@ func TestSynthesizeValidates(t *testing.T) {
 	if _, err := Synthesize(SynthOptions{Releases: []string{"25.12.4"}, Arch: "sparc"}); err == nil {
 		t.Error("want an error for an unknown arch")
 	}
+	// A real package arch, but `owlab test` starts what it synthesises.
+	if _, err := Synthesize(SynthOptions{Releases: []string{"24.10.8"}, Arch: "aarch64_cortex-a53"}); err == nil ||
+		!strings.Contains(err.Error(), "can be built") {
+		t.Errorf("err = %v, want the build-only error for a53", err)
+	}
 	if _, err := Synthesize(SynthOptions{Releases: []string{"25.12.4"}, Fixtures: []string{"nonsense"}}); err == nil {
 		t.Error("want an error for an unknown fixture")
 	}

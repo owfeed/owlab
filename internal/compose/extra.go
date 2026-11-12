@@ -31,7 +31,7 @@ import (
 // its own — a 24.10 router must not be handed a .apk built for 25.12.
 func fetchExtraPackages(routers []*config.Router, ctxDir, cacheDir string) error {
 	for _, r := range routers {
-		if r.Fidelity == config.VM {
+		if r.Fidelity == config.VM || !r.Target().CanRun() {
 			continue
 		}
 		// Always present, even when empty: the Dockerfile COPYs this router's

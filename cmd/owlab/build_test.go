@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"owfeed.org/owlab/internal/config"
 )
 
 func writeMakefile(t *testing.T, dir, body string) {
@@ -156,6 +158,24 @@ func TestBuiltPackagesWalksArchitectureDirectories(t *testing.T) {
 	for _, p := range built {
 		if ext := filepath.Ext(p); ext != ".apk" && ext != ".ipk" {
 			t.Errorf("picked up %q", p)
+		}
+	}
+}
+
+// A runnable target builds in the SDK of exactly that target; a build-only arch
+// has only the arch-form tag, which upstream publishes for every package arch.
+func TestSDKImage(t *testing.T) {
+	for _, tc := range []struct{ arch, want string }{
+		{"aarch64_generic", "openwrt/sdk:armsr-armv8-24.10.8"},
+		{"x86_64", "openwrt/sdk:x86-64-24.10.8"},
+		{"aarch64_cortex-a53", "openwrt/sdk:aarch64_cortex-a53-24.10.8"},
+	} {
+		tgt, err := config.ResolveTarget(tc.arch)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := sdkImage(tgt, "24.10.8"); got != tc.want {
+			t.Errorf("%s: %q, want %q", tc.arch, got, tc.want)
 		}
 	}
 }
