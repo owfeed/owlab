@@ -23,7 +23,7 @@ import (
 )
 
 // WorkDirName is the per-project scratch directory owlab writes into.
-const WorkDirName = ".owlab"
+const WorkDirName = config.WorkDirName
 
 // File is the generated compose document.
 type File struct {
@@ -91,12 +91,12 @@ type Project struct {
 // of a directory plus however many downloads — to run `owlab down` would be
 // both slow and, with no network, a reason for it to fail outright.
 func Render(cfg *config.Config, eng engine.Info) (*Project, error) {
-	work := filepath.Join(cfg.Dir, WorkDirName)
-	ctxDir := filepath.Join(work, "context")
-	if err := os.MkdirAll(ctxDir, 0o755); err != nil {
+	work, err := config.WorkDir(cfg.Dir)
+	if err != nil {
 		return nil, err
 	}
-	if err := writeGitignore(work); err != nil {
+	ctxDir := filepath.Join(work, "context")
+	if err := os.MkdirAll(ctxDir, 0o755); err != nil {
 		return nil, err
 	}
 
@@ -319,13 +319,6 @@ func extractContext(dir string) error {
 		}
 		return os.WriteFile(target, b, mode)
 	})
-}
-
-func writeGitignore(work string) error {
-	// Everything in here is generated. Writing the ignore file ourselves
-	// keeps it out of the developer's repository without asking them to
-	// remember a line in .gitignore.
-	return os.WriteFile(filepath.Join(work, ".gitignore"), []byte("*\n"), 0o644)
 }
 
 // ProjectName is the compose project name, and the prefix of every container

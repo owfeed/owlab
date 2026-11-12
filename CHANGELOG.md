@@ -7,6 +7,35 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+### Added
+
+- **`owlab up`, `down`, `sync`, `test`, `install` and `exec` lock each router
+  they act on,** so a second session waits instead of rebuilding or syncing a
+  router another one is testing (#39). The lock is `.owlab/locks/<id>.lock`, or
+  the file `project.lock` names: `lock: ../tmp/stands-{id}.lock` shares a
+  project's own `flock -x` lock, and its gates and owlab then wait for each
+  other. `--no-lock` skips the lock; `status`, `logs` and the other read-only
+  commands take none.
+- **`OWLAB_NO_LOCK=1` skips the router locks for every owlab command it
+  reaches,** so a gate that holds the shared lock sets it once instead of
+  passing `--no-lock` to each owlab call under it, where a missing flag waits
+  forever: `flock -x ../tmp/stands-owrt2512.lock env OWLAB_NO_LOCK=1 <script>`.
+
+### Fixed
+
+- **`owlab test` stops only the routers it ran.** Its teardown ran `compose
+  down` on the whole project, so `owlab test owrt2512` also stopped
+  `owrt2410`, and `--release` routers synthesized next to an `owlab.yaml`
+  removed that project's own routers as orphans. The whole project is torn down
+  only when the run used every router of `owlab.yaml`, or `--release` with no
+  `owlab.yaml`.
+- **`.owlab/` is ignored by git in a project whose routers are all `fidelity:
+  vm`.** Only rendering a compose file wrote `.owlab/.gitignore`, so such a
+  project's VM disks showed up in `git status`. Every command that creates
+  `.owlab/` now writes it.
+
 ## [0.7.1] - 2026-11-12
 
 ### Changed
