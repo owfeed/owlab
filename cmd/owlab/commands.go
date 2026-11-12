@@ -55,6 +55,7 @@ func (a *app) up(ctx context.Context, args []string) error {
 	noBuild := fs.Bool("no-build", false, "start container routers from the images this engine holds, built or loaded; fetch and build nothing")
 	noWait := fs.Bool("no-wait", false, "return as soon as the containers start, without waiting for LuCI")
 	verbose := fs.Bool("v", false, "echo the docker commands being run")
+	noLock := fs.Bool("no-lock", false, "do not wait for or take the routers' locks (see project.lock)")
 	ids, err := parseMixed(fs, args)
 	if err != nil {
 		return err
@@ -77,6 +78,11 @@ func (a *app) up(ctx context.Context, args []string) error {
 	if err := a.checkFidelity(ctx, routers); err != nil {
 		return err
 	}
+	release, err := a.lockRouters(ctx, routers, *noLock)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	if *noBuild {
 		if err := a.upBuilt(ctx, containers); err != nil {
@@ -404,6 +410,7 @@ func (a *app) down(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("down", flag.ContinueOnError)
 	purge := fs.Bool("purge", false, "also remove the built images")
 	verbose := fs.Bool("v", false, "echo the docker commands being run")
+	noLock := fs.Bool("no-lock", false, "do not wait for or take the routers' locks (see project.lock)")
 	ids, err := parseMixed(fs, args)
 	if err != nil {
 		return err
@@ -414,6 +421,11 @@ func (a *app) down(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	release, err := a.lockRouters(ctx, routers, *noLock)
+	if err != nil {
+		return err
+	}
+	defer release()
 	containers, vms := splitTiers(routers)
 
 	// VMs first, and gracefully: the guest is asked to power itself off so
@@ -550,6 +562,7 @@ func (a *app) sync(ctx context.Context, args []string) error {
 	interval := fs.Duration("interval", time.Second, "how often to poll for changes when watching")
 	verbose := fs.Bool("v", false, "list every file synced")
 	noBuild := fs.Bool("no-build", false, "skip project.build")
+	noLock := fs.Bool("no-lock", false, "do not wait for or take the routers' locks (see project.lock)")
 	ids, err := parseMixed(fs, args)
 	if err != nil {
 		return err
@@ -559,6 +572,11 @@ func (a *app) sync(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	release, err := a.lockRouters(ctx, routers, *noLock)
+	if err != nil {
+		return err
+	}
+	defer release()
 	opts := syncpkg.Options{
 		Config:    a.cfg,
 		Exec:      a.execFor,

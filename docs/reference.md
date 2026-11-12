@@ -392,6 +392,27 @@ routers:
     arch: aarch64_cortex-a53   # owlab build only
 ```
 
+## Router locks
+
+`up`, `down`, `sync` and `test` hold an exclusive lock on each router they act
+on until they exit. A second session on the same router waits and prints
+`owlab: another session holds <FILE>; waiting for it`. `status`, `logs`,
+`shell`, `exec`, `install`, `releases` and `doctor` take no lock. The wait has
+no timeout of its own: Ctrl-C ends it, and in `owlab test` it counts toward
+`--timeout`. `sync --watch` holds its locks until it is stopped. A lock is
+released when its process exits, a crash included, so no file is ever removed
+by hand. On Linux and macOS the lock is flock(2), the lock `flock -x <FILE>`
+takes; on Windows it is LockFileEx.
+
+| Name | Type | Default | Example |
+|---|---|---|---|
+| `project.lock` | path relative to the directory of `owlab.yaml`; `{id}` is the router id | `.owlab/locks/{id}.lock` | `lock: ../tmp/stands-{id}.lock` |
+| `--no-lock` on `up`, `down`, `sync`, `test` | flag | off | `owlab sync owrt2512 --no-lock` |
+
+A `project.lock` path without `{id}` is one lock for every router. A command
+acting on several routers takes their locks in the order of their paths.
+`--no-lock` neither waits for a lock nor takes one.
+
 ## Environment
 
 Nothing here is needed on a working machine. Each one exists for a case owlab

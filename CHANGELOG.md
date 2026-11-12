@@ -7,6 +7,17 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
+## [Unreleased]
+
+### Added
+
+- **`owlab up`, `down`, `sync` and `test` lock each router they act on,** so a
+  second session waits instead of rebuilding or syncing a router another one
+  is testing (#39). The lock is `.owlab/locks/<id>.lock`, or the file
+  `project.lock` names: `lock: ../tmp/stands-{id}.lock` shares a project's own
+  `flock -x` lock, and its gates and owlab then wait for each other. `--no-lock`
+  skips it; `status`, `logs` and the other read-only commands take none.
+
 ## [0.7.1] - 2026-11-12
 
 ### Changed

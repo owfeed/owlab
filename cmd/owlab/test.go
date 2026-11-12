@@ -47,6 +47,7 @@ func (a *app) test(ctx context.Context, args []string) error {
 	asJSON := fs.Bool("json", false, "write a machine-readable report to stdout")
 	timeout := fs.Duration("timeout", 20*time.Minute, "budget for the whole run")
 	verbose := fs.Bool("v", false, "echo the docker commands being run")
+	noLock := fs.Bool("no-lock", false, "do not wait for or take the routers' locks (see project.lock)")
 	ids, err := parseMixed(fs, args)
 	if err != nil {
 		return err
@@ -96,6 +97,14 @@ func (a *app) test(ctx context.Context, args []string) error {
 
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
+
+	// Inside the --timeout budget, so a CI job behind a stuck lock fails
+	// rather than hanging; deferred before the teardown, so released after it.
+	release, err := a.lockRouters(ctx, routers, *noLock)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	rep := testReport{
 		Schema:  "owlab.test/v1",

@@ -102,6 +102,25 @@ type Project struct {
 	// result is a router serving 404s for its own stylesheet — which looks
 	// like a broken sync rather than a missing build.
 	Build string `yaml:"build"`
+
+	// Lock is the lock file each router's writing commands hold, "{id}"
+	// standing for the router id, relative to the config's directory. Set so
+	// a project's own gates and owlab share one lock; see LockPath.
+	Lock string `yaml:"lock"`
+}
+
+// LockPath is the file that keeps two sessions from writing router id at once:
+// project.lock when it is set, .owlab/locks/<id>.lock beside the config when it
+// is not. A lock: path without "{id}" is one lock for the whole lab.
+func (c *Config) LockPath(id string) string {
+	if c.Project.Lock == "" {
+		return filepath.Join(c.Dir, ".owlab", "locks", id+".lock")
+	}
+	p := strings.ReplaceAll(c.Project.Lock, "{id}", id)
+	if filepath.IsAbs(p) {
+		return filepath.Clean(p)
+	}
+	return filepath.Join(c.Dir, p)
 }
 
 // Ports are the host ports forwarded to a router.
