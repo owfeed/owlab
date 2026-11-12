@@ -28,6 +28,10 @@ one waits for a major.
   removed that project's own routers as orphans. The whole project is torn down
   only when the run used every router of `owlab.yaml`, or `--release` with no
   `owlab.yaml`.
+- **`.owlab/` is ignored by git in a project whose routers are all `fidelity:
+  vm`.** Only rendering a compose file wrote `.owlab/.gitignore`, so such a
+  project's VM disks showed up in `git status`. Every command that creates
+  `.owlab/` now writes it.
 
 ## [0.7.1] - 2026-11-12
 

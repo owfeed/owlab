@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -19,6 +21,10 @@ func TestLockRoutersWaitsUnlessNoLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
+	// The default lock is the first thing a VM-only project writes into .owlab.
+	if _, err := os.Stat(filepath.Join(a.cfg.Dir, ".owlab", ".gitignore")); err != nil {
+		t.Fatalf("no .owlab/.gitignore beside the locks: %v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()

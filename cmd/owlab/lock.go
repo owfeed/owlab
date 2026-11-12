@@ -23,6 +23,11 @@ func (a *app) lockRouters(ctx context.Context, routers []*config.Router, skip bo
 	if skip {
 		return func() {}, nil
 	}
+	if a.cfg.Project.Lock == "" {
+		if _, err := config.WorkDir(a.cfg.Dir); err != nil {
+			return nil, err
+		}
+	}
 	paths := make([]string, len(routers))
 	for i, r := range routers {
 		paths[i] = a.cfg.LockPath(r.ID)

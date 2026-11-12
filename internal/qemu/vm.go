@@ -42,7 +42,7 @@ func New(cfg *config.Config, r *config.Router) *VM {
 	return &VM{
 		Router: r,
 		Config: cfg,
-		Dir:    filepath.Join(cfg.Dir, ".owlab", "vm", r.ID),
+		Dir:    filepath.Join(cfg.Dir, config.WorkDirName, "vm", r.ID),
 	}
 }
 
@@ -167,6 +167,9 @@ func (v *VM) Start(ctx context.Context, opts StartOptions) error {
 		if err := v.removeDisks(); err != nil {
 			return err
 		}
+	}
+	if _, err := config.WorkDir(v.Config.Dir); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(v.Dir, 0o755); err != nil {
 		return err

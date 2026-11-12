@@ -518,3 +518,17 @@ func TestLockPath(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkDirIsIgnoredByGit(t *testing.T) {
+	dir := t.TempDir()
+	work, err := WorkDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if work != filepath.Join(dir, ".owlab") {
+		t.Fatalf("WorkDir = %q", work)
+	}
+	if body, err := os.ReadFile(filepath.Join(work, ".gitignore")); err != nil || string(body) != "*\n" {
+		t.Fatalf(".gitignore = %q, %v; want *", body, err)
+	}
+}
