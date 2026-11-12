@@ -3,7 +3,10 @@
 What to run before you send a pull request to owlab, and the rules a reviewer holds every change to.
 For anyone changing the code, the image or the docs.
 
+- **Needs:** Go 1.25.3 or later (the `go` line in `go.mod`). Docker too, for real routers.
 - **Before you push:** `gofmt -l .`, `go vet ./...`, `go test ./...`.
+- **How the code fits together** is in [docs/internals.md](docs/internals.md). The QEMU side is its
+  section [The VM tier](docs/internals.md#the-vm-tier).
 - **If you touch how a router is built or reached,** the end-to-end job in CI is the one that tells you.
 - **Docs come in pairs.** A change to an English page is not finished until the Russian page says the
   same thing, and the other way round.
@@ -36,7 +39,8 @@ CI runs these on every pull request, plus:
 
 ### Run real routers locally
 
-Running the real thing locally takes one `owlab test` and needs only Docker:
+Running the real thing locally takes one `owlab test`. It needs Docker, and Go to build owlab from
+your checkout:
 
 ```sh
 go build -o /tmp/owlab ./cmd/owlab

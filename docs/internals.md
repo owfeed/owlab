@@ -67,6 +67,16 @@ LuCI package has no copy of this repository and should not need one.
 The `all:` prefix is required. The overlay contains `/etc/uci-defaults` files, and without the prefix
 `go:embed` silently skips names starting with `_` or `.`.
 
+The overlay is `images/rootfs-extra/`. `images/Dockerfile` copies it to `/` in the image, and a VM gets
+it pushed in at provisioning.
+
+| File | Path in this repository |
+|---|---|
+| `95_owlab-base` | `images/rootfs-extra/etc/uci-defaults/95_owlab-base` |
+| `96_owlab-fixtures` | `images/rootfs-extra/etc/uci-defaults/96_owlab-fixtures` |
+| The fixture profiles, `60-wifi.sh` among them | `images/rootfs-extra/usr/share/owlab/fixtures/` |
+| The container entrypoint | `images/rootfs-extra/usr/lib/owlab/entrypoint.sh` |
+
 **Editing anything under `images/` means rebuilding the binary.** The running binary carries its own
 copy. Changing the file on disk changes nothing until `go build` runs again. This has produced a false
 debugging trail more than once.
@@ -741,9 +751,10 @@ but not like the real thing" is the one outcome this tier exists to avoid.
 armsr publishes EFI-only images, so aarch64 and armv7 need an edk2 build on the host. owlab searches
 for it in this order:
 
-1. beside the QEMU binary, which is right for Homebrew, for a manual build and for a distribution
+1. `OWLAB_FIRMWARE`, when it is set;
+2. beside the QEMU binary, which is right for Homebrew, for a manual build and for a distribution
    package alike;
-2. the usual distribution locations, under the usual distribution aliases (`AAVMF_CODE.fd`,
+3. the usual distribution locations, under the usual distribution aliases (`AAVMF_CODE.fd`,
    `QEMU_EFI.fd`).
 
 x86 still publishes a legacy-boot combined image, which SeaBIOS handles with nothing to find.

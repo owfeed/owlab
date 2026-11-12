@@ -1,15 +1,17 @@
 # What is built in owlab, and what is not
 
-How much of owlab's side of the three-tool stack exists, as of 2026-09-04. For anyone deciding whether
+How much of owlab's side of the three-tool stack exists, as of 2026-11-12. For anyone deciding whether
 to rely on an owlab feature. [ECOSYSTEM.md](https://github.com/owfeed/owfeed/blob/main/docs/ECOSYSTEM.md)
 in owfeed says where the boundaries of the stack run and why; owlab is its bottom.
 
-- **Verified:** both tiers, `fidelity: vm`, `owlab build`, installs from a signed feed, `owlab releases`
-  without a project, per-format `--install`, reports of packages an image failed to install, the
-  release-pin check, and unit tests on Linux, macOS and Windows.
+- **Verified:** both tiers, `fidelity: vm`, `owlab build`, installs from a signed feed, and
+  `owlab releases` without a project.
+- **Also verified:** per-format `--install`, reports of packages an image failed to install, starting
+  from a saved image, the release-pin check, and unit tests on Linux, macOS and Windows.
 - **Verified on Linux only:** everything with a router in it.
 - **Built, not yet exercised:** `{host}` in a `--feed` URL.
-- **Not built, by design:** signature verification, and any knowledge of the feeds owlab publishes to.
+- **Not built, by design:** signature verification by owlab itself, and any knowledge of the feeds
+  owlab publishes to.
 
 | Section | What it lists |
 |---|---|
@@ -40,6 +42,7 @@ in the same pull request that made it untrue.
 | `--install` gives each router only its own format | `pkgmgr.FilterFiles` splits by extension before the push, so one glob over `dist/` covers both release lines; what a router did not get is named on its install line, and a router left with nothing is reported as a skip rather than a green install |
 | A router built without an `extra_packages` file says so | The image records the failures in `/etc/owlab/extras-failed`; `owlab up` prints them after its table and exits non-zero, `owlab test` fails that router on an `extra_packages` step |
 | A router built without a package from `packages:` says so | The image records the failures in `/etc/owlab/packages-failed`, after asking a failed download 4 times; `owlab up` prints them after its table and exits non-zero, `owlab test` fails that router on a `packages` step. A name the feeds do not carry stays a skip, and so, on opkg, does a name an installed package provides (ImmortalWrt's `dnsmasq-full` for `dnsmasq`) |
+| A router starts from a saved image | `ci.yml`'s `no-build` job runs `owlab up`, saves the image with `docker save`, removes it, loads it back and starts it with `owlab up --no-build`; LuCI must answer. After a `packages:` change in `owlab.yaml`, the same image must be refused |
 | The release pins cannot go stale unnoticed | `sh tools/pins.sh check` in `ci.yml` fails any release literal in a workflow (they read `images/owlab.yaml` at run time) and one in `images/Dockerfile` that `images/owlab.yaml` does not pin; `pins.yml` proposes the bump as a pull request |
 | The unit tests pass on Linux, macOS and Windows | `ci.yml` runs `go test` on `ubuntu-24.04`, `macos-15` and `windows-2025`, and `owlab doctor` and `owlab version` on the bare macOS and Windows runners. Until this was added, "runs everywhere" rested on a cross-compile, and two Windows bugs were living in the gap — permissions derived from a filesystem that has none, and `project.build` run by a shell that is not there |
 
@@ -49,7 +52,8 @@ Everything with a router in it is verified on Linux only.
 
 | Platform | Covered by |
 |---|---|
-| Linux | `owlab up`, `sync`, `install`, `test` and the VM tier, end to end, by `ci.yml`'s `e2e` job and by daily use |
+| Linux, in CI | `ci.yml`'s `e2e` job runs `owlab test` (start, assert, tear down) on OpenWrt 25.12, OpenWrt 24.10 and ImmortalWrt 25.12, x86_64. Its `no-build` job runs `owlab up`, `down` and `up --no-build`. Its `action` job runs the composite action on one release |
+| Linux, by daily use | `owlab sync`, `install` and the VM tier. No CI job runs them |
 | macOS, Windows | The unit tests, the platform-specific code paths those tests reach, and `doctor` starting on a bare host. No router has booted there. |
 
 The gap comes from the runners, not from a decision. GitHub's macOS and Windows runners have no
@@ -66,15 +70,19 @@ not presented as measurement.
 
 - Tests cover the substitution and the `extra_hosts` entry it resolves through.
 - The container tier's alias is Docker's own `host-gateway`.
+- It shipped in 0.4.0.
 - No CI run has yet served a feed off the runner and installed from it, and that is the whole reason
-  the token exists.
-- The first such run will be in a feed's pull-request pipeline, after this ships in a release.
+  the token exists. On 2026-11-12, no workflow in owfeed or owfeed-packages wrote `{host}`.
+- The first such run is expected in a feed's pull-request pipeline.
 
 ## Not built, and why
 
 **owlab does not verify signatures, and will not.**
 
-- It installs with `--allow-untrusted`, because trust is not what it is checking.
+- A package file is installed with apk's `--allow-untrusted`, because trust is not what it is
+  checking. That covers `--install` and `owlab install` with a file, and `extra_packages`.
+- A name installed through `--feed` gets no such flag. The router's own package manager checks the
+  index signature against the key `--feed-key` put there. owlab itself checks nothing.
 - That is the T0 column of the trust matrix, and the reason owlab holds no key anywhere.
 - The moment owlab verifies a key, the column collapses, and every invariant written against it has an
   exception.
@@ -82,7 +90,7 @@ not presented as measurement.
 
 **owlab does not know about feeds it publishes to.**
 
-- It reads an `owfeed.lock` lying beside it if there is one. It never writes one.
+- It neither reads nor writes an `owfeed.lock`.
 - `owlab.yaml` has no `owfeed:` section.
 - Why: a developer's machine ergonomics and a feed's release policy are edited by different people,
   with different amounts of review.

@@ -14,6 +14,7 @@ tags to the repository.
 | I want to… | Section |
 |---|---|
 | cut a release | [Cutting a release](#cutting-a-release) |
+| recover from a failed release run | [If the release workflow fails](#if-the-release-workflow-fails) |
 | know what the release workflow does | [What the tag does](#what-the-tag-does) |
 | know how the binary reports its version | [Version numbers](#version-numbers) |
 | understand how router images are tagged | [Router images](#router-images) |
@@ -22,8 +23,10 @@ tags to the repository.
 
 ## Cutting a release
 
-1. In `CHANGELOG.md`, move the `## [Unreleased]` heading down to a version and a date.
-2. At the bottom of `CHANGELOG.md`, add the comparison link.
+1. In `CHANGELOG.md`, turn the `## [Unreleased]` heading into the version and the date. See
+   [The changelog edit](#the-changelog-edit).
+2. At the bottom of `CHANGELOG.md`, move the `[Unreleased]` link to the new tag and add the comparison
+   link for the version.
 3. Move every version reference in the table below to the tag about to exist.
 4. Tag and push:
 
@@ -42,8 +45,19 @@ That is the whole procedure.
 | The version in prose next to them, such as "installs vX.Y.Z" | `SECURITY.md` and `docs/` |
 | The `gh release download` example, and the archive name in it and in the `gh attestation verify` line after it | `SECURITY.md` |
 
-Move these *before* the tag, not after, so the tag contains a README and an example that point at
-itself.
+- **The Russian pages carry the same references.** `README_ru.md`, `docs/reference_ru.md` and
+  `docs/runbook_ru.md` move with their English pairs.
+- **Move these *before* the tag**, not after, so the tag contains a README and an example that point
+  at itself.
+
+To list every reference that is left, run this from the repository root:
+
+```sh
+grep -rnE '(action|setup)@v[0-9]|owlab v[0-9]|installs v[0-9]|gh release download v|owlab_[0-9]' \
+  SECURITY.md README.md README_ru.md docs examples/workflow
+```
+
+`tools/pins.sh` does not help here. It moves the OpenWrt release pins, not owlab's own version.
 
 <details>
 <summary>Why exact tags, not a floating <code>v1</code></summary>
@@ -53,6 +67,31 @@ should get the assertion behaviour that was reviewed with it. It should not get 
 with no commit in their repository at all.
 
 </details>
+
+### The changelog edit
+
+`tools/release-notes.sh` takes the release body from the section whose heading names the version in
+brackets. Before the release, the top of `CHANGELOG.md` reads:
+
+```markdown
+## [Unreleased]
+```
+
+After it, with today's date:
+
+```markdown
+## [X.Y.Z] - YYYY-MM-DD
+```
+
+At the bottom, the `[Unreleased]` link moves to the new tag and a link for the version is added below
+it:
+
+```markdown
+[Unreleased]: https://github.com/owfeed/owlab/compare/vX.Y.Z...HEAD
+[X.Y.Z]: https://github.com/owfeed/owlab/compare/vP.Q.R...vX.Y.Z
+```
+
+`vP.Q.R` is the previous release. The link lines are left out of the release body.
 
 ### Check that it worked
 
@@ -74,6 +113,31 @@ than a bug report.
 5. Downloads `releases/latest/download/SHA256SUMS` and compares it to what this run built.
 
 Each archive is attested before it is uploaded.
+
+Between steps 1 and 2, the release job builds the notes from `CHANGELOG.md`. A version with no
+section stops the run there, with `no CHANGELOG section for version X.Y.Z`.
+
+After the release, `release.yml` calls `images.yml` with the tag, which builds the router images with an
+immutable tag. See [Immutable tags](#immutable-tags).
+
+### If the release workflow fails
+
+`release.yml` can be run again by hand for a tag that already exists:
+
+```console
+$ gh workflow run release.yml -f tag=vX.Y.Z
+```
+
+- **The rerun checks out the tag**, so it reads `CHANGELOG.md` and the code as the tag has them. It
+  fixes a failure from outside the repository, such as a network error.
+- **A failure in the files** needs a commit, and a tag that contains it. A missing changelog section is
+  one of these.
+- **Only the images failed?** `images.yml` takes the tag as its `version` input, so a manual run still
+  adds the immutable tags:
+
+  ```console
+  $ gh workflow run images.yml -f version=vX.Y.Z
+  ```
 
 <details>
 <summary>Why the release starts as a draft</summary>

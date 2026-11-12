@@ -37,6 +37,7 @@ one.
 |---|---|---|
 | root has no password | The upstream rootfs ships that way, and LuCI accepts the empty field. | Set `OWLAB_ROOT_PASSWORD` before `owlab up` if you need a real one. ssh key auth is unaffected either way. |
 | The ssh host keys are baked into the image | They only stop ssh from prompting. | Everyone using a given image has the same keys. They authenticate nothing. |
+| Every `~/.ssh/id_*.pub` goes into root's `authorized_keys`, on both tiers | Installing one key by preference order turns away someone who reaches for their other key with "Permission denied (publickey)". | Whoever holds any of those private keys gets root on the router. Other `.pub` files in `~/.ssh` are not installed. `OWLAB_PUBKEY` replaces the search with the files it names. |
 | `extra_packages:` are installed without signature verification | Projects publishing to GitHub Releases usually sign with usign and ship a `.sig` beside the artifact. Checking it needs their public key, and trusting that key is a decision a dev container should not make on anyone's behalf. | Treat anything installed this way as trusted-by-URL. |
 | Containers get NET_ADMIN and NET_RAW, not `--privileged` | netifd has to bring interfaces up, and fw4 has to load an nftables ruleset. | Neither needs the rest of what privileged grants. |
 | A `fidelity: vm` router is a QEMU process on your machine | It runs a real OpenWrt kernel. | The isolation is the emulator's, not the container engine's. Everything in this table about passwords and host keys applies to it too. |

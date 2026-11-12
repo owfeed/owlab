@@ -2,7 +2,7 @@
 
 [Русская версия](reference_ru.md)
 
-Every key of `owlab.yaml`, every environment variable, and the flags of `owlab exec` and `owlab test`.
+Every key of `owlab.yaml`, every environment variable, and the flags of every `owlab` command.
 For someone who has an owlab project and needs to look up one value.
 
 - Steps for a task ("how do I do X") are in the [runbook](runbook.md).
@@ -24,6 +24,7 @@ For someone who has an owlab project and needs to look up one value.
 | Config that makes LuCI pages render | [Fixtures](#fixtures) |
 | Faster builds from a published image | [Prebuilt images](#prebuilt-images) |
 | `OWLAB_*` variables | [Environment](#environment) |
+| The flags of one command, such as `owlab build` | [Command flags](#command-flags) |
 | Flags for CI runs | [owlab test](#owlab-test) |
 | GitHub Actions inputs | [In GitHub Actions](#in-github-actions) |
 
@@ -521,12 +522,26 @@ unusual, or a host whose accelerator misbehaves.
 | `OWLAB_CACHE` | where downloaded VM images live | the user cache directory |
 | `OWLAB_QEMU` | the `qemu-system-*` binary to boot with | searched for, see below |
 | `OWLAB_QEMU_IMG` | the `qemu-img` to create disks with | the one beside the emulator |
-| `OWLAB_FIRMWARE` | the UEFI firmware for an aarch64 or armv7 VM | not stated |
+| `OWLAB_FIRMWARE` | the UEFI firmware for an aarch64 or armv7 VM | searched for, see below |
 | `OWLAB_ACCEL` | force an accelerator, for example `tcg` | the fastest one this host has |
 
 - **`OWLAB_QEMU`** is rarely needed. owlab searches the directories the installers use, not PATH alone:
   `C:\Program Files\qemu` and the scoop and chocolatey locations on Windows, `/opt/homebrew/bin` on
   macOS. `owlab doctor` prints the binary it settled on.
+- **`OWLAB_FIRMWARE`** is needed only when the search finds no file. A path that does not exist is an
+  error. Without the variable, owlab looks in these directories, in order:
+  1. `../share/qemu` relative to the QEMU binary, then the binary's own directory (the Windows layout);
+  2. `/opt/homebrew/share/qemu`, `/usr/local/share/qemu`, `/usr/share/qemu`;
+  3. `/usr/share/edk2/aarch64`, `/usr/share/edk2/arm`, `/usr/share/AAVMF`, `/usr/share/OVMF`.
+
+  In each directory it tries these names:
+
+  | Architecture | File names |
+  |---|---|
+  | `aarch64_generic` | `edk2-aarch64-code.fd`, `AAVMF_CODE.fd`, `QEMU_EFI.fd`, `QEMU_EFI-silent.fd` |
+  | `arm_cortex-a15_neon-vfpv4` | `edk2-arm-code.fd`, `AAVMF32_CODE.fd`, `QEMU_EFI.fd` |
+
+  `owlab doctor` prints the file it found as `vm firmware`.
 - **`OWLAB_ACCEL=tcg`** is the escape hatch for a host whose hardware acceleration does not work.
   Translation is slower by roughly an order of magnitude and always works.
 
@@ -537,6 +552,154 @@ On Windows the problem is real. WHPX sits on top of Hyper-V, and it is reported 
 an SMP boot while working on the next one over.
 
 </details>
+
+## Command flags
+
+Every flag of every command, with its default. `owlab <command> -h` prints a command's flags.
+
+- **`--config <path>` or `-c <path>`** works with every command, before or after the command name. It
+  takes the file or the directory holding it. Without it, owlab reads `OWLAB_CONFIG`, then searches
+  the working directory and its parents.
+- **Router ids and flags mix freely** for `up`, `down`, `sync`, `install`, `logs`, `status`, `test`,
+  `shell` and `open`: `owlab up owrt2512 --rebuild` works.
+- **No router ids** means every router, for the commands that can act on several.
+- **`build`, `releases`, `doctor` and `version`** take flags only.
+- **`exec` and `test`** have their own sections: [owlab exec](#owlab-exec) and
+  [owlab test](#owlab-test).
+
+### `owlab up`
+
+`owlab up [routers...]` builds and starts routers.
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--rebuild` | rebuild the images from scratch, ignoring the layer cache | off |
+| `--no-build` | start container routers from the images the engine holds, built or loaded with `docker load`. Fetches and builds nothing. See [Start a router from a saved image](#start-a-router-from-a-saved-image) | off |
+| `--no-wait` | return as soon as the containers start, without waiting for LuCI | off |
+| `-v` | print the docker commands being run | off |
+
+### `owlab down`
+
+`owlab down [routers...]` stops routers.
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--purge` | also remove the built images. On a `fidelity: vm` router, also delete its disks | off |
+| `-v` | print the docker commands being run | off |
+
+- **With router ids:** only those routers stop.
+- **Without:** the whole project stops, its network included.
+- **A VM** is asked to power itself off. Without `--purge` it keeps everything installed on it.
+
+### `owlab sync`
+
+`owlab sync [routers...]` copies the project's sources into running routers. See
+[What `sync` copies](#what-sync-copies-and-with-what-permissions).
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--watch` | keep running, and sync again whenever a source file changes | off |
+| `--interval` | how often to check for changes with `--watch`, as a Go duration | `1s` |
+| `--no-build` | skip `project.build` | off |
+| `-v` | list every file synced | off |
+
+### `owlab install`
+
+`owlab install <router> <package>...` installs packages on a running router. A path to a file on the
+host, such as `owlab build` output, is pushed to the router first. Anything else is a feed name.
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--all` | install on every router. Every argument is then a package | off |
+| `--feed` | a package feed to add first: the index URL for apk, the directory URL for opkg. Needs `--feed-key` | none |
+| `--feed-key` | the feed's public key file. For opkg the *filename* must be the key id | none |
+| `--feed-name` | the name the feed is registered under | `owlab-feed` |
+| `-v` | print the docker commands being run | off |
+
+- **The router id** can be left out when `owlab.yaml` has one router.
+- **What it installs is gone after `owlab up --rebuild`.** `packages:` in `owlab.yaml` survives a
+  rebuild.
+
+### `owlab build`
+
+`owlab build` builds a real `.apk` or `.ipk` with OpenWrt's SDK, in the `openwrt/sdk:<target>-<release>`
+image. It works with or without an `owlab.yaml`.
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--release` | the release to build against | the release of the first router that is not `fidelity: vm`. Required when there is no `owlab.yaml` |
+| `--arch` | the target architecture. Any OpenWrt package architecture works | the first such router's; with no `owlab.yaml`, the host's |
+| `--out` | the directory to write packages into, relative to the project directory | `dist` |
+| `--layout` | `arch` writes `<out>/<arch>/`; `flat` writes everything into `<out>/` | `arch` |
+| `--keep` | keep the SDK's build tree in a named Docker volume for the next run. The name is `owlab-sdk-<target>-<release>`, with dots as dashes | off |
+| `-v` | show the full build log | off |
+
+What the project must contain:
+
+- **An OpenWrt package Makefile**, in the project directory or one of its subdirectories (one level
+  down, not hidden). The project directory is the one holding `owlab.yaml`, or the working directory
+  without one.
+- **The Makefile must include** `$(TOPDIR)/rules.mk`, `luci.mk` or `package.mk`. owlab skips any other
+  Makefile.
+- **The package name** comes from `PKG_NAME`. Without it, the directory name is used, as `luci.mk`
+  does.
+- **The architecture directory** comes from `PKG_ARCH` or `LUCI_PKGARCH`. Without either, the target's
+  architecture is used. `all` and `noarch` write `noarch/` for the apk and `all/` for the ipk.
+
+When the build ends, owlab lists the files it wrote. A build that reports success and writes no
+package exits 1.
+
+### `owlab logs`
+
+`owlab logs [routers...]` shows a router's boot and service log. A VM's log is its serial console.
+
+| Flag | What it does | Default |
+|---|---|---|
+| `-f` | follow the log. A VM's log is followed only when one router is selected | off |
+| `--tail` | how many lines to show from the end | `all` |
+
+### `owlab status`
+
+`owlab status [routers...]` lists routers and where to reach them.
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--json` | write the status as JSON, schema `owlab.status/v1` | off |
+
+### `owlab releases`
+
+`owlab releases` compares the project's pins with what the download servers publish. It needs no
+container engine. Without an `owlab.yaml`, it lists everything, as `--all` does.
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--all` | list every published release, not only this project's branches | off |
+| `--keep` | with `--all`, how many releases to list per branch | `3` |
+| `--json` | write the answer as JSON | off |
+
+### `owlab shell`, `owlab open`, `owlab doctor`, `owlab version`
+
+None of these has flags.
+
+| Command | What it does |
+|---|---|
+| `owlab shell [router]` | opens a shell on one router. The id can be left out when `owlab.yaml` has one router |
+| `owlab open [router]` | prints one router's LuCI URL and opens it in a browser |
+| `owlab doctor` | checks this machine. It needs neither an `owlab.yaml` nor a container engine |
+| `owlab version` | prints the owlab version. `owlab --version` and `owlab -v` do the same |
+
+### `owlab context`
+
+`owlab context` is for the image-publishing workflow and is left out of `owlab -h`. It writes the
+build context for one router and prints the arguments for `docker buildx build`.
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--router` | the router to prepare. Required unless `--list` is given | none |
+| `--release` | build this release instead of the one the config pins | the pinned one |
+| `--out` | the directory to write the context into | `.owlab/publish` |
+| `--list` | print the routers as a JSON matrix for CI, and exit | off |
+| `--keep` | with `--list`, how many point releases to emit per branch | `1` |
 
 ## owlab exec
 
@@ -582,6 +745,7 @@ $ owlab test --release 25.12.5 --release 24.10.8 \
 | `--rebuild` | build the images from scratch |
 | `--json` | write the report to stdout and everything else to stderr |
 | `--timeout` | budget for the whole run; default 20m |
+| `-v` | print the docker commands being run |
 
 - **No `--release`:** the routers come from `owlab.yaml`, and router ids select among them the way they
   do everywhere else.
@@ -709,11 +873,18 @@ Other commands with a `schema` field:
       service mined
 ```
 
-- **Inputs.** Every flag above has an input with the same name, except `--release`: its input is
-  `releases`, a space- or comma-separated list. `assert` and `install` take one per
-  line.
+- **Inputs that match a flag.** `distro`, `arch`, `packages`, `fixtures`, `install`, `feed`,
+  `feed-key`, `feed-name`, `assert`, `sync` and `timeout` have the flag's name. `--release` is
+  `releases`, a space- or comma-separated list. `assert` and `install` take one per line.
+- **No input** exists for `--keep`, `--rebuild` or `-v`. The action always passes `--json` and
+  writes the report to a file.
+- **Inputs of the action itself.** `routers` (router ids from `owlab.yaml`, space separated),
+  `working-directory` (where `owlab.yaml` is looked for; default `.`), `version`, `verify` (the
+  attestation check; default `true`), `summary` (the job-summary table; default `true`) and `token`.
 - **Outputs.** `report` (the JSON path), `passed` and `failed`. The action also writes a table to the
   job summary.
+- **No setup step needed.** The action installs the owlab binary itself, through the same
+  `setup/install.sh` the setup action uses.
 - **Binary only.** `owfeed/owlab/setup@v0.7.1` installs the binary alone, for a job that drives `owlab`
   itself.
 - **Verification.** Both verify the download against this repository's build attestation before the

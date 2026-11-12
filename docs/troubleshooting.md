@@ -265,7 +265,8 @@ luci-app-example
 
 - `curl` against the published port gets nothing back: exit 52, empty reply.
 - Inside the container, `uhttpd` is listening on `0.0.0.0:80` and a local request is answered.
-- Reported on ImmortalWrt. Two routers were unreachable; the OpenWrt routers on the same stand were not.
+- Reported on ImmortalWrt. Two routers were unreachable; the OpenWrt routers on the same stand (the set
+  of routers running side by side) were not.
 
 ```console
 # uclient-fetch -O- http://127.0.0.1/cgi-bin/luci/
@@ -414,6 +415,16 @@ the alias nft asks for. Without the `modprobe`, the probe failed on a router tha
 
 **Fix.** `95_owlab-base` stops and disables mwan3 and watchcat. The firewall is deliberately *not* in
 that list: fw4 works, and turning it off would hide a whole class of real behaviour.
+
+**Check.** On the router, `ip rule` lists the `2061` blackhole rule above while mwan3 runs. The boot log
+says `owlab: stopped mwan3` when `95_owlab-base` stopped it.
+
+**If mwan3 runs anyway,** stop and disable it by hand, with the two commands `95_owlab-base` runs:
+
+```console
+# /etc/init.d/mwan3 stop
+# /etc/init.d/mwan3 disable
+```
 
 ---
 

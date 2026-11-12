@@ -15,7 +15,8 @@ Linux, WSL2, Docker Desktop for Windows, or macOS.
 
 ## Quick start
 
-1. Install owlab and check the machine (other ways: [Install](#install)):
+1. Install owlab and check the machine. `go install` needs Go 1.25.3 or later. Other ways:
+   [Install](#install).
 
    ```console
    $ go install owfeed.org/owlab/cmd/owlab@latest
@@ -40,6 +41,20 @@ Linux, WSL2, Docker Desktop for Windows, or macOS.
    ```
 
 4. Open the URL. Log in as `root`, leave the password blank.
+
+5. Build your package and test it on the routers in `owlab.yaml`:
+
+   ```console
+   $ owlab build
+   $ owlab test --install 'dist/*/luci-app-mine-*' \
+       --assert 'http 200 /cgi-bin/luci/admin/services/mine'
+   ```
+
+   - `owlab test` starts the routers, installs the package, runs the assertion, tears the routers
+     down, and exits 0 or 1.
+   - With no `owlab.yaml`, name the releases instead: `owlab test --release 25.12.5 …` creates one
+     router per release.
+   - What `--install` and `--assert` accept: [Check it in CI](#check-it-in-ci).
 
 ## Install
 
@@ -90,7 +105,9 @@ routers:
     release: "25.12.1"
 ```
 
-owlab assigns ports automatically. Set them yourself with `ports: { http: 8025, ssh: 2225 }`.
+owlab assigns ports by position in `routers:`. The first router gets HTTP 8080 and ssh 2222, the
+second 8081 and 2223, and so on. `owlab status` lists them. Set your own with
+`ports: { http: 8025, ssh: 2225 }`.
 
 ### Add packages
 
@@ -249,7 +266,7 @@ dist/
 └── all/luci-app-mine_1.0-r1_all.ipk
 ```
 
-`--layout flat` restores the old single-directory output for one release.
+`--layout flat` restores the old single-directory output.
 
 <details>
 <summary>Why the output is split by architecture</summary>
@@ -280,6 +297,7 @@ output straight to a publishing tool without either one knowing about the other.
 ```
 
 - No `owlab.yaml` needed: the release numbers are the configuration.
+- No setup step needed: the action installs the owlab binary itself.
 - The job fails if the package does not install, the page does not render or the service is not
   running. The summary says which router and which check.
 
@@ -318,8 +336,9 @@ $ owlab test --release 25.12.5 \
     --assert 'http 200 /cgi-bin/luci/admin/services/mine'
 ```
 
-- owlab installs nothing with `--allow-untrusted` here. The index's signature makes the package
-  acceptable.
+- A name installed through `--feed` gets no `--allow-untrusted`, so the index's signature has to
+  check out. On apk, a file given to `--install` is installed with that flag, because a locally built
+  package carries no signature the router knows.
 - For opkg the key file's *name* must be the key id, because opkg looks the key up by it.
 
 <details>

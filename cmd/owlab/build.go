@@ -284,9 +284,9 @@ done
 }
 
 // Output layouts. `arch` is the artifact contract every later stage reads;
-// `flat` is what owlab wrote before there was a contract, kept for one release
-// so a pipeline that globs `dist/*.apk` can be moved deliberately rather than
-// discovering the change from a build that suddenly produces nothing.
+// `flat` is what owlab wrote before there was a contract, kept so a pipeline
+// that globs `dist/*.apk` can be moved deliberately rather than discovering
+// the change from a build that suddenly produces nothing.
 const (
 	layoutArch = "arch"
 	layoutFlat = "flat"

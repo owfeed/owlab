@@ -456,7 +456,8 @@ In a package repository, with no `owlab.yaml`:
 
 ```yaml
 - uses: owfeed/owlab/setup@v0.7.1
-- run: owlab build --release 25.12.5 --out dist
+- run: owlab build --release 25.12.5 --out dist   # .apk for 25.12
+- run: owlab build --release 24.10.8 --out dist   # .ipk for 24.10
 - uses: owfeed/owlab/action@v0.7.1
   with:
     releases: "25.12.5 24.10.8"
@@ -475,6 +476,10 @@ Before pushing, run the same check locally. It is the same command and needs not
 $ owlab test --release 25.12.5 --install 'dist/*/luci-app-mine-*.apk' \
     --assert 'http 200 /cgi-bin/luci/admin/services/mine'
 ```
+
+The `.apk` suffix matches only the apk build, which 25.12 and later install. A 24.10 router reads
+`.ipk` and would get nothing to install. To test both release lines, drop the suffix, as the action
+step above does.
 
 If a check fails and you want to look at the page yourself, add `--keep`: it leaves the routers up.
 In CI leave it off. The teardown stops a failed run from holding the ports the next one needs.
