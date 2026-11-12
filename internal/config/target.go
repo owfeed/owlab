@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"regexp"
 	"runtime"
 	"slices"
 	"strconv"
@@ -178,6 +179,14 @@ type Target struct {
 // SupportsVM reports whether the VM tier can boot this target.
 func (t Target) SupportsVM() bool { return t.QEMUSystem != "" }
 
+// CanRun reports whether owlab can start a router on this target at all.
+//
+// False for a package architecture that has an SDK and nothing to boot: real
+// boards (mediatek/filogic, bcm27xx/bcm2710) publish firmware images and an
+// ImageBuilder, but no rootfs tarball and no container image. Such a Target
+// carries only Arch and TagPrefix — what `owlab build` needs.
+func (t Target) CanRun() bool { return t.Target != "" }
+
 // targets is the set owlab supports. It is deliberately limited to what
 // upstream actually publishes a rootfs for, because those are the targets
 // where `up` can be fast (pull an image) rather than slow (run ImageBuilder).
@@ -240,6 +249,36 @@ func LookupTarget(arch string) (Target, error) {
 		return Target{}, fmt.Errorf("unknown arch %q (known: %s)", arch, strings.Join(KnownArches(), ", "))
 	}
 	return t, nil
+}
+
+// packageArchRE is the shape of an OpenWrt package architecture: a CPU family,
+// then the variant the feeds are compiled for (aarch64_cortex-a53,
+// mipsel_24kc, arm_cortex-a7_neon-vfpv4).
+//
+// A shape rather than a list, because releases add variants and the SDK
+// registry is the real authority; the family is pinned so that a typo like
+// aarch64-cortex-a53 is caught here instead of as a missing image.
+var packageArchRE = regexp.MustCompile(`^(aarch64|arm|armeb|i386|loongarch64|mips|mipsel|mips64|mips64el|powerpc|powerpc64|riscv64|x86_64)_[a-z0-9][a-z0-9_.+-]*$`)
+
+// ResolveTarget is LookupTarget widened to every OpenWrt package architecture.
+//
+// An arch owlab cannot run still has an SDK: openwrt/sdk publishes an arch-form
+// tag (aarch64_cortex-a53-24.10.8) for every package architecture, next to the
+// target-form ones. What comes back for such an arch is enough to build and
+// nothing more, and CanRun says so.
+func ResolveTarget(arch string) (Target, error) {
+	if arch == "" || arch == "auto" {
+		return LookupTarget(arch)
+	}
+	if t, ok := targets[arch]; ok {
+		return t, nil
+	}
+	if !packageArchRE.MatchString(arch) {
+		return Target{}, fmt.Errorf("unknown arch %q: not an OpenWrt package architecture "+
+			"(e.g. aarch64_cortex-a53, mipsel_24kc; routers can run on: %s)",
+			arch, strings.Join(KnownArches(), ", "))
+	}
+	return Target{Arch: arch, TagPrefix: arch}, nil
 }
 
 // HostArch is the OpenWrt arch that runs natively on this machine.

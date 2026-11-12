@@ -121,6 +121,10 @@ func Render(cfg *config.Config, eng engine.Info) (*Project, error) {
 			// no /dev/kvm on macOS or Windows 10.
 			continue
 		}
+		if !r.Target().CanRun() {
+			// Build-only: there is no base image or platform to give a service.
+			continue
+		}
 		doc.Services[r.ID] = service(cfg, r, eng, ctxDir, keyFile)
 	}
 

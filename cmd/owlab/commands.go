@@ -636,13 +636,18 @@ func (a *app) install(ctx context.Context, args []string) error {
 	var pkgs []string
 
 	if *all {
-		routers, _ = a.cfg.Select(nil)
+		if routers, err = a.cfg.Select(nil); err != nil {
+			return err
+		}
 		pkgs = rest
 	} else {
 		// First positional is the router when it names one; otherwise every
 		// positional is a package and the router must be unambiguous.
 		if len(rest) > 0 {
 			if r, ok := a.cfg.Router(rest[0]); ok {
+				if err := r.Runnable(); err != nil {
+					return err
+				}
 				routers = []*config.Router{r}
 				pkgs = rest[1:]
 			}
@@ -1166,10 +1171,17 @@ func (a *app) single(ids []string, cmd string) (*config.Router, error) {
 			return nil, fmt.Errorf("no router %q in %s (have: %s)",
 				ids[0], config.FileName, strings.Join(a.cfg.RouterIDs(), ", "))
 		}
+		if err := r.Runnable(); err != nil {
+			return nil, err
+		}
 		return r, nil
 	case 0:
 		if len(a.cfg.Routers) == 1 {
-			return &a.cfg.Routers[0], nil
+			r := &a.cfg.Routers[0]
+			if err := r.Runnable(); err != nil {
+				return nil, err
+			}
+			return r, nil
 		}
 		return nil, fmt.Errorf("%s needs a router id (have: %s)",
 			cmd, strings.Join(a.cfg.RouterIDs(), ", "))
