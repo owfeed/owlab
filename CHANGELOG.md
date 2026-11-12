@@ -7,7 +7,13 @@ Versioning: [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 today keeps working across minor and patch releases; a change that would break
 one waits for a major.
 
-## [Unreleased]
+## [0.7.1] - 2026-11-12
+
+### Changed
+
+- **OpenWrt 25.12 routers are pinned to 25.12.6** (was 25.12.5), on both
+  x86_64 and aarch64. Proposed by `pins.yml` and merged on a green e2e run
+  against the new release (#41).
 
 ### Fixed
 
@@ -742,7 +748,8 @@ First release.
   to be re-run still leaves the immutable tags behind.
 
 [artifact-contract]: https://github.com/owfeed/owfeed/blob/main/docs/artifact-contract.md
-[Unreleased]: https://github.com/owfeed/owlab/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/owfeed/owlab/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/owfeed/owlab/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/owfeed/owlab/compare/v0.6.7...v0.7.0
 [0.6.7]: https://github.com/owfeed/owlab/compare/v0.6.6...v0.6.7
 [0.6.6]: https://github.com/owfeed/owlab/compare/v0.6.5...v0.6.6

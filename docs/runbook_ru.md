@@ -391,9 +391,9 @@ sync — нет, и на этой разнице ломались пакеты, 
 В репозитории пакета, без всякого `owlab.yaml`:
 
 ```yaml
-- uses: owfeed/owlab/setup@v0.7.0
+- uses: owfeed/owlab/setup@v0.7.1
 - run: owlab build --release 25.12.5 --out dist
-- uses: owfeed/owlab/action@v0.7.0
+- uses: owfeed/owlab/action@v0.7.1
   with:
     releases: "25.12.5 24.10.8"
     install: dist/*/luci-app-mine-*
