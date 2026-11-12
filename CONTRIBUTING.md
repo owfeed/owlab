@@ -1,5 +1,27 @@
 # Contributing
 
+What to run before you send a pull request to owlab, and the rules a reviewer holds every change to.
+For anyone changing the code, the image or the docs.
+
+- **Needs:** Go 1.25.3 or later (the `go` line in `go.mod`). Docker too, for real routers.
+- **Before you push:** `gofmt -l .`, `go vet ./...`, `go test ./...`.
+- **How the code fits together** is in [docs/internals.md](docs/internals.md). The QEMU side is its
+  section [The VM tier](docs/internals.md#the-vm-tier).
+- **If you touch how a router is built or reached,** the end-to-end job in CI is the one that tells you.
+- **Docs come in pairs.** A change to an English page is not finished until the Russian page says the
+  same thing, and the other way round.
+- **Releasing** is in [docs/releasing.md](docs/releasing.md).
+
+| I want to… | Section |
+|---|---|
+| run the checks | [The short version](#the-short-version) |
+| know what the rules mean | [How to read the rules](#how-to-read-the-rules) |
+| write code that passes review | [What this project is fussy about](#what-this-project-is-fussy-about) |
+| add an assertion kind | [Adding an assertion kind](#adding-an-assertion-kind) |
+| add a distribution | [Adding a distribution](#adding-a-distribution) |
+| change docs, config, assets or the changelog | [Things that need care](#things-that-need-care) |
+| cut a release | [Releasing](#releasing) |
+
 ## The short version
 
 ```sh
@@ -8,14 +30,17 @@ go vet ./...
 go test ./...
 ```
 
-Those three, plus a cross-compile for six platforms, a `dash -n` pass over the
-shell that ships inside the image and in `tools/`, `sh tools/pins.sh check` over
-the copies of the release pin, and an end-to-end job that starts real routers on
-three release/distro combinations, run in CI on every pull request.
-If a change touches how a router is built or reached, the end-to-end job is the
-one that will tell you.
+CI runs these on every pull request, plus:
 
-Running the real thing locally is one command and needs only Docker:
+- a cross-compile for six platforms;
+- a `dash -n` pass over the shell that ships inside the image and in `tools/`;
+- `sh tools/pins.sh check` over the copies of the release pin;
+- an end-to-end job that starts real routers on three release/distro combinations.
+
+### Run real routers locally
+
+Running the real thing locally takes one `owlab test`. It needs Docker, and Go to build owlab from
+your checkout:
 
 ```sh
 go build -o /tmp/owlab ./cmd/owlab
@@ -25,99 +50,133 @@ mkdir -p /tmp/lab && cd /tmp/lab
   --assert 'service uhttpd'
 ```
 
-Documentation lives in [docs/](docs/) and exists in English and Russian. A
-change to one is not finished until the other says the same thing.
+Documentation lives in [docs/](docs/) and exists in English and Russian.
+
+## How to read the rules
+
+Each rule carries one word from this scale. Cite a rule by its number, such as "see F-2".
+
+| Word | Meaning |
+|---|---|
+| MUST, MUST NOT | Required. A reviewer blocks the change. |
+| SHOULD, SHOULD NOT | Recommended. An exception needs a stated reason. |
+| MAY | Allowed. Either choice is fine. |
 
 ## What this project is fussy about
 
-**Comments explain why, not what.** The code says what. The reason a line
-exists — usually a bug it prevents, often one that shipped somewhere — is the
-part that cannot be recovered by reading it. Nearly every unusual line here has
-one: `--platform` is passed explicitly because most OpenWrt architecture names
-are not valid OCI platforms; procd runs as PID 1 rather than Docker's init
-because everything reading board data over ubus comes back empty otherwise.
-Those sentences are the value of the file.
+**F-1. Comments MUST explain why, not what.**
 
-**Nothing addresses a router by its bridge IP.** Published ports on localhost
-are the only way in that works identically on native Linux, WSL2, Docker Desktop
-for Mac and Windows, OrbStack and Colima. Code that reaches a container by its
-subnet address works on the machine it was written on and nowhere else.
+- Why: the code says what. The reason a line exists, usually a bug it prevents and often one that
+  shipped somewhere, cannot be recovered by reading the line. Nearly every unusual line here has one.
+  Those sentences are the value of the file.
+- Good: `--platform` is passed explicitly because most OpenWrt architecture names are not valid OCI
+  platforms.
+- Good: procd runs as PID 1 rather than Docker's init, because everything reading board data over ubus
+  comes back empty otherwise.
 
-**Nothing in a fixture may touch `lan`.** That is eth0, with the container
-engine's own address on it, and it is the only way in — there is no console to
-recover from. Invented networks sit on dummy devices or on VLANs that carry no
-traffic.
+**F-2. Code MUST NOT address a router by its bridge IP.**
 
-**A tier that cannot be delivered is refused, not silently downgraded.**
-`fidelity: vm` on a machine with no QEMU is an error naming what is missing.
-Quietly starting something less than what was asked for produces bug reports
-nobody can reproduce.
+- Why: published ports on localhost are the only way in that works identically on native Linux, WSL2,
+  Docker Desktop for Mac and Windows, OrbStack and Colima.
+- Bad: code that reaches a container by its subnet address. It works on the machine it was written on
+  and nowhere else.
+- Good: a published port on localhost.
 
-**Both package managers, every time.** apk from 25.12, opkg on 24.10, and
-neither understands the other's command. Any path that installs, queries or
-removes a package needs both, which is why `internal/pkgmgr` builds the shell in
-one place and why the end-to-end matrix covers both.
+**F-3. A fixture MUST NOT touch `lan`.**
 
-**Both tiers, wherever the seam allows it.** `internal/sync`'s `Exec` is that
-seam: sync, exec, install and every assertion are written once against it, and
-only `transport.go` knows whether running a script means `docker exec` or ssh.
-The batch operations — build, up, down, logs — are deliberately not on it,
-because compose acts on a whole project at once and a VM is one host process per
-router.
+- Why: `lan` is eth0, with the container engine's own address on it. It is the only way in, and there
+  is no console to recover from.
+- Good: invented networks sit on dummy devices or on VLANs that carry no traffic.
+
+**F-4. A tier that cannot be delivered MUST be refused, not silently downgraded.**
+
+- Why: quietly starting something less than what was asked for produces bug reports nobody can
+  reproduce.
+- Good: `fidelity: vm` on a machine with no QEMU is an error naming what is missing.
+
+**F-5. Every path that installs, queries or removes a package MUST handle both package managers.**
+
+- Why: apk runs from 25.12, opkg on 24.10, and neither understands the other's command.
+- Where: `internal/pkgmgr` builds the shell in one place for this reason, and the end-to-end matrix
+  covers both.
+
+**F-6. Code SHOULD work on both tiers, wherever the seam allows it.**
+
+- Why: `internal/sync`'s `Exec` is that seam. Sync, exec, install and every assertion are written once
+  against it. Only `transport.go` knows whether running a script means `docker exec` or ssh.
+- Exception: the batch operations (build, up, down, logs) are deliberately not on the seam. Compose
+  acts on a whole project at once, and a VM is one host process per router.
 
 ## Adding an assertion kind
 
-`internal/check` is small on purpose: a kind is a line of syntax, one shell
-command or one HTTP request, and a sentence saying what its failure means.
+`internal/check` is small on purpose. A kind is a line of syntax, one shell command or one HTTP request,
+and a sentence saying what its failure means.
 
-Say what failed in the router's own words. An assertion reporting only "failed"
-sends the reader to `owlab logs`, and in CI the container is gone by then —
-which is why the detail carries the first line of what the router printed, and
-why a failed router's log is dumped while it still exists.
+**A-1. A failing assertion MUST say what failed in the router's own words.**
 
-Test both directions. A check that fires on a healthy router is worse than no
-check: it teaches people to ignore the output. `internal/check` has an httptest
-server modelling LuCI's session cookie, so an HTTP kind can be tested without
-Docker.
+- Why: an assertion reporting only "failed" sends the reader to `owlab logs`, and in CI the container
+  is gone by then.
+- Where: for this reason the detail carries the first line of what the router printed, and a failed
+  router's log is dumped while it still exists.
+
+**A-2. Every assertion kind MUST be tested in both directions.**
+
+- Why: a check that fires on a healthy router is worse than no check. It teaches people to ignore the
+  output.
+- How: `internal/check` has an httptest server modelling LuCI's session cookie, so you can test an
+  HTTP kind without Docker.
 
 ## Adding a distribution
 
-One entry in the `distros` table in `internal/config/target.go`, and nothing
-else. The bar for inclusion is that the project publishes a rootfs **tarball**
-(or a container image) for a supported target — a disk image cannot be turned
-into a container.
+**D-1. A new distribution MUST be one entry in the `distros` table in `internal/config/target.go`, and
+nothing else.**
 
-Set `ForcePackageManager` when the fork's package manager does not follow from
-its version number. "25.12 and later means apk" is a fact about OpenWrt, not
-about the family: a fork can track 25.12 and still build with opkg, and deriving
-the manager from the release number alone hands such a router apk commands and
-fails every install.
+**D-2. The distribution's project MUST publish a rootfs tarball (or a container image) for a supported
+target.**
+
+- Why: a disk image cannot be turned into a container. This is the bar for inclusion.
+
+**D-3. A distribution entry MUST set `ForcePackageManager` when the fork's package manager does not
+follow from its version number.**
+
+- Why: "25.12 and later means apk" is a fact about OpenWrt, not about the family. A fork can track
+  25.12 and still build with opkg. Deriving the manager from the release number alone hands such a
+  router apk commands, and every install fails.
 
 ## Things that need care
 
-**Documentation describes routers and packaging, not what packages are for.** owlab starts
-test routers and runs assertions; it has no opinion about the software under test, and the
-documentation keeps it that way. Examples and troubleshooting entries name a generic package
-— `luci-app-example`, `example-daemon` — and describe the mechanism: procd jails a service,
-a glob installs in alphabetical order, an engine drops outbound UDP/53. The symptom and the
-cause are what make an entry useful; which third-party package it was first observed with is
-not, and naming one reads as endorsement.
+**C-1. Documentation MUST describe routers and packaging, not what packages are for.**
 
-**`owlab.yaml` is the compatibility surface.** Unknown keys are an error by
-design, so a renamed field breaks every existing config at load time. A change
-that would break a `version: 1` file waits for a major release.
+- Why: owlab starts test routers and runs assertions. It has no opinion about the software under test,
+  and the documentation keeps it that way. Naming a third-party package reads as endorsement.
+- Bad: naming the third-party package an issue was first observed with.
+- Good: a generic package (`luci-app-example`, `example-daemon`) and the mechanism, such as "procd
+  jails a service", "a glob installs in alphabetical order", "an engine drops outbound UDP/53". The
+  symptom and the cause are what make an entry useful.
 
-**Do not change what a released asset is named** without checking who reads it.
-`setup/install.sh` looks assets up by name, and a workflow already pinned to a
-tag cannot be fixed remotely.
+**C-2. A change to an English page MUST come with the same change to its Russian pair.**
 
-**The two actions share `setup/install.sh` on purpose.** It holds the
-attestation check, and two copies of a security check are one copy and one
-liability.
+- Why: a change to one is not finished until the other says the same thing.
 
-**The changelog is a release gate.** CI extracts the notes for the newest
-version from `CHANGELOG.md`, and a version with no section fails the build
-rather than publishing an empty release page.
+**C-3. A change that would break a `version: 1` `owlab.yaml` MUST wait for a major release.**
+
+- Why: `owlab.yaml` is the compatibility surface. Unknown keys are an error by design, so a renamed
+  field breaks every existing config at load time.
+
+**C-4. You MUST NOT change what a released asset is named without checking who reads it.**
+
+- Why: `setup/install.sh` looks assets up by name, and a workflow already pinned to a tag cannot be
+  fixed remotely.
+
+**C-5. The two actions MUST keep sharing `setup/install.sh`.**
+
+- Why: it holds the attestation check, and two copies of a security check are one copy and one
+  liability.
+
+**C-6. Every release MUST have a section in `CHANGELOG.md`.**
+
+- Why: the changelog is a release gate. CI extracts the notes for the newest version from
+  `CHANGELOG.md`. A version with no section fails the build, so no empty release page is published.
 
 ## Releasing
 
