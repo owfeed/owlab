@@ -199,3 +199,26 @@ func TestTestInstallReportsARouterLeftWithNothing(t *testing.T) {
 		t.Errorf("skip not reported: %q", res.Detail)
 	}
 }
+
+// A test run stops only the routers it was asked for. Tearing down the whole
+// project stopped routers another session was using (issue #39).
+func TestTeardownStopsOnlyWhatTheRunOwns(t *testing.T) {
+	names := []string{"owrt2512"}
+	cases := []struct {
+		name          string
+		ids, releases []string
+		hasConfig     bool
+		want          string
+	}{
+		{name: "every router in owlab.yaml", hasConfig: true, want: "down --remove-orphans -t 5"},
+		{name: "one router named", ids: names, hasConfig: true, want: "rm -sf owrt2512"},
+		{name: "--release over an owlab.yaml", releases: []string{"25.12.6"}, hasConfig: true, want: "rm -sf owrt2512"},
+		{name: "--release with no owlab.yaml", releases: []string{"25.12.6"}, want: "down --remove-orphans -t 5"},
+	}
+	for _, c := range cases {
+		got := strings.Join(teardownArgs(ownsProject(c.ids, c.releases, c.hasConfig), names), " ")
+		if got != c.want {
+			t.Errorf("%s: teardown = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

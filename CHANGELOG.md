@@ -20,6 +20,15 @@ one waits for a major.
   `--no-lock` skips the lock; `status`, `logs` and the other read-only commands
   take none.
 
+### Fixed
+
+- **`owlab test` stops only the routers it ran.** Its teardown ran `compose
+  down` on the whole project, so `owlab test owrt2512` also stopped
+  `owrt2410`, and `--release` routers synthesized next to an `owlab.yaml`
+  removed that project's own routers as orphans. The whole project is torn down
+  only when the run used every router of `owlab.yaml`, or `--release` with no
+  `owlab.yaml`.
+
 ## [0.7.1] - 2026-11-12
 
 ### Changed

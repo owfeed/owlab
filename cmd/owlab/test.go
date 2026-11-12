@@ -69,6 +69,7 @@ func (a *app) test(ctx context.Context, args []string) error {
 	}
 	say := func(format string, v ...any) { fmt.Fprintf(out, format, v...) }
 
+	owns := ownsProject(ids, releases.values(), a.cfg != nil)
 	if err := a.resolveTestConfig(releases.values(), *distro, *arch, *fixtures, packages); err != nil {
 		return err
 	}
@@ -134,7 +135,7 @@ func (a *app) test(ctx context.Context, args []string) error {
 		}
 		if len(containers) > 0 {
 			if proj, err := compose.Render(a.cfg, a.eng); err == nil {
-				_ = a.docker.Compose(stop, proj.ComposePath, "down", "--remove-orphans", "-t", "5")
+				_ = a.docker.Compose(stop, proj.ComposePath, teardownArgs(owns, routerIDs(containers))...)
 			}
 		}
 	}()
@@ -155,7 +156,11 @@ func (a *app) test(ctx context.Context, args []string) error {
 		if err := a.docker.Compose(ctx, proj.ComposePath, buildArgs...); err != nil {
 			return fmt.Errorf("build failed: %w", err)
 		}
-		if err := a.docker.Compose(ctx, proj.ComposePath, append([]string{"up", "-d", "--remove-orphans"}, names...)...); err != nil {
+		upArgs := []string{"up", "-d"}
+		if owns {
+			upArgs = append(upArgs, "--remove-orphans")
+		}
+		if err := a.docker.Compose(ctx, proj.ComposePath, append(upArgs, names...)...); err != nil {
 			return fmt.Errorf("start failed: %w", err)
 		}
 	}
@@ -309,6 +314,23 @@ type routerReport struct {
 	LuCI       string            `json:"luci"`
 	OK         bool              `json:"ok"`
 	Steps      []checkpkg.Result `json:"steps"`
+}
+
+// ownsProject reports whether a test run owns the whole compose project and may
+// tear it down, network and orphans included: no router ids, and no --release
+// routers synthesized over an owlab.yaml, whose project name they share. Any
+// other run stopping the project stopped routers it was never asked about,
+// which another session may be using.
+func ownsProject(ids, releases []string, hasConfig bool) bool {
+	return len(ids) == 0 && (len(releases) == 0 || !hasConfig)
+}
+
+// teardownArgs is the compose command that stops what a test run started.
+func teardownArgs(owns bool, names []string) []string {
+	if owns {
+		return []string{"down", "--remove-orphans", "-t", "5"}
+	}
+	return append([]string{"rm", "-sf"}, names...)
 }
 
 // resolveTestConfig decides whether this run is driven by owlab.yaml or by
