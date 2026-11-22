@@ -78,9 +78,9 @@ routers:
   # ImmortalWrt 24.10 — opkg
   - id: immortalwrt-2410-x86-64
     distro: immortalwrt
-    release: "24.10.6"
+    release: "24.10.7"
     arch: x86_64
   - id: immortalwrt-2410-aarch64
     distro: immortalwrt
-    release: "24.10.6"
+    release: "24.10.7"
     arch: aarch64_generic
